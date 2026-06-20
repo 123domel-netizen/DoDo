@@ -30,6 +30,14 @@ export interface Reminder {
   firedAt?: string | null;
 }
 
+export interface GoogleRecurrenceException {
+  originalStart: string;
+  status: "cancelled" | "modified";
+  start?: string;
+  end?: string;
+  title?: string;
+}
+
 export interface Item {
   id: string;
   type: ItemType;
@@ -56,6 +64,10 @@ export interface Item {
   /** Gdy tryb integracji = ask_per_item — nadpisanie per element. */
   googleSyncOverride?: DualVisibilityMode | null;
   googleLinkGroupId?: string | null;
+  /** RRULE/EXDATE z Google — jeden wpis na serię cykliczną. */
+  googleRecurrence?: string[];
+  googleRecurringSeriesId?: string;
+  googleRecurrenceExceptions?: GoogleRecurrenceException[];
   createdAt: string;
   updatedAt: string;
 }

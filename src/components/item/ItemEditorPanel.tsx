@@ -12,7 +12,6 @@ import type { Attachment, ChecklistItem, DualVisibilityMode, Item, Participant, 
 import { uid, defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { parseChecklistPaste, shouldParseChecklistPaste } from "@/lib/checklistPaste";
 import { cloudEnabled } from "@/lib/supabase";
-import { fmt } from "@/lib/format";
 import { TimeEditor } from "@/components/item/TimeEditor";
 import {
   CalendarClock,
@@ -39,18 +38,6 @@ const REMINDER_PRESETS: { label: string; minutes: number }[] = [
   { label: "1 godz. przed", minutes: 60 },
   { label: "1 dzień przed", minutes: 1440 },
 ];
-
-function durationLabel(a: Date, b: Date): string {
-  const m = Math.max(0, Math.round((b.getTime() - a.getTime()) / 60000));
-  if (m >= 1440 && m % 1440 === 0) return `${m / 1440} dni`;
-  if (m >= 1440) return `${Math.round((m / 1440) * 10) / 10} dni`;
-  if (m >= 60) {
-    const h = Math.floor(m / 60);
-    const mm = m % 60;
-    return mm ? `${h} godz ${mm} min` : `${h} godz`;
-  }
-  return `${m} min`;
-}
 
 export function ItemEditorPanel() {
   const editingId = useStore((s) => s.editingId);
@@ -93,8 +80,6 @@ export function ItemEditorPanel() {
   const isOpen = (k: string, hasContent: boolean) => open[k] ?? hasContent;
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !(o[k] ?? false) }));
 
-  const start = new Date(it.start);
-  const end = new Date(it.end);
   const showDueDate = it.hasDueDate;
   const durationMin = showDueDate ? itemDurationMinutes(it.start, it.end) : 0;
   const isPointInTime = showDueDate && !it.allDay && durationMin === 0;
@@ -102,7 +87,6 @@ export function ItemEditorPanel() {
   const setDueDate = () => {
     const { start: s, end: e } = defaultTaskDueRange();
     update({ hasDueDate: true, start: s, end: e, allDay: false });
-    setOpen((o) => ({ ...o, time: true }));
   };
 
   const clearDueDate = () => {
@@ -256,42 +240,12 @@ export function ItemEditorPanel() {
           className="mb-3 w-full border-0 bg-transparent text-2xl font-semibold text-ink outline-none placeholder:font-normal placeholder:text-ink-faint"
         />
 
-        {/* Time — summary that expands into editable inputs */}
-        <button
-          onClick={() => toggle("time")}
-          className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-surface-raised"
-        >
+        {/* Time */}
+        <div className="-mx-2 flex w-[calc(100%+1rem)] items-start gap-3 rounded-lg px-2 py-2">
           <Icon>
             <CalendarClock size={16} />
           </Icon>
-          <span className="text-sm text-ink">
-            {!showDueDate ? (
-              <span className="text-ink-faint">Bez terminu</span>
-            ) : it.allDay ? (
-              <>
-                {fmt(start, "EEEE, d MMM")}
-                {fmt(start, "yyyy-MM-dd") !== fmt(end, "yyyy-MM-dd") && (
-                  <> – {fmt(new Date(end.getTime() - 1), "d MMM")}</>
-                )}
-              </>
-            ) : isPointInTime ? (
-              <>
-                {fmt(start, "EEEE, d MMM")}
-                <span className="mx-1.5 text-ink-faint">·</span>
-                {fmt(start, "HH:mm")}
-              </>
-            ) : (
-              <>
-                {fmt(start, "EEEE, d MMM")}
-                <span className="mx-1.5 text-ink-faint">·</span>
-                {fmt(start, "HH:mm")} → {fmt(end, "HH:mm")}
-                <span className="ml-1.5 text-ink-faint">{durationLabel(start, end)}</span>
-              </>
-            )}
-          </span>
-        </button>
-        {isOpen("time", showDueDate) && (
-          <div className="mb-1 ml-9 mt-1">
+          <div className="min-w-0 flex-1">
             {!showDueDate ? (
               <button
                 type="button"
@@ -313,7 +267,7 @@ export function ItemEditorPanel() {
               />
             )}
           </div>
-        )}
+        </div>
 
         {/* Group */}
         <button

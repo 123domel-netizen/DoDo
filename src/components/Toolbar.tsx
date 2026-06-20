@@ -23,8 +23,8 @@ import { GoogleIntegrationPanel } from "@/components/settings/GoogleIntegrationP
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "day", label: "Dzień" },
-  { key: "eleven", label: "11 dni" },
   { key: "week", label: "Tydzień" },
+  { key: "eleven", label: "11 dni" },
   { key: "month", label: "Miesiąc" },
 ];
 
@@ -48,7 +48,6 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
     let next: Date;
     if (settings.view === "month") next = addMonths(anchor, dir);
     else if (settings.view === "day") next = addDays(anchor, dir);
-    else if (settings.view === "eleven") next = addDays(anchor, dir * 11);
     else next = addDays(anchor, dir * 7);
     setSettings({ anchorDate: startOfDay(next).toISOString() });
   };

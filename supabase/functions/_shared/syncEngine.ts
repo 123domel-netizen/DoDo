@@ -15,7 +15,9 @@ import {
   wantsTasks,
   googleEventToItemPatch,
   googleTaskToItemPatch,
+  googleEventOriginalStartIso,
   isDodoReminderShadowEvent,
+  type GoogleRecurrenceException,
 } from "./googleMap.ts";
 
 const CAL_BASE = "https://www.googleapis.com/calendar/v3";
@@ -88,6 +90,118 @@ async function deleteItemAndLinks(
 ) {
   await admin.from("item_external_links").delete().eq("user_id", userId).eq("item_id", itemId);
   await admin.from("items").delete().eq("id", itemId);
+}
+
+async function deleteLinkByExternalId(
+  admin: SupabaseClient,
+  userId: string,
+  externalId: string,
+) {
+  const { data: link } = await admin.from("item_external_links").select("item_id").eq(
+    "user_id",
+    userId,
+  ).eq("provider", "google_calendar").eq("external_id", externalId).maybeSingle();
+  if (!link) return;
+  await deleteItemAndLinks(admin, userId, link.item_id as string);
+}
+
+async function findSeriesItemByGoogleId(
+  admin: SupabaseClient,
+  userId: string,
+  seriesId: string,
+): Promise<ItemRow | null> {
+  const { data: byPayload } = await admin.from("items").select("*").eq("user_id", userId).filter(
+    "payload->>googleRecurringSeriesId",
+    "eq",
+    seriesId,
+  ).limit(1);
+  if (byPayload?.[0]) return byPayload[0] as ItemRow;
+
+  const { data: link } = await admin.from("item_external_links").select("item_id").eq(
+    "user_id",
+    userId,
+  ).eq("provider", "google_calendar").eq("external_id", seriesId).maybeSingle();
+  if (!link) return null;
+
+  const { data: item } = await admin.from("items").select("*").eq("id", link.item_id).maybeSingle();
+  return item as ItemRow | null;
+}
+
+async function applyRecurringInstanceChange(
+  admin: SupabaseClient,
+  userId: string,
+  ev: Record<string, unknown>,
+) {
+  const seriesId = ev.recurringEventId as string;
+  const master = await findSeriesItemByGoogleId(admin, userId, seriesId);
+  if (!master) return;
+
+  const originalStart = googleEventOriginalStartIso(ev);
+  const exceptions = [...(master.payload.googleRecurrenceExceptions ?? [])];
+  const idx = exceptions.findIndex((e) => e.originalStart === originalStart);
+
+  if (ev.status === "cancelled") {
+    const entry: GoogleRecurrenceException = { originalStart, status: "cancelled" };
+    if (idx >= 0) exceptions[idx] = entry;
+    else exceptions.push(entry);
+  } else {
+    const patch = googleEventToItemPatch(ev, master);
+    const entry: GoogleRecurrenceException = {
+      originalStart,
+      status: "modified",
+      start: patch.start_at,
+      end: patch.end_at,
+      title: patch.title,
+    };
+    if (idx >= 0) exceptions[idx] = entry;
+    else exceptions.push(entry);
+  }
+
+  await admin.from("items").update({
+    payload: {
+      ...master.payload,
+      googleRecurrenceExceptions: exceptions,
+      syncSource: "google",
+    },
+    updated_at: new Date().toISOString(),
+  }).eq("id", master.id);
+}
+
+/** Usuwa stare kopie pojedynczych wystąpień (import singleEvents=true). */
+async function cleanupRecurringInstanceItems(admin: SupabaseClient, userId: string) {
+  const { data: items } = await admin.from("items").select("id, payload").eq("user_id", userId)
+    .filter("payload->>syncSource", "eq", "google");
+
+  for (const item of items ?? []) {
+    const payload = item.payload as {
+      googleCalendarEventId?: string;
+      googleRecurringSeriesId?: string;
+      googleRecurrence?: string[];
+    };
+    const eventId = payload.googleCalendarEventId;
+    if (!eventId) continue;
+
+    const isInstanceCopy = eventId.includes("_") ||
+      (payload.googleRecurringSeriesId &&
+        payload.googleRecurringSeriesId !== eventId &&
+        !(payload.googleRecurrence?.length));
+
+    if (!isInstanceCopy) continue;
+
+    const seriesId = payload.googleRecurringSeriesId ??
+      (eventId.includes("_") ? eventId.split("_")[0] : undefined);
+    if (seriesId) {
+      const master = await findSeriesItemByGoogleId(admin, userId, seriesId);
+      if (master && master.id !== item.id) {
+        await deleteItemAndLinks(admin, userId, item.id as string);
+        continue;
+      }
+    }
+
+    if (eventId.includes("_")) {
+      await deleteItemAndLinks(admin, userId, item.id as string);
+    }
+  }
 }
 
 /** Usuwa duplikaty po reconnect (stary wpis bez linku + nowy z linkiem). */
@@ -629,7 +743,7 @@ export async function pullCalendar(
   ).maybeSingle();
 
   let syncToken = stateRow?.calendar_sync_token as string | undefined;
-  const params = new URLSearchParams({ singleEvents: "true", showDeleted: "true" });
+  const params = new URLSearchParams({ singleEvents: "false", showDeleted: "true" });
   if (syncToken) {
     params.set("syncToken", syncToken);
   } else {
@@ -658,7 +772,14 @@ export async function pullCalendar(
     for (const ev of data.items ?? []) {
       if (isDodoReminderShadowEvent(ev)) continue;
 
+      const recurringEventId = ev.recurringEventId as string | undefined;
+
       if (ev.status === "cancelled") {
+        if (recurringEventId) {
+          await applyRecurringInstanceChange(admin, userId, ev);
+          await deleteLinkByExternalId(admin, userId, ev.id as string);
+          continue;
+        }
         const { data: link } = await admin.from("item_external_links").select("item_id").eq(
           "user_id",
           userId,
@@ -670,6 +791,12 @@ export async function pullCalendar(
             ev.id,
           );
         }
+        continue;
+      }
+
+      if (recurringEventId) {
+        await applyRecurringInstanceChange(admin, userId, ev);
+        await deleteLinkByExternalId(admin, userId, ev.id as string);
         continue;
       }
 
@@ -762,6 +889,8 @@ export async function pullCalendar(
       updated_at: new Date().toISOString(),
     });
   }
+
+  await cleanupRecurringInstanceItems(admin, userId);
 }
 
 export async function pullTasks(

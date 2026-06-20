@@ -1,8 +1,10 @@
 import { useMemo } from "react";
+import { addDays } from "date-fns";
 import { useStore } from "@/state/store";
 import { getViewDays } from "@/lib/time";
 import { itemMatchesGroupFilter } from "@/lib/groups";
 import { collectReminderMarkers } from "@/lib/reminders";
+import { expandItemsForRange } from "@/lib/recurrence";
 import { TimeGrid } from "./TimeGrid";
 import { MonthView } from "./MonthView";
 import type { Group } from "@/types";
@@ -32,10 +34,12 @@ export function CalendarView() {
     [itemsMap, activeGroupFilter],
   );
 
-  const items = useMemo(
-    () => filteredItems.filter((it) => it.hasDueDate && it.showInCalendar),
-    [filteredItems],
-  );
+  const items = useMemo(() => {
+    const base = filteredItems.filter((it) => it.hasDueDate && it.showInCalendar);
+    if (!days.length) return base;
+    const rangeEnd = addDays(days[days.length - 1], 1);
+    return expandItemsForRange(base, days[0], rangeEnd);
+  }, [filteredItems, days]);
 
   const reminderMarkers = useMemo(
     () => collectReminderMarkers(filteredItems),

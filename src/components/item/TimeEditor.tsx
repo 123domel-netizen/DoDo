@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addDays,
   addMonths,
+  addYears,
   differenceInCalendarDays,
   eachDayOfInterval,
   endOfMonth,
@@ -9,6 +10,7 @@ import {
   isSameDay,
   isSameMonth,
   isToday,
+  setYear,
   startOfDay,
   startOfMonth,
   startOfWeek,
@@ -124,11 +126,9 @@ function changeEndTime(startIso: string, _endIso: string, h: number, m: number) 
   return { end: ne.toISOString() };
 }
 
-function toAllDay(startIso: string, endIso: string) {
+function toAllDay(startIso: string) {
   const s = startOfDay(new Date(startIso));
-  const e = startOfDay(new Date(endIso));
-  const days = Math.max(1, differenceInCalendarDays(e, s) + 1);
-  return { start: s.toISOString(), end: addDays(s, days).toISOString() };
+  return { start: s.toISOString(), end: addDays(s, 1).toISOString() };
 }
 
 function fromAllDay(startIso: string) {
@@ -175,13 +175,21 @@ export function TimeEditor({
     return () => window.removeEventListener("mousedown", onDown);
   }, [openPicker]);
 
-  const endDayDiff = differenceInCalendarDays(startOfDay(endDate), startOfDay(startDate));
   const durationMin = durationMinutesRaw(startDate, endDate);
   const isPointInTime = durationMin === 0;
   const effectiveMin = allowZeroDuration ? minDurationMinutes : Math.max(minDurationMinutes, SLOT_MINUTES);
   const durationPresets = allowZeroDuration
     ? DURATION_PRESETS
     : DURATION_PRESETS.filter((p) => p.minutes >= effectiveMin);
+
+  useEffect(() => {
+    if (!allDay) return;
+    const s = startOfDay(new Date(start));
+    const expectedEnd = addDays(s, 1);
+    if (startOfDay(new Date(end)).getTime() !== expectedEnd.getTime()) {
+      onChange({ start: s.toISOString(), end: expectedEnd.toISOString() });
+    }
+  }, [allDay, start, end, onChange]);
 
   return (
     <div ref={rootRef} className="space-y-2">
@@ -231,18 +239,14 @@ export function TimeEditor({
 
       <div className="flex flex-wrap items-center gap-2">
         <DatePickerButton
-          label={
-            allDay && endDayDiff > 0
-              ? `${fmt(startDate, "EEE d MMM")} – ${fmt(addDays(startOfDay(endDate), -1), "d MMM")}`
-              : fmt(startDate, "EEE d MMM yyyy")
-          }
+          label={fmt(startDate, "EEE d MMM yyyy")}
           open={openPicker === "date"}
           onToggle={() => setOpenPicker((p) => (p === "date" ? null : "date"))}
           anchor={startDate}
           onPick={(day) => {
             if (allDay) {
               const s = startOfDay(day);
-              onChange({ start: s.toISOString(), end: addDays(s, Math.max(1, endDayDiff + 1)).toISOString() });
+              onChange({ start: s.toISOString(), end: addDays(s, 1).toISOString() });
             } else {
               onChange(moveToDate(start, end, day));
             }
@@ -256,7 +260,7 @@ export function TimeEditor({
           type="button"
           onClick={() => {
             if (allDay) onChange(fromAllDay(start));
-            else onChange({ ...toAllDay(start, end), allDay: true });
+            else onChange({ ...toAllDay(start), allDay: true });
           }}
           className={`font-medium transition hover:text-ink ${
             allDay ? "text-accent-soft" : "text-ink-light"
@@ -450,6 +454,11 @@ function DatePickerButton({
   onPick: (day: Date) => void;
 }) {
   const [viewMonth, setViewMonth] = useState(startOfMonth(anchor));
+  const thisYear = new Date().getFullYear();
+  const yearOptions = useMemo(
+    () => Array.from({ length: 21 }, (_, i) => thisYear - 10 + i),
+    [thisYear],
+  );
 
   useEffect(() => {
     if (open) setViewMonth(startOfMonth(anchor));
@@ -479,26 +488,58 @@ function DatePickerButton({
       </button>
       {open && (
         <div className="absolute left-0 top-full z-50 mt-1 w-[260px] rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-sm font-semibold capitalize text-ink">
-              {fmt(viewMonth, "LLLL yyyy")}
-            </span>
-            <div className="flex gap-0.5">
+          <div className="mb-2 flex items-center justify-between gap-1">
+            <button
+              type="button"
+              onClick={() => setViewMonth((m) => addYears(m, -1))}
+              className="rounded-md p-1 text-ink-light hover:bg-surface-raised hover:text-ink"
+              aria-label="Poprzedni rok"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <div className="flex min-w-0 flex-1 items-center justify-center gap-1">
               <button
                 type="button"
                 onClick={() => setViewMonth((m) => addMonths(m, -1))}
-                className="rounded-md p-1 text-ink-light hover:bg-surface-raised hover:text-ink"
+                className="rounded-md px-1 py-1 text-ink-light hover:bg-surface-raised hover:text-ink"
+                aria-label="Poprzedni miesiąc"
               >
-                <ChevronLeft size={16} />
+                <ChevronLeft size={14} />
               </button>
+              <span className="truncate text-sm font-semibold capitalize text-ink">
+                {fmt(viewMonth, "LLLL")}
+              </span>
               <button
                 type="button"
                 onClick={() => setViewMonth((m) => addMonths(m, 1))}
-                className="rounded-md p-1 text-ink-light hover:bg-surface-raised hover:text-ink"
+                className="rounded-md px-1 py-1 text-ink-light hover:bg-surface-raised hover:text-ink"
+                aria-label="Następny miesiąc"
               >
-                <ChevronRight size={16} />
+                <ChevronRight size={14} />
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setViewMonth((m) => addYears(m, 1))}
+              className="rounded-md p-1 text-ink-light hover:bg-surface-raised hover:text-ink"
+              aria-label="Następny rok"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          <div className="mb-2 flex justify-center">
+            <select
+              value={viewMonth.getFullYear()}
+              onChange={(e) => setViewMonth((m) => setYear(m, Number(e.target.value)))}
+              className="rounded-lg border border-line bg-surface-raised px-2 py-1 text-sm text-ink outline-none"
+              aria-label="Rok"
+            >
+              {yearOptions.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="mb-1 grid grid-cols-7 gap-0.5 text-center text-[10px] uppercase text-ink-faint">
             {["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"].map((d) => (

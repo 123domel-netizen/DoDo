@@ -14,15 +14,10 @@ import type { Item } from "@/types";
 import { fmt, fmtRange, tint } from "@/lib/format";
 import { groupIdForNewItem, findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
 import { defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
-import { isToday, isPast, isTomorrow } from "date-fns";
+import { isToday, isPast, isTomorrow, addMonths } from "date-fns";
+import { itemsForUpcomingEventsList } from "@/lib/recurrence";
 
 type SideTab = "tasks" | "events";
-
-function isUpcomingItem(item: Item): boolean {
-  if (!item.hasDueDate || !item.showInCalendar) return false;
-  if (item.type === "task" && item.done) return false;
-  return new Date(item.end).getTime() >= Date.now();
-}
 
 export function TodoPanel() {
   const itemsMap = useStore((s) => s.items);
@@ -66,17 +61,19 @@ export function TodoPanel() {
     [itemsMap, activeGroupFilter, archiveGroupId],
   );
 
-  const upcomingEvents = useMemo(
-    () =>
-      Object.values(itemsMap)
-        .filter(
-          (it) =>
-            isUpcomingItem(it) &&
-            itemMatchesGroupFilter(it, activeGroupFilter, "calendar"),
-        )
-        .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()),
-    [itemsMap, activeGroupFilter],
-  );
+  const upcomingEvents = useMemo(() => {
+    const now = new Date();
+    const horizon = addMonths(now, 6);
+    return itemsForUpcomingEventsList(
+      Object.values(itemsMap).filter(
+        (it) =>
+          itemMatchesGroupFilter(it, activeGroupFilter, "calendar") &&
+          (it.type !== "task" || !it.done),
+      ),
+      now,
+      horizon,
+    );
+  }, [itemsMap, activeGroupFilter]);
 
   const newTaskBase = () => ({
     type: "task" as const,

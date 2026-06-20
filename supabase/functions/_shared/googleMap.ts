@@ -26,6 +26,14 @@ export interface Reminder {
   offsetMinutes: number;
 }
 
+export interface GoogleRecurrenceException {
+  originalStart: string;
+  status: "cancelled" | "modified";
+  start?: string;
+  end?: string;
+  title?: string;
+}
+
 export interface ItemRow {
   id: string;
   user_id: string;
@@ -50,6 +58,10 @@ export interface ItemRow {
     /** Id w Google — do ponownego łączenia po reconnect */
     googleCalendarEventId?: string;
     googleTaskId?: string;
+    /** RRULE/EXDATE z Google Calendar (wydarzenie cykliczne — jeden wpis na serię). */
+    googleRecurrence?: string[];
+    googleRecurringSeriesId?: string;
+    googleRecurrenceExceptions?: GoogleRecurrenceException[];
   };
   updated_at: string;
 }
@@ -180,9 +192,15 @@ export function toCalendarEvent(item: ItemRow, timeZone = DEFAULT_TIME_ZONE) {
   if (item.all_day) {
     event.start = { date: ymdInTimeZone(item.start_at, timeZone), timeZone };
     event.end = { date: ymdInTimeZone(item.end_at, timeZone), timeZone };
+    if (item.payload.googleRecurrence?.length) {
+      event.recurrence = item.payload.googleRecurrence;
+    }
   } else {
     event.start = { dateTime: item.start_at, timeZone };
     event.end = { dateTime: item.end_at, timeZone };
+    if (item.payload.googleRecurrence?.length) {
+      event.recurrence = item.payload.googleRecurrence;
+    }
   }
   return event;
 }
@@ -252,6 +270,20 @@ export function isDodoReminderShadowEvent(ev: Record<string, unknown>): boolean 
   return priv?.dodoKind === DODO_REMINDER_SHADOW_KIND;
 }
 
+/** Identyfikator wystąpienia cyklu (do wyjątków EXDATE / modyfikacji). */
+export function googleEventOriginalStartIso(
+  ev: Record<string, unknown>,
+  timeZone = DEFAULT_TIME_ZONE,
+): string {
+  const orig = ev.originalStartTime as { dateTime?: string; date?: string; timeZone?: string } | undefined;
+  const startObj = orig ?? (ev.start as { dateTime?: string; date?: string; timeZone?: string });
+  const tz = startObj?.timeZone ?? timeZone;
+  if (startObj?.date && !startObj?.dateTime) {
+    return googleAllDayRangeToApp(startObj.date, undefined, tz).start_at;
+  }
+  return startObj?.dateTime ?? new Date().toISOString();
+}
+
 export function googleEventToItemPatch(
   ev: Record<string, unknown>,
   existing: ItemRow | null,
@@ -275,6 +307,11 @@ export function googleEventToItemPatch(
     return { payload: { ...existing.payload, syncSource: "google" } };
   }
 
+  const recurrence = ev.recurrence as string[] | undefined;
+  const recurringEventId = ev.recurringEventId as string | undefined;
+  const googleEventId = ev.id as string;
+  const seriesId = recurringEventId ?? (recurrence?.length ? googleEventId : undefined);
+
   return {
     title: (ev.summary as string) ?? "",
     description: (ev.description as string) ?? "",
@@ -287,7 +324,10 @@ export function googleEventToItemPatch(
       ...(existing?.payload ?? {}),
       hasDueDate: true,
       syncSource: "google",
-      googleCalendarEventId: (ev.id as string) ?? existing?.payload.googleCalendarEventId,
+      googleCalendarEventId: googleEventId ?? existing?.payload.googleCalendarEventId,
+      googleRecurringSeriesId: seriesId ?? existing?.payload.googleRecurringSeriesId,
+      googleRecurrence: recurrence ?? existing?.payload.googleRecurrence,
+      googleRecurrenceExceptions: existing?.payload.googleRecurrenceExceptions,
       checklist: existing?.payload.checklist ?? [],
       reminders: existing?.payload.reminders ?? [],
     },

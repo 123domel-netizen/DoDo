@@ -44,6 +44,9 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
       preArchiveGroupId: item.preArchiveGroupId ?? null,
       googleSyncOverride: item.googleSyncOverride ?? null,
       googleLinkGroupId: item.googleLinkGroupId ?? null,
+      googleRecurrence: item.googleRecurrence,
+      googleRecurringSeriesId: item.googleRecurringSeriesId ?? null,
+      googleRecurrenceExceptions: item.googleRecurrenceExceptions,
       ...payloadExtras,
     },
     created_at: item.createdAt,
@@ -73,6 +76,10 @@ function rowToItem(row: Record<string, unknown>): Item {
     reminders: (payload.reminders as Item["reminders"]) ?? [],
     googleSyncOverride: (payload.googleSyncOverride as Item["googleSyncOverride"]) ?? null,
     googleLinkGroupId: (payload.googleLinkGroupId as string | null) ?? null,
+    googleRecurrence: (payload.googleRecurrence as string[] | undefined) ?? undefined,
+    googleRecurringSeriesId: (payload.googleRecurringSeriesId as string | undefined) ?? undefined,
+    googleRecurrenceExceptions:
+      (payload.googleRecurrenceExceptions as Item["googleRecurrenceExceptions"]) ?? undefined,
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
@@ -194,6 +201,13 @@ function schedulePush() {
           extras.googleReminderEventIds = payload.googleReminderEventIds;
         }
         if (payload.syncSource) extras.syncSource = payload.syncSource;
+        if (payload.googleRecurrence) extras.googleRecurrence = payload.googleRecurrence;
+        if (payload.googleRecurringSeriesId) {
+          extras.googleRecurringSeriesId = payload.googleRecurringSeriesId;
+        }
+        if (payload.googleRecurrenceExceptions) {
+          extras.googleRecurrenceExceptions = payload.googleRecurrenceExceptions;
+        }
         if (Object.keys(extras).length) payloadExtrasById.set(row.id as string, extras);
       }
     }
