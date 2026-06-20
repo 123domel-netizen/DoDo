@@ -21,7 +21,7 @@ let pendingGoogleDelete = false;
 let realtimeChannel: RealtimeChannel | null = null;
 let storeSubscribed = false;
 
-function itemToRow(item: Item) {
+function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
   return {
     id: item.id,
     user_id: userId,
@@ -44,6 +44,7 @@ function itemToRow(item: Item) {
       preArchiveGroupId: item.preArchiveGroupId ?? null,
       googleSyncOverride: item.googleSyncOverride ?? null,
       googleLinkGroupId: item.googleLinkGroupId ?? null,
+      ...payloadExtras,
     },
     created_at: item.createdAt,
     updated_at: item.updatedAt,
@@ -178,7 +179,26 @@ function schedulePush() {
     const snapshot = JSON.stringify(items.map((i) => [i.id, i.updatedAt]));
     if (snapshot === lastPushedSnapshot) return;
     lastPushedSnapshot = snapshot;
-    const rows = items.map(itemToRow);
+
+    const ids = items.map((i) => i.id);
+    const payloadExtrasById = new Map<string, Record<string, unknown>>();
+    if (ids.length) {
+      const { data: existingRows } = await supabase!
+        .from("items")
+        .select("id, payload")
+        .in("id", ids);
+      for (const row of existingRows ?? []) {
+        const payload = (row.payload ?? {}) as Record<string, unknown>;
+        const extras: Record<string, unknown> = {};
+        if (payload.googleReminderEventIds) {
+          extras.googleReminderEventIds = payload.googleReminderEventIds;
+        }
+        if (payload.syncSource) extras.syncSource = payload.syncSource;
+        if (Object.keys(extras).length) payloadExtrasById.set(row.id as string, extras);
+      }
+    }
+
+    const rows = items.map((item) => itemToRow(item, payloadExtrasById.get(item.id)));
     if (rows.length) await supabase!.from("items").upsert(rows);
     scheduleGoogleSync();
   }, 800);

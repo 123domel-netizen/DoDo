@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings } from "@/types";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
-import { ensureArchiveGroup, findArchiveGroup, isArchiveGroup, patchForTaskDone, ARCHIVE_GROUP_NAME } from "@/lib/groups";
+import { ensureArchiveGroup, findArchiveGroup, isArchiveGroup, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
 import { startOfDay } from "date-fns";
 
 interface AppState {
@@ -39,6 +39,7 @@ interface AppState {
 
   addGroup: (name: string, color: string) => Group;
   patchGroup: (id: string, patch: Partial<Group>) => void;
+  moveGroup: (id: string, direction: "up" | "down") => void;
   deleteGroup: (id: string) => void;
   setActiveGroupFilter: (id: string | null) => void;
 
@@ -233,11 +234,13 @@ export const useStore = create<AppState>()(
       },
 
       addGroup: (name, color) => {
+        const userGroups = get().groups.filter((g) => !isArchiveGroup(g));
+        const maxOrder = userGroups.reduce((m, g) => Math.max(m, g.sortOrder), -1);
         const group: Group = {
           id: uid(),
           name,
           color,
-          sortOrder: get().groups.length,
+          sortOrder: maxOrder + 1,
         };
         set((s) => ({ groups: [...s.groups, group] }));
         return group;
@@ -247,6 +250,29 @@ export const useStore = create<AppState>()(
         set((s) => ({
           groups: s.groups.map((g) => (g.id === id ? { ...g, ...patch } : g)),
         })),
+
+      moveGroup: (id, direction) =>
+        set((s) => {
+          const target = s.groups.find((g) => g.id === id);
+          if (!target || isArchiveGroup(target)) return {};
+
+          const ordered = sortGroupsForRail(s.groups);
+          const idx = ordered.findIndex((g) => g.id === id);
+          if (idx < 0) return {};
+
+          const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+          if (swapIdx < 0 || swapIdx >= ordered.length) return {};
+
+          const next = [...ordered];
+          [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+          const sortById = new Map(next.map((g, i) => [g.id, i]));
+
+          return {
+            groups: s.groups.map((g) =>
+              isArchiveGroup(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
+            ),
+          };
+        }),
 
       deleteGroup: (id) =>
         set((s) => {

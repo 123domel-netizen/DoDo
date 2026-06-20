@@ -45,6 +45,8 @@ export interface ItemRow {
     googleSyncOverride?: DualVisibilityMode | null;
     googleLinkGroupId?: string | null;
     syncSource?: "local" | "google";
+    /** reminderId → Google Calendar event id (zarządzane przez sync) */
+    googleReminderEventIds?: Record<string, string>;
   };
   updated_at: string;
 }
@@ -74,7 +76,7 @@ export function effectiveDualMode(
       ? "both_linked"
       : settings.dual_visibility_mode;
   }
-  if (item.show_in_calendar && item.hasDueDate) return "calendar_only";
+  if (item.show_in_calendar && item.payload.hasDueDate) return "calendar_only";
   if (item.show_in_todo && item.type === "task") return "tasks_only";
   return settings.dual_visibility_mode;
 }
@@ -136,6 +138,59 @@ export function toGoogleTask(item: ItemRow) {
     task.due = item.start_at;
   }
   return task;
+}
+
+export const DODO_REMINDER_SHADOW_KIND = "dodo_reminder_shadow";
+
+export function reminderFireAtIso(item: ItemRow, offsetMinutes: number): string {
+  return new Date(new Date(item.start_at).getTime() - offsetMinutes * 60_000).toISOString();
+}
+
+/** Zadanie w Google Tasks (bez bloku w kalendarzu) — przypomnienia jako osobne wpisy w GC. */
+export function wantsReminderShadowEvents(
+  item: ItemRow,
+  settings: GoogleSyncSettingsRow,
+): boolean {
+  if (!settings.calendar_enabled) return false;
+  if (!item.payload.hasDueDate || item.done || item.all_day) return false;
+  if (!(item.payload.reminders?.length ?? 0)) return false;
+  if (!wantsTasks(item, settings)) return false;
+  if (wantsCalendar(item, settings)) return false;
+  return true;
+}
+
+export function toReminderShadowCalendarEvent(
+  item: ItemRow,
+  reminder: Reminder,
+  timeZone = "Europe/Warsaw",
+) {
+  const fireAt = reminderFireAtIso(item, reminder.offsetMinutes);
+  const endAt = new Date(new Date(fireAt).getTime() + 15 * 60_000).toISOString();
+  const title = item.title || "(bez tytułu)";
+  return {
+    summary: `🔔 Przypomnienie: ${title}`,
+    description: item.description ||
+      `Termin zadania: ${new Date(item.start_at).toLocaleString("pl-PL")}`,
+    start: { dateTime: fireAt, timeZone },
+    end: { dateTime: endAt, timeZone },
+    reminders: {
+      useDefault: false,
+      overrides: [{ method: "popup", minutes: 0 }],
+    },
+    extendedProperties: {
+      private: {
+        dodoKind: DODO_REMINDER_SHADOW_KIND,
+        dodoItemId: item.id,
+        dodoReminderId: reminder.id,
+      },
+    },
+  };
+}
+
+export function isDodoReminderShadowEvent(ev: Record<string, unknown>): boolean {
+  const priv = (ev.extendedProperties as { private?: Record<string, string> } | undefined)
+    ?.private;
+  return priv?.dodoKind === DODO_REMINDER_SHADOW_KIND;
 }
 
 export function googleEventToItemPatch(

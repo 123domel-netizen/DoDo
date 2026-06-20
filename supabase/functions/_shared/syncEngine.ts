@@ -9,10 +9,13 @@ import {
   shouldSkipItem,
   toCalendarEvent,
   toGoogleTask,
+  toReminderShadowCalendarEvent,
   wantsCalendar,
+  wantsReminderShadowEvents,
   wantsTasks,
   googleEventToItemPatch,
   googleTaskToItemPatch,
+  isDodoReminderShadowEvent,
 } from "./googleMap.ts";
 
 const CAL_BASE = "https://www.googleapis.com/calendar/v3";
@@ -292,15 +295,142 @@ async function removeTaskLink(
   await admin.from("item_external_links").delete().eq("id", link.id);
 }
 
+async function deleteCalendarEvent(
+  userId: string,
+  calendarId: string,
+  eventId: string,
+) {
+  const calId = encodeURIComponent(calendarId);
+  const url = `${CAL_BASE}/calendars/${calId}/events/${encodeURIComponent(eventId)}`;
+  await googleFetch(userId, url, { method: "DELETE" }).catch(() => {});
+}
+
+async function upsertRawCalendarEvent(
+  userId: string,
+  calendarId: string,
+  body: Record<string, unknown>,
+  existing?: { external_id: string; etag: string | null },
+): Promise<{ id: string; etag: string }> {
+  const calId = encodeURIComponent(calendarId);
+  if (existing) {
+    const url =
+      `${CAL_BASE}/calendars/${calId}/events/${encodeURIComponent(existing.external_id)}`;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (existing.etag) headers["If-Match"] = existing.etag;
+    let res = await googleFetch(userId, url, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (res.status === 412) {
+      const fresh = await googleFetch(userId, url);
+      if (fresh.ok) {
+        const ev = await fresh.json();
+        headers["If-Match"] = ev.etag;
+        res = await googleFetch(userId, url, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify(body),
+        });
+      }
+    }
+    if (res.status === 404) {
+      existing = undefined;
+    } else {
+      if (!res.ok) throw new Error(`Calendar PATCH: ${await res.text()}`);
+      const ev = await res.json();
+      return { id: ev.id as string, etag: ev.etag as string };
+    }
+  }
+
+  const url = `${CAL_BASE}/calendars/${calId}/events`;
+  const res = await googleFetch(userId, url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Calendar POST: ${await res.text()}`);
+  const ev = await res.json();
+  return { id: ev.id as string, etag: ev.etag as string };
+}
+
+async function persistReminderEventIds(
+  admin: SupabaseClient,
+  item: ItemRow,
+  map: Record<string, string>,
+) {
+  await admin.from("items").update({
+    payload: { ...item.payload, googleReminderEventIds: map },
+    updated_at: new Date().toISOString(),
+  }).eq("id", item.id);
+}
+
+async function clearReminderShadowEvents(
+  admin: SupabaseClient,
+  userId: string,
+  item: ItemRow,
+  settings: GoogleSyncSettingsRow,
+) {
+  const map = { ...(item.payload.googleReminderEventIds ?? {}) };
+  if (!Object.keys(map).length) return;
+
+  for (const eventId of Object.values(map)) {
+    await deleteCalendarEvent(userId, settings.calendar_id, eventId);
+  }
+  await persistReminderEventIds(admin, item, {});
+}
+
+async function syncReminderShadowEvents(
+  admin: SupabaseClient,
+  userId: string,
+  item: ItemRow,
+  settings: GoogleSyncSettingsRow,
+) {
+  if (!wantsReminderShadowEvents(item, settings)) {
+    await clearReminderShadowEvents(admin, userId, item, settings);
+    return;
+  }
+
+  const reminders = item.payload.reminders ?? [];
+  const prevMap = { ...(item.payload.googleReminderEventIds ?? {}) };
+  const nextMap: Record<string, string> = {};
+
+  for (const reminder of reminders) {
+    const body = toReminderShadowCalendarEvent(item, reminder);
+    const existingId = prevMap[reminder.id];
+    const existing = existingId
+      ? { external_id: existingId, etag: null as string | null }
+      : undefined;
+    const ev = await upsertRawCalendarEvent(userId, settings.calendar_id, body, existing);
+    nextMap[reminder.id] = ev.id;
+  }
+
+  for (const [reminderId, eventId] of Object.entries(prevMap)) {
+    if (!nextMap[reminderId]) {
+      await deleteCalendarEvent(userId, settings.calendar_id, eventId);
+    }
+  }
+
+  await persistReminderEventIds(admin, item, nextMap);
+}
+
 export async function pushItem(
   admin: SupabaseClient,
   userId: string,
   item: ItemRow,
   settings: GoogleSyncSettingsRow,
 ) {
-  if (shouldSkipItem(item, settings)) return;
-
   const links = await getLinks(admin, userId, item.id);
+
+  if (shouldSkipItem(item, settings)) {
+    await clearReminderShadowEvents(admin, userId, item, settings);
+    const calLink = links.find((l) => l.provider === "google_calendar");
+    const taskLink = links.find((l) => l.provider === "google_tasks");
+    if (calLink) await removeCalendarLink(admin, userId, calLink);
+    if (taskLink) await removeTaskLink(admin, userId, taskLink);
+    return;
+  }
+
   const wantCal = wantsCalendar(item, settings);
   const wantTask = wantsTasks(item, settings);
 
@@ -318,6 +448,8 @@ export async function pushItem(
   } else if (taskLink) {
     await removeTaskLink(admin, userId, taskLink);
   }
+
+  await syncReminderShadowEvents(admin, userId, item, settings);
 }
 
 export async function pullCalendar(
@@ -359,6 +491,8 @@ export async function pullCalendar(
     pageToken = data.nextPageToken;
 
     for (const ev of data.items ?? []) {
+      if (isDodoReminderShadowEvent(ev)) continue;
+
       if (ev.status === "cancelled") {
         const { data: link } = await admin.from("item_external_links").select("item_id").eq(
           "user_id",

@@ -122,7 +122,8 @@ export function GoogleIntegrationPanel() {
         <div>
           <p className="mb-2 text-[11px] leading-snug text-ink-faint">
             Połącz konto Google, aby synchronizować wydarzenia z Kalendarzem i zadania z Google
-            Tasks (dwukierunkowo).
+            Tasks (dwukierunkowo). Zadania tylko w Tasks z przypomnieniami dostają osobne wpisy w
+            Kalendarzu Google w chwili przypomnienia (np. 10:45 przy terminie 11:00 i −15 min).
           </p>
           <button
             type="button"
