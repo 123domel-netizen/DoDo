@@ -62,6 +62,10 @@ export interface ItemRow {
     googleRecurrence?: string[];
     googleRecurringSeriesId?: string;
     googleRecurrenceExceptions?: GoogleRecurrenceException[];
+    /** Typ w Google Calendar: birthday, default, … */
+    googleEventType?: string;
+    /** Google: nie wysyłaj PATCH (urodziny self, itp.) */
+    googleCalendarReadOnly?: boolean;
   };
   updated_at: string;
 }
@@ -270,6 +274,18 @@ export function isDodoReminderShadowEvent(ev: Record<string, unknown>): boolean 
   return priv?.dodoKind === DODO_REMINDER_SHADOW_KIND;
 }
 
+/** Google nie pozwala PATCHować m.in. dat urodzin (eventType=birthday). */
+export function isGoogleReadOnlyCalendarEvent(item: ItemRow): boolean {
+  if (item.payload.googleCalendarReadOnly) return true;
+  const t = item.payload.googleEventType;
+  return t === "birthday" || t === "fromGmail";
+}
+
+export function googleEventTypeFromApi(ev: Record<string, unknown>): string | undefined {
+  const t = ev.eventType as string | undefined;
+  return t && t !== "default" ? t : undefined;
+}
+
 /** Identyfikator wystąpienia cyklu (do wyjątków EXDATE / modyfikacji). */
 export function googleEventOriginalStartIso(
   ev: Record<string, unknown>,
@@ -311,6 +327,7 @@ export function googleEventToItemPatch(
   const recurringEventId = ev.recurringEventId as string | undefined;
   const googleEventId = ev.id as string;
   const seriesId = recurringEventId ?? (recurrence?.length ? googleEventId : undefined);
+  const googleEventType = googleEventTypeFromApi(ev) ?? existing?.payload.googleEventType;
 
   return {
     title: (ev.summary as string) ?? "",
@@ -328,6 +345,10 @@ export function googleEventToItemPatch(
       googleRecurringSeriesId: seriesId ?? existing?.payload.googleRecurringSeriesId,
       googleRecurrence: recurrence ?? existing?.payload.googleRecurrence,
       googleRecurrenceExceptions: existing?.payload.googleRecurrenceExceptions,
+      googleEventType,
+      googleCalendarReadOnly: googleEventType === "birthday" || googleEventType === "fromGmail"
+        ? true
+        : existing?.payload.googleCalendarReadOnly,
       checklist: existing?.payload.checklist ?? [],
       reminders: existing?.payload.reminders ?? [],
     },

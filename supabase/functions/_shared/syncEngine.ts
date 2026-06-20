@@ -17,6 +17,7 @@ import {
   googleTaskToItemPatch,
   googleEventOriginalStartIso,
   isDodoReminderShadowEvent,
+  isGoogleReadOnlyCalendarEvent,
   type GoogleRecurrenceException,
 } from "./googleMap.ts";
 
@@ -249,6 +250,9 @@ async function normalizeGoogleAllDayItems(admin: SupabaseClient, userId: string)
   ).eq("all_day", true).filter("payload->>syncSource", "eq", "google");
 
   for (const item of items ?? []) {
+    const payload = item.payload as { googleEventType?: string; syncSource?: string };
+    if (payload.googleEventType === "birthday" || payload.googleEventType === "fromGmail") continue;
+
     const start = new Date(item.start_at as string);
     const end = new Date(item.end_at as string);
     const startDay = new Date(start);
@@ -407,6 +411,8 @@ export async function pushCalendarItem(
   settings: GoogleSyncSettingsRow,
   links: ExternalLinkRow[],
 ) {
+  if (isGoogleReadOnlyCalendarEvent(item)) return;
+
   const calId = encodeURIComponent(settings.calendar_id);
   const existing = links.find((l) => l.provider === "google_calendar");
   const body = toCalendarEvent(item);
@@ -440,7 +446,21 @@ export async function pushCalendarItem(
         l.provider !== "google_calendar"
       ));
     }
-    if (!res.ok) throw new Error(`Calendar PATCH: ${await res.text()}`);
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 400 && text.includes("eventTypeRestriction")) {
+        await admin.from("items").update({
+          payload: {
+            ...item.payload,
+            googleCalendarReadOnly: true,
+            syncSource: "google",
+          },
+          updated_at: new Date().toISOString(),
+        }).eq("id", item.id);
+        return;
+      }
+      throw new Error(`Calendar PATCH: ${text}`);
+    }
     const ev = await res.json();
     await upsertLink(admin, {
       user_id: userId,
