@@ -17,6 +17,7 @@ import {
   googleTaskToItemPatch,
   googleEventOriginalStartIso,
   isDodoReminderShadowEvent,
+  isGoogleImportedItem,
   isGoogleReadOnlyCalendarEvent,
   type GoogleRecurrenceException,
 } from "./googleMap.ts";
@@ -188,7 +189,6 @@ async function cleanupRecurringInstanceItems(admin: SupabaseClient, userId: stri
   }
 
   await dedupeRecurringSeriesItems(admin, userId);
-  await normalizeGoogleAllDayItems(admin, userId);
 }
 
 /** Zostawia jeden wpis na serię cykliczną (z RRULE). */
@@ -239,33 +239,6 @@ async function dedupeRecurringSeriesItems(admin: SupabaseClient, userId: string)
     for (let i = 1; i < group.length; i++) {
       await deleteItemAndLinks(admin, userId, group[i].id);
     }
-  }
-}
-
-/** Naprawia end_at wydarzeń całodniowych (jeden dzień = wyłączny koniec następnego dnia). */
-async function normalizeGoogleAllDayItems(admin: SupabaseClient, userId: string) {
-  const { data: items } = await admin.from("items").select("id, start_at, end_at, payload").eq(
-    "user_id",
-    userId,
-  ).eq("all_day", true).filter("payload->>syncSource", "eq", "google");
-
-  for (const item of items ?? []) {
-    const payload = item.payload as { googleEventType?: string; syncSource?: string };
-    if (payload.googleEventType === "birthday" || payload.googleEventType === "fromGmail") continue;
-
-    const start = new Date(item.start_at as string);
-    const end = new Date(item.end_at as string);
-    const startDay = new Date(start);
-    startDay.setHours(0, 0, 0, 0);
-    const expectedEnd = new Date(startDay);
-    expectedEnd.setDate(expectedEnd.getDate() + 1);
-    if (Math.abs(end.getTime() - expectedEnd.getTime()) < 60_000) continue;
-
-    await admin.from("items").update({
-      start_at: startDay.toISOString(),
-      end_at: expectedEnd.toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq("id", item.id);
   }
 }
 
@@ -548,6 +521,8 @@ export async function pushTaskItem(
   settings: GoogleSyncSettingsRow,
   links: ExternalLinkRow[],
 ) {
+  if (isGoogleImportedItem(item)) return;
+
   const listId = encodeURIComponent(settings.task_list_id);
   const existing = links.find((l) => l.provider === "google_tasks");
   const body = toGoogleTask(item);
@@ -783,33 +758,37 @@ export async function pushItem(
 
   if (shouldSkipItem(item, settings)) {
     await clearReminderShadowEvents(admin, userId, item, settings);
-    const calLink = links.find((l) => l.provider === "google_calendar");
-    const taskLink = links.find((l) => l.provider === "google_tasks");
-    if (calLink) await removeCalendarLink(admin, userId, calLink);
-    if (taskLink) await removeTaskLink(admin, userId, taskLink);
+    if (!isGoogleImportedItem(item)) {
+      const calLink = links.find((l) => l.provider === "google_calendar");
+      const taskLink = links.find((l) => l.provider === "google_tasks");
+      if (calLink) await removeCalendarLink(admin, userId, calLink);
+      if (taskLink) await removeTaskLink(admin, userId, taskLink);
+    }
     return;
   }
 
   const wantCal = wantsCalendar(item, settings);
   const wantTask = wantsTasks(item, settings);
-  const isGoogleImport = item.payload.syncSource === "google";
+  const isGoogleImport = isGoogleImportedItem(item);
 
   const calLink = links.find((l) => l.provider === "google_calendar");
   const taskLink = links.find((l) => l.provider === "google_tasks");
 
-  if (wantCal && !(isGoogleImport && !calLink)) {
+  if (wantCal && !isGoogleImport) {
     await pushCalendarItem(admin, userId, item, settings, links);
-  } else if (calLink) {
+  } else if (calLink && !isGoogleImport) {
     await removeCalendarLink(admin, userId, calLink);
   }
 
-  if (wantTask && !(isGoogleImport && !taskLink)) {
+  if (wantTask && !isGoogleImport) {
     await pushTaskItem(admin, userId, item, settings, links);
-  } else if (taskLink) {
+  } else if (taskLink && !isGoogleImport) {
     await removeTaskLink(admin, userId, taskLink);
   }
 
-  await syncReminderShadowEvents(admin, userId, item, settings);
+  if (!isGoogleImport) {
+    await syncReminderShadowEvents(admin, userId, item, settings);
+  }
 }
 
 export async function pullCalendar(

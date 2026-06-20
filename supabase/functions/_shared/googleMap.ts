@@ -274,11 +274,14 @@ export function isDodoReminderShadowEvent(ev: Record<string, unknown>): boolean 
   return priv?.dodoKind === DODO_REMINDER_SHADOW_KIND;
 }
 
-/** Google nie pozwala PATCHować m.in. dat urodzin (eventType=birthday). */
+/** Wydarzenia/zadania zaimportowane z Google — tylko pull, bez push ani DELETE w Google. */
+export function isGoogleImportedItem(item: ItemRow): boolean {
+  return item.payload.syncSource === "google";
+}
+
+/** @deprecated alias — wszystkie importy z Google są read-only w kalendarzu */
 export function isGoogleReadOnlyCalendarEvent(item: ItemRow): boolean {
-  if (item.payload.googleCalendarReadOnly) return true;
-  const t = item.payload.googleEventType;
-  return t === "birthday" || t === "fromGmail";
+  return isGoogleImportedItem(item);
 }
 
 export function googleEventTypeFromApi(ev: Record<string, unknown>): string | undefined {
@@ -346,9 +349,7 @@ export function googleEventToItemPatch(
       googleRecurrence: recurrence ?? existing?.payload.googleRecurrence,
       googleRecurrenceExceptions: existing?.payload.googleRecurrenceExceptions,
       googleEventType,
-      googleCalendarReadOnly: googleEventType === "birthday" || googleEventType === "fromGmail"
-        ? true
-        : existing?.payload.googleCalendarReadOnly,
+      googleCalendarReadOnly: true,
       checklist: existing?.payload.checklist ?? [],
       reminders: existing?.payload.reminders ?? [],
     },

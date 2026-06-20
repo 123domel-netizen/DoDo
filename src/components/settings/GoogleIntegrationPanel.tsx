@@ -242,6 +242,11 @@ export function GoogleIntegrationPanel() {
             Import istniejących z Google przy pierwszej sync
           </label>
 
+          <p className="text-[11px] leading-snug text-ink-faint">
+            Wydarzenia i zadania zaimportowane z Google są tylko do odczytu — synchronizacja
+            pobiera zmiany z Google, ale nie nadpisuje ich z aplikacji.
+          </p>
+
           <div className="flex gap-2">
             <button
               type="button"
