@@ -68,6 +68,7 @@ export interface Item {
   googleRecurrence?: string[];
   googleRecurringSeriesId?: string;
   googleRecurrenceExceptions?: GoogleRecurrenceException[];
+  googleCalendarEventId?: string;
   createdAt: string;
   updatedAt: string;
 }

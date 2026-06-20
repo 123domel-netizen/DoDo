@@ -1,4 +1,5 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { withNormalizedAllDay } from "@/lib/allDay";
 import type { Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
@@ -47,6 +48,7 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
       googleRecurrence: item.googleRecurrence,
       googleRecurringSeriesId: item.googleRecurringSeriesId ?? null,
       googleRecurrenceExceptions: item.googleRecurrenceExceptions,
+      googleCalendarEventId: item.googleCalendarEventId ?? null,
       ...payloadExtras,
     },
     created_at: item.createdAt,
@@ -56,7 +58,7 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
 
 function rowToItem(row: Record<string, unknown>): Item {
   const payload = (row.payload ?? {}) as Record<string, unknown>;
-  return {
+  const item: Item = {
     id: row.id as string,
     type: row.type as Item["type"],
     title: (row.title as string) ?? "",
@@ -80,9 +82,11 @@ function rowToItem(row: Record<string, unknown>): Item {
     googleRecurringSeriesId: (payload.googleRecurringSeriesId as string | undefined) ?? undefined,
     googleRecurrenceExceptions:
       (payload.googleRecurrenceExceptions as Item["googleRecurrenceExceptions"]) ?? undefined,
+    googleCalendarEventId: (payload.googleCalendarEventId as string | undefined) ?? undefined,
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
+  return item.allDay ? withNormalizedAllDay(item) : item;
 }
 
 function isGoogleOriginatedRow(row: Record<string, unknown>): boolean {
@@ -207,6 +211,9 @@ function schedulePush() {
         }
         if (payload.googleRecurrenceExceptions) {
           extras.googleRecurrenceExceptions = payload.googleRecurrenceExceptions;
+        }
+        if (payload.googleCalendarEventId) {
+          extras.googleCalendarEventId = payload.googleCalendarEventId;
         }
         if (Object.keys(extras).length) payloadExtrasById.set(row.id as string, extras);
       }

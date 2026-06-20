@@ -169,8 +169,8 @@ async function applyRecurringInstanceChange(
 
 /** Usuwa stare kopie pojedynczych wystąpień (import singleEvents=true). */
 async function cleanupRecurringInstanceItems(admin: SupabaseClient, userId: string) {
-  const { data: items } = await admin.from("items").select("id, payload").eq("user_id", userId)
-    .filter("payload->>syncSource", "eq", "google");
+  const { data: items } = await admin.from("items").select("id, payload, all_day, start_at, end_at")
+    .eq("user_id", userId).filter("payload->>syncSource", "eq", "google");
 
   for (const item of items ?? []) {
     const payload = item.payload as {
@@ -181,26 +181,87 @@ async function cleanupRecurringInstanceItems(admin: SupabaseClient, userId: stri
     const eventId = payload.googleCalendarEventId;
     if (!eventId) continue;
 
-    const isInstanceCopy = eventId.includes("_") ||
-      (payload.googleRecurringSeriesId &&
-        payload.googleRecurringSeriesId !== eventId &&
-        !(payload.googleRecurrence?.length));
-
-    if (!isInstanceCopy) continue;
-
-    const seriesId = payload.googleRecurringSeriesId ??
-      (eventId.includes("_") ? eventId.split("_")[0] : undefined);
-    if (seriesId) {
-      const master = await findSeriesItemByGoogleId(admin, userId, seriesId);
-      if (master && master.id !== item.id) {
-        await deleteItemAndLinks(admin, userId, item.id as string);
-        continue;
-      }
-    }
-
     if (eventId.includes("_")) {
       await deleteItemAndLinks(admin, userId, item.id as string);
     }
+  }
+
+  await dedupeRecurringSeriesItems(admin, userId);
+  await normalizeGoogleAllDayItems(admin, userId);
+}
+
+/** Zostawia jeden wpis na serię cykliczną (z RRULE). */
+async function dedupeRecurringSeriesItems(admin: SupabaseClient, userId: string) {
+  const { data: items } = await admin.from("items").select("id, updated_at, payload").eq(
+    "user_id",
+    userId,
+  ).eq("show_in_calendar", true).filter("payload->>syncSource", "eq", "google");
+
+  const { data: links } = await admin.from("item_external_links").select("item_id").eq(
+    "user_id",
+    userId,
+  ).eq("provider", "google_calendar");
+  const linked = new Set((links ?? []).map((l) => l.item_id as string));
+
+  const groups = new Map<string, { id: string; hasLink: boolean; hasRecurrence: boolean; updatedAt: number }[]>();
+
+  for (const item of items ?? []) {
+    const payload = item.payload as {
+      googleCalendarEventId?: string;
+      googleRecurringSeriesId?: string;
+      googleRecurrence?: string[];
+    };
+    const eventId = payload.googleCalendarEventId;
+    if (!eventId || eventId.includes("_")) continue;
+
+    const key = payload.googleRecurringSeriesId ??
+      (payload.googleRecurrence?.length ? eventId : null);
+    if (!key) continue;
+
+    const arr = groups.get(key) ?? [];
+    arr.push({
+      id: item.id as string,
+      hasLink: linked.has(item.id as string),
+      hasRecurrence: Boolean(payload.googleRecurrence?.length),
+      updatedAt: new Date(item.updated_at as string).getTime(),
+    });
+    groups.set(key, arr);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    group.sort((a, b) => {
+      if (a.hasRecurrence !== b.hasRecurrence) return a.hasRecurrence ? -1 : 1;
+      if (a.hasLink !== b.hasLink) return a.hasLink ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+    for (let i = 1; i < group.length; i++) {
+      await deleteItemAndLinks(admin, userId, group[i].id);
+    }
+  }
+}
+
+/** Naprawia end_at wydarzeń całodniowych (jeden dzień = wyłączny koniec następnego dnia). */
+async function normalizeGoogleAllDayItems(admin: SupabaseClient, userId: string) {
+  const { data: items } = await admin.from("items").select("id, start_at, end_at, payload").eq(
+    "user_id",
+    userId,
+  ).eq("all_day", true).filter("payload->>syncSource", "eq", "google");
+
+  for (const item of items ?? []) {
+    const start = new Date(item.start_at as string);
+    const end = new Date(item.end_at as string);
+    const startDay = new Date(start);
+    startDay.setHours(0, 0, 0, 0);
+    const expectedEnd = new Date(startDay);
+    expectedEnd.setDate(expectedEnd.getDate() + 1);
+    if (Math.abs(end.getTime() - expectedEnd.getTime()) < 60_000) continue;
+
+    await admin.from("items").update({
+      start_at: startDay.toISOString(),
+      end_at: expectedEnd.toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq("id", item.id);
   }
 }
 
