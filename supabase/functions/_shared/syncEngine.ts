@@ -1186,6 +1186,7 @@ export async function runSyncForUser(
       if (itemIds?.length) query = query.in("id", itemIds);
       const { data: items } = await query;
       for (const item of (items ?? []) as ItemRow[]) {
+        if (isGoogleImportedItem(item)) continue;
         await pushItem(admin, userId, item, settings);
       }
     }

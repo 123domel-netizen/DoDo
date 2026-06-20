@@ -80,16 +80,53 @@ export async function getAccessToken(userId: string): Promise<string | null> {
   return accessToken;
 }
 
+const RATE_LIMIT_REASONS = [
+  "rateLimitExceeded",
+  "userRateLimitExceeded",
+  "quotaExceeded",
+];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function isRetryableRateLimit(res: Response): Promise<boolean> {
+  if (res.status === 429) return true;
+  if (res.status === 403) {
+    const text = await res.clone().text();
+    return RATE_LIMIT_REASONS.some((r) => text.includes(r));
+  }
+  if (res.status >= 500) return true;
+  return false;
+}
+
 export async function googleFetch(
   userId: string,
   url: string,
   init: RequestInit = {},
+  maxRetries = 5,
 ): Promise<Response> {
   const token = await getAccessToken(userId);
   if (!token) throw new Error("No Google access token");
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${token}`);
-  return fetch(url, { ...init, headers });
+
+  let res = await fetch(url, { ...init, headers });
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (res.ok) return res;
+    if (!(await isRetryableRateLimit(res))) return res;
+
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : Math.min(2 ** attempt * 1000, 32_000) + Math.floor(Math.random() * 500);
+    await sleep(backoffMs);
+
+    res = await fetch(url, { ...init, headers });
+  }
+
+  return res;
 }
 
 export async function exchangeCodeForTokens(code: string, redirectUri: string) {
