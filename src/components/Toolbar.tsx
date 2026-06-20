@@ -14,6 +14,7 @@ import {
 import { useStore } from "@/state/store";
 import type { CalendarViewKind } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
+import { getViewDays } from "@/lib/time";
 import { groupIdForNewItem } from "@/lib/groups";
 import { enablePush, ensureLocalNotificationPermission, pushSupported } from "@/lib/push";
 import { cloudEnabled, supabase } from "@/lib/supabase";
@@ -45,11 +46,21 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const anchor = new Date(settings.anchorDate);
 
   const shift = (dir: number) => {
-    let next: Date;
-    if (settings.view === "month") next = addMonths(anchor, dir);
-    else if (settings.view === "day") next = addDays(anchor, dir);
-    else next = addDays(anchor, dir * 7);
-    setSettings({ anchorDate: startOfDay(next).toISOString() });
+    if (settings.view === "month") {
+      setSettings({ anchorDate: startOfDay(addMonths(anchor, dir)).toISOString() });
+      return;
+    }
+    if (settings.view === "day") {
+      setSettings({ anchorDate: startOfDay(addDays(anchor, dir)).toISOString() });
+      return;
+    }
+    if (settings.view === "eleven") {
+      const days = getViewDays("eleven", anchor, settings.nineDayStartWeekday);
+      const next = addDays(days[0], dir * 7);
+      setSettings({ anchorDate: startOfDay(next).toISOString() });
+      return;
+    }
+    setSettings({ anchorDate: startOfDay(addDays(anchor, dir * 7)).toISOString() });
   };
 
   const goToday = () => setSettings({ anchorDate: startOfDay(new Date()).toISOString() });
