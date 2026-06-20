@@ -8,6 +8,7 @@ import {
   fetchGoogleStatus,
   fetchGoogleTaskLists,
   googleIntegrationAvailable,
+  reimportGoogle,
   saveGoogleSettings,
   startGoogleConnect,
   triggerGoogleSync,
@@ -108,6 +109,26 @@ export function GoogleIntegrationPanel() {
     setError(null);
     try {
       await triggerGoogleSync("full");
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const reimport = async () => {
+    if (
+      !window.confirm(
+        "Pełny ponowny import usunie zaimportowane wydarzenia Google z aplikacji i pobierze je od nowa z Google. Twój kalendarz Google nie zostanie zmieniony. Kontynuować?",
+      )
+    ) {
+      return;
+    }
+    setSyncing(true);
+    setError(null);
+    try {
+      await reimportGoogle();
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -265,6 +286,16 @@ export function GoogleIntegrationPanel() {
               Sync teraz
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => void reimport()}
+            disabled={syncing}
+            className="w-full rounded-lg border border-line px-2 py-1.5 text-xs text-ink-light transition hover:border-line-strong hover:text-ink disabled:opacity-60"
+            title="Usuwa zaimportowane wydarzenia Google z aplikacji i pobiera je od nowa"
+          >
+            Wyczyść i zaimportuj ponownie z Google
+          </button>
         </>
       )}
 

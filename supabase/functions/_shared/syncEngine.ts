@@ -169,26 +169,102 @@ async function applyRecurringInstanceChange(
   }).eq("id", master.id);
 }
 
+/** Czyści wszystkie zaimportowane wydarzenia kalendarza Google (przed pełnym importem). */
+async function resetGoogleCalendarImports(admin: SupabaseClient, userId: string) {
+  // Wydarzenia kalendarza zaimportowane z Google (nie dotykamy zadań ani lokalnych).
+  const { data: items } = await admin.from("items")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("type", "event")
+    .filter("payload->>syncSource", "eq", "google");
+
+  for (const item of items ?? []) {
+    await deleteItemAndLinks(admin, userId, item.id as string);
+  }
+
+  // Sprzątanie osieroconych linków kalendarza.
+  await admin.from("item_external_links")
+    .delete()
+    .eq("user_id", userId)
+    .eq("provider", "google_calendar");
+}
+
 /** Usuwa stare kopie pojedynczych wystąpień (import singleEvents=true). */
 async function cleanupRecurringInstanceItems(admin: SupabaseClient, userId: string) {
+  // 1) Po payloadzie (nowsze importy zapisują googleCalendarEventId).
   const { data: items } = await admin.from("items").select("id, payload, all_day, start_at, end_at")
     .eq("user_id", userId).filter("payload->>syncSource", "eq", "google");
 
   for (const item of items ?? []) {
-    const payload = item.payload as {
-      googleCalendarEventId?: string;
-      googleRecurringSeriesId?: string;
-      googleRecurrence?: string[];
-    };
-    const eventId = payload.googleCalendarEventId;
-    if (!eventId) continue;
-
-    if (eventId.includes("_")) {
+    const payload = item.payload as { googleCalendarEventId?: string };
+    if (payload.googleCalendarEventId?.includes("_")) {
       await deleteItemAndLinks(admin, userId, item.id as string);
     }
   }
 
+  // 2) Po linku do Google — identyfikatory wystąpień cyklu mają format
+  //    "{eventId}_{YYYYMMDD...}", więc zawierają podkreślnik. To łapie też
+  //    stare kopie sprzed wprowadzenia pól w payloadzie.
+  const { data: calLinks } = await admin.from("item_external_links")
+    .select("item_id, external_id")
+    .eq("user_id", userId)
+    .eq("provider", "google_calendar");
+
+  for (const link of calLinks ?? []) {
+    if ((link.external_id as string)?.includes("_")) {
+      await deleteItemAndLinks(admin, userId, link.item_id as string);
+    }
+  }
+
   await dedupeRecurringSeriesItems(admin, userId);
+  await dedupeGoogleByTitleAndDay(admin, userId);
+}
+
+/** Awaryjna deduplikacja: te same tytuł + dzień (np. stare kopie cykli bez metadanych). */
+async function dedupeGoogleByTitleAndDay(admin: SupabaseClient, userId: string) {
+  const { data: items } = await admin.from("items")
+    .select("id, title, start_at, updated_at, payload")
+    .eq("user_id", userId)
+    .eq("show_in_calendar", true)
+    .filter("payload->>syncSource", "eq", "google");
+
+  const { data: links } = await admin.from("item_external_links").select("item_id").eq(
+    "user_id",
+    userId,
+  ).eq("provider", "google_calendar");
+  const linked = new Set((links ?? []).map((l) => l.item_id as string));
+
+  const seen = new Map<string, { id: string; hasLink: boolean; updatedAt: number }>();
+  const toDelete: string[] = [];
+
+  for (const item of items ?? []) {
+    const day = new Date(item.start_at as string);
+    const key = `${(item.title as string) ?? ""}::${day.getUTCFullYear()}-${day.getUTCMonth()}-${day.getUTCDate()}`;
+    const current = {
+      id: item.id as string,
+      hasLink: linked.has(item.id as string),
+      updatedAt: new Date(item.updated_at as string).getTime(),
+    };
+    const prev = seen.get(key);
+    if (!prev) {
+      seen.set(key, current);
+      continue;
+    }
+    // Zostaw lepszy (z linkiem / nowszy), drugi do usunięcia.
+    const keepCurrent = (current.hasLink !== prev.hasLink)
+      ? current.hasLink
+      : current.updatedAt > prev.updatedAt;
+    if (keepCurrent) {
+      toDelete.push(prev.id);
+      seen.set(key, current);
+    } else {
+      toDelete.push(current.id);
+    }
+  }
+
+  for (const id of toDelete) {
+    await deleteItemAndLinks(admin, userId, id);
+  }
 }
 
 /** Zostawia jeden wpis na serię cykliczną (z RRULE). */
@@ -807,6 +883,9 @@ export async function pullCalendar(
   if (syncToken) {
     params.set("syncToken", syncToken);
   } else {
+    // Pełny import (pierwsza sync / wymuszony) — zaczynamy od czystej karty,
+    // żeby usunąć stare kopie wystąpień cykli z poprzednich importów.
+    await resetGoogleCalendarImports(admin, userId);
     const timeMin = new Date(Date.now() - 30 * 86_400_000).toISOString();
     params.set("timeMin", timeMin);
   }

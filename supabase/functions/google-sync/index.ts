@@ -81,6 +81,18 @@ Deno.serve(async (req) => {
         return json({ ok: true }, 200, corsHeaders());
       }
 
+      // Pełny ponowny import — czyści tokeny, żeby pobrać wszystko od nowa.
+      if (body.reimport) {
+        await admin.from("google_sync_state").upsert({
+          user_id: userId,
+          calendar_sync_token: null,
+          tasks_updated_min: null,
+          updated_at: new Date().toISOString(),
+        });
+        const result = await runSyncForUser(admin, userId, "full");
+        return json(result, 200, corsHeaders());
+      }
+
       // Enqueue sync jobs
       if (body.enqueue) {
         const rows = [];

@@ -96,6 +96,13 @@ export async function triggerGoogleSync(
   });
 }
 
+export async function reimportGoogle(): Promise<void> {
+  await fnFetch("google-sync", {
+    method: "POST",
+    body: JSON.stringify({ reimport: true }),
+  });
+}
+
 export async function enqueueGoogleSync(itemIds?: string[]): Promise<void> {
   await fnFetch("google-sync", {
     method: "POST",
