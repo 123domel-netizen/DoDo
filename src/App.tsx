@@ -1,0 +1,56 @@
+import { useEffect, useState } from "react";
+import { Toolbar } from "@/components/Toolbar";
+import { CalendarView } from "@/components/calendar/CalendarView";
+import { SidePanel } from "@/components/SidePanel";
+import { GroupRail } from "@/components/groups/GroupRail";
+import { AuthGate } from "@/components/AuthGate";
+import { useStore } from "@/state/store";
+import { useReminderScheduler } from "@/hooks/useReminderScheduler";
+import { handleGoogleOAuthReturn } from "@/components/settings/GoogleIntegrationPanel";
+import { cloudEnabled } from "@/lib/supabase";
+
+export default function App() {
+  const hydrated = useStore((s) => s.hydrated);
+  const editingId = useStore((s) => s.editingId);
+  const [todoOpen, setTodoOpen] = useState(() => window.innerWidth >= 1024);
+  useReminderScheduler();
+
+  useEffect(() => {
+    document.title = "DoDo";
+  }, []);
+
+  useEffect(() => {
+    if (!cloudEnabled) return;
+    void handleGoogleOAuthReturn();
+  }, []);
+
+  // The editor lives in the side panel, so opening an item forces the panel open.
+  const panelOpen = todoOpen || Boolean(editingId);
+
+  if (!hydrated) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-ink-faint">
+        Ładowanie…
+      </div>
+    );
+  }
+
+  return (
+    <AuthGate>
+      <div className="flex h-full flex-col">
+        <Toolbar todoOpen={todoOpen} onToggleTodo={() => setTodoOpen((v) => !v)} />
+        <div className="flex min-h-0 flex-1">
+          <main className="min-w-0 flex-1">
+            <CalendarView />
+          </main>
+          {panelOpen && (
+            <aside className="w-full max-w-[400px] shrink-0 border-l border-line md:w-[380px] lg:w-[400px]">
+              <SidePanel />
+            </aside>
+          )}
+          <GroupRail />
+        </div>
+      </div>
+    </AuthGate>
+  );
+}
