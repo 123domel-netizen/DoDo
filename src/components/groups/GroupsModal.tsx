@@ -1,7 +1,7 @@
 import { Modal } from "@/components/ui/Modal";
 import { useStore } from "@/state/store";
 import { GROUP_COLORS } from "@/lib/factory";
-import { findArchiveGroup, isArchiveGroup, sortGroupsForRail } from "@/lib/groups";
+import { findArchiveGroup, findGoogleGroup, isSystemGroup, sortGroupsForRail } from "@/lib/groups";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 
 export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -13,7 +13,8 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
 
   const userGroups = sortGroupsForRail(groups);
   const archive = findArchiveGroup(groups);
-  const displayGroups = archive ? [...userGroups, archive] : userGroups;
+  const google = findGoogleGroup(groups);
+  const displayGroups = [...userGroups, ...(google ? [google] : []), ...(archive ? [archive] : [])];
 
   return (
     <Modal open={open} onClose={onClose} width={460}>
@@ -24,7 +25,7 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
         </p>
         <div className="space-y-2">
           {displayGroups.map((g) => {
-            const locked = isArchiveGroup(g);
+            const locked = isSystemGroup(g);
             const userIndex = userGroups.findIndex((u) => u.id === g.id);
             const canMoveUp = !locked && userIndex > 0;
             const canMoveDown = !locked && userIndex >= 0 && userIndex < userGroups.length - 1;

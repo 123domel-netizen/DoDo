@@ -1,5 +1,6 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { withNormalizedAllDay } from "@/lib/allDay";
+import { findGoogleGroup } from "@/lib/groups";
 import type { Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
@@ -58,6 +59,11 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
 
 function rowToItem(row: Record<string, unknown>): Item {
   const payload = (row.payload ?? {}) as Record<string, unknown>;
+  // Importy z Google bez przypisanej grupy trafiają do lokalnej grupy „GOOGLE”.
+  let groupId = (row.group_id as string | null) ?? null;
+  if (!groupId && payload.syncSource === "google") {
+    groupId = findGoogleGroup(useStore.getState().groups)?.id ?? null;
+  }
   const item: Item = {
     id: row.id as string,
     type: row.type as Item["type"],
@@ -66,7 +72,7 @@ function rowToItem(row: Record<string, unknown>): Item {
     start: row.start_at as string,
     end: row.end_at as string,
     allDay: (row.all_day as boolean) ?? false,
-    groupId: (row.group_id as string | null) ?? null,
+    groupId,
     showInCalendar: (row.show_in_calendar as boolean) ?? true,
     showInTodo: (row.show_in_todo as boolean) ?? false,
     done: (row.done as boolean) ?? false,

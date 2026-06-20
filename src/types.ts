@@ -80,8 +80,8 @@ export interface Group {
   name: string;
   color: string;
   sortOrder: number;
-  /** Grupa systemowa (np. archiwum ukończonych zadań). */
-  system?: "archive";
+  /** Grupa systemowa (archiwum ukończonych zadań / import z Google). */
+  system?: "archive" | "google";
 }
 
 export type CalendarViewKind = "day" | "week" | "eleven" | "month";

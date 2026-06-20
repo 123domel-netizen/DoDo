@@ -115,13 +115,13 @@ function isGoogleImported(item: Item): boolean {
 }
 
 /**
- * Klucz grupowania powtarzalnych wpisów Google. Zwija:
- *  - prawdziwe serie (RRULE) po seriesKey,
- *  - stare kopie wystąpień (różne lata, ten sam tytuł) po tytule.
+ * Klucz grupowania wpisów Google na liście nadchodzących. Zwijamy WSZYSTKIE
+ * importy z Google po znormalizowanym tytule — dzięki temu duplikaty (np. wpis
+ * cykliczny z RRULE + osierocona kopia o tym samym tytule, albo wpis z lekko
+ * przesuniętą datą) pokazujemy jako jedną pozycję. Urodziny/rocznice mają
+ * unikalne tytuły, więc nie zlewają się ze sobą niepoprawnie.
  */
 function groupKeyForGoogle(item: Item): string | null {
-  const series = recurringSeriesId(item);
-  if (series) return `series:${series}`;
   if (isGoogleImported(item)) return `title:${(item.title || "").trim().toLowerCase()}`;
   return null;
 }

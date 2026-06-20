@@ -43,6 +43,7 @@ export interface ItemRow {
   start_at: string;
   end_at: string;
   all_day: boolean;
+  group_id: string | null;
   show_in_calendar: boolean;
   show_in_todo: boolean;
   done: boolean;

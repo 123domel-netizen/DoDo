@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings } from "@/types";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
-import { ensureArchiveGroup, findArchiveGroup, isArchiveGroup, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
+import { ensureArchiveGroup, ensureGoogleGroup, findArchiveGroup, findGoogleGroup, isArchiveGroup, isSystemGroup, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
 import { startOfDay } from "date-fns";
 
 interface AppState {
@@ -84,7 +84,9 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     settings.settingsVersion = 3;
   }
   groups = ensureArchiveGroup(groups);
+  groups = ensureGoogleGroup(groups);
   const archive = findArchiveGroup(groups)!;
+  const googleGroup = findGoogleGroup(groups)!;
   if ((settings.settingsVersion ?? 0) < 4) {
     groups = groups.map((g) =>
       isArchiveGroup(g) ? { ...g, system: "archive" as const, sortOrder: 9999 } : g,
@@ -110,6 +112,10 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
               groupId: archive.id,
             };
           }
+          // Importy z Google bez grupy → grupa „GOOGLE”.
+          if (!next.groupId && next.syncSource === "google") {
+            next = { ...next, groupId: googleGroup.id };
+          }
           return [id, next];
         }),
       )
@@ -118,7 +124,7 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
 }
 
 export function resetLocalUserState() {
-  const groups = ensureArchiveGroup(defaultGroups());
+  const groups = ensureGoogleGroup(ensureArchiveGroup(defaultGroups()));
   useStore.setState({
     items: {},
     groups,
@@ -234,7 +240,7 @@ export const useStore = create<AppState>()(
       },
 
       addGroup: (name, color) => {
-        const userGroups = get().groups.filter((g) => !isArchiveGroup(g));
+        const userGroups = get().groups.filter((g) => !isSystemGroup(g));
         const maxOrder = userGroups.reduce((m, g) => Math.max(m, g.sortOrder), -1);
         const group: Group = {
           id: uid(),
@@ -254,7 +260,7 @@ export const useStore = create<AppState>()(
       moveGroup: (id, direction) =>
         set((s) => {
           const target = s.groups.find((g) => g.id === id);
-          if (!target || isArchiveGroup(target)) return {};
+          if (!target || isSystemGroup(target)) return {};
 
           const ordered = sortGroupsForRail(s.groups);
           const idx = ordered.findIndex((g) => g.id === id);
@@ -269,7 +275,7 @@ export const useStore = create<AppState>()(
 
           return {
             groups: s.groups.map((g) =>
-              isArchiveGroup(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
+              isSystemGroup(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
             ),
           };
         }),
@@ -277,7 +283,7 @@ export const useStore = create<AppState>()(
       deleteGroup: (id) =>
         set((s) => {
           const target = s.groups.find((g) => g.id === id);
-          if (target && isArchiveGroup(target)) return {};
+          if (target && isSystemGroup(target)) return {};
           const items = { ...s.items };
           for (const key of Object.keys(items)) {
             if (items[key].groupId === id) items[key] = { ...items[key], groupId: null };

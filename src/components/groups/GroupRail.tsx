@@ -3,7 +3,9 @@ import { Settings2, Plus } from "lucide-react";
 import { useStore } from "@/state/store";
 import {
   ARCHIVE_GROUP_NAME,
+  GOOGLE_GROUP_NAME,
   findArchiveGroup,
+  findGoogleGroup,
   sortGroupsForRail,
 } from "@/lib/groups";
 import { GroupsModal } from "./GroupsModal";
@@ -43,11 +45,13 @@ function SystemRailButton({
   onClick,
   title,
   label,
+  accent = SYSTEM_ACCENT,
 }: {
   active: boolean;
   onClick: () => void;
   title: string;
   label: string;
+  accent?: string;
 }) {
   return (
     <button
@@ -55,13 +59,13 @@ function SystemRailButton({
       onClick={onClick}
       title={title}
       className={systemRailButtonClass(active)}
-      style={groupRailStyle(SYSTEM_ACCENT, active)}
+      style={groupRailStyle(accent, active)}
     >
       <span
         className={`vertical-text max-h-full truncate text-xs font-bold leading-none tracking-wider ${
           active ? "text-white/95" : ""
         }`}
-        style={active ? undefined : railLabelStyle(SYSTEM_ACCENT, false)}
+        style={active ? undefined : railLabelStyle(accent, false)}
       >
         {label}
       </span>
@@ -85,8 +89,10 @@ export function GroupRail() {
 
   const userGroups = sortGroupsForRail(groups);
   const archive = findArchiveGroup(groups);
+  const google = findGoogleGroup(groups);
   const allActive = activeGroupFilter === null;
   const archiveActive = archive ? activeGroupFilter === archive.id : false;
+  const googleActive = google ? activeGroupFilter === google.id : false;
 
   return (
     <div className="flex h-full w-16 min-h-0 flex-col border-l border-line bg-surface py-2">
@@ -129,6 +135,16 @@ export function GroupRail() {
             );
           })}
         </div>
+
+        {google && (
+          <SystemRailButton
+            active={googleActive}
+            onClick={() => setActiveGroupFilter(google.id)}
+            title="Zaimportowane z Google"
+            label={GOOGLE_GROUP_NAME}
+            accent={google.color}
+          />
+        )}
 
         {archive && (
           <SystemRailButton

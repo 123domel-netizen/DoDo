@@ -7,6 +7,11 @@ export const ARCHIVE_GROUP_COLOR = "#737881";
 /** Poprzednia nazwa — rozpoznawana przy migracji i filtrowaniu. */
 export const LEGACY_ARCHIVE_GROUP_NAME = "Archiwum";
 
+export const GOOGLE_GROUP_NAME = "GOOGLE";
+export const GOOGLE_GROUP_COLOR = "#4285F4";
+/** sortOrder grupy GOOGLE — tuż pod grupami użytkownika, nad ARCH (9999). */
+export const GOOGLE_GROUP_SORT_ORDER = 9000;
+
 export function isArchiveGroup(group: Pick<Group, "name" | "system">): boolean {
   return (
     group.system === "archive" ||
@@ -15,8 +20,21 @@ export function isArchiveGroup(group: Pick<Group, "name" | "system">): boolean {
   );
 }
 
+export function isGoogleGroup(group: Pick<Group, "name" | "system">): boolean {
+  return group.system === "google" || group.name === GOOGLE_GROUP_NAME;
+}
+
+/** Grupy systemowe (ARCH / GOOGLE) — niesortowalne, nieusuwalne. */
+export function isSystemGroup(group: Pick<Group, "name" | "system">): boolean {
+  return isArchiveGroup(group) || isGoogleGroup(group);
+}
+
 export function findArchiveGroup(groups: Group[]): Group | undefined {
   return groups.find(isArchiveGroup);
+}
+
+export function findGoogleGroup(groups: Group[]): Group | undefined {
+  return groups.find(isGoogleGroup);
 }
 
 export function ensureArchiveGroup(groups: Group[]): Group[] {
@@ -29,6 +47,20 @@ export function ensureArchiveGroup(groups: Group[]): Group[] {
       color: ARCHIVE_GROUP_COLOR,
       sortOrder: 9999,
       system: "archive",
+    },
+  ];
+}
+
+export function ensureGoogleGroup(groups: Group[]): Group[] {
+  if (findGoogleGroup(groups)) return groups;
+  return [
+    ...groups,
+    {
+      id: uid(),
+      name: GOOGLE_GROUP_NAME,
+      color: GOOGLE_GROUP_COLOR,
+      sortOrder: GOOGLE_GROUP_SORT_ORDER,
+      system: "google",
     },
   ];
 }
@@ -80,6 +112,6 @@ export function patchForTaskDone(item: Item, done: boolean, archiveGroupId: stri
 
 export function sortGroupsForRail(groups: Group[]): Group[] {
   return groups
-    .filter((g) => !isArchiveGroup(g))
+    .filter((g) => !isSystemGroup(g))
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
