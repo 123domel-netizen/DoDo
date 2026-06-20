@@ -110,56 +110,89 @@ export function expandItemsForRange(items: Item[], rangeStart: Date, rangeEnd: D
   return out;
 }
 
-function isListEligible(item: Item, masterSeriesIds: Set<string>): boolean {
-  if (!item.hasDueDate || !item.showInCalendar) return false;
-  if (isGoogleInstanceCopy(item)) return false;
-  const series = recurringSeriesId(item);
-  if (series && masterSeriesIds.has(series) && !hasRecurrence(item)) return false;
-  return true;
+function isGoogleImported(item: Item): boolean {
+  return item.syncSource === "google" || Boolean(item.googleCalendarEventId) || hasRecurrence(item);
 }
 
-/** Lista nadchodzących wydarzeń: jedno następne wystąpienie na cykl, bez starych kopii instancji. */
+/**
+ * Klucz grupowania powtarzalnych wpisów Google. Zwija:
+ *  - prawdziwe serie (RRULE) po seriesKey,
+ *  - stare kopie wystąpień (różne lata, ten sam tytuł) po tytule.
+ */
+function groupKeyForGoogle(item: Item): string | null {
+  const series = recurringSeriesId(item);
+  if (series) return `series:${series}`;
+  if (isGoogleImported(item)) return `title:${(item.title || "").trim().toLowerCase()}`;
+  return null;
+}
+
+/** Lista nadchodzących wydarzeń: jedno najbliższe wystąpienie na cykl / powtarzalny tytuł. */
 export function itemsForUpcomingEventsList(items: Item[], from: Date, to: Date): Item[] {
-  const normalized = items.map(withNormalizedAllDay);
+  const normalized = items
+    .map(withNormalizedAllDay)
+    .filter((it) => it.hasDueDate && it.showInCalendar)
+    .filter((it) => !isGoogleInstanceCopy(it));
 
-  const masterSeriesIds = new Set(
-    normalized
-      .filter(hasRecurrence)
-      .map(recurringSeriesId)
-      .filter((id): id is string => Boolean(id)),
-  );
+  const fromMs = from.getTime();
 
-  const eligible = normalized.filter((it) => isListEligible(it, masterSeriesIds));
-  const seenSeries = new Set<string>();
+  // 1) Wpisy bez grupowania (lokalne, jednorazowe) — pokazujemy wszystkie przyszłe.
+  const standalone: Item[] = [];
+  // 2) Powtarzalne / cykliczne Google — zbieramy kandydatów per grupa.
+  const grouped = new Map<string, Item[]>();
 
-  const nonRecurring = eligible.filter((it) => {
-    if (hasRecurrence(it)) return false;
-    const series = recurringSeriesId(it);
-    if (series) {
-      if (seenSeries.has(series)) return false;
-      seenSeries.add(series);
+  for (const it of normalized) {
+    const key = groupKeyForGoogle(it);
+    if (!key) {
+      if (new Date(it.end).getTime() >= fromMs) standalone.push(it);
+      continue;
     }
-    const dedupeKey = `${it.title}::${startOfDay(new Date(it.start)).toISOString()}`;
-    if (seenSeries.has(dedupeKey)) return false;
-    seenSeries.add(dedupeKey);
-    return new Date(it.end).getTime() >= from.getTime();
-  });
+    const arr = grouped.get(key) ?? [];
+    arr.push(it);
+    grouped.set(key, arr);
+  }
 
-  const recurring = eligible.filter((it) => {
-    if (!hasRecurrence(it)) return false;
-    const key = seriesKey(it);
-    if (seenSeries.has(key)) return false;
-    seenSeries.add(key);
-    return true;
-  });
+  const nextPerGroup: Item[] = [];
+  for (const arr of grouped.values()) {
+    let best: Item | null = null;
+    let bestStart = Infinity;
 
-  const nextOccurrences = recurring
-    .map((it) =>
-      expandItemOccurrences(it, from, to).find((o) => new Date(o.end).getTime() >= from.getTime()),
-    )
-    .filter((x): x is Item => Boolean(x));
+    for (const it of arr) {
+      const candidates = hasRecurrence(it)
+        ? expandItemOccurrences(it, from, to)
+        : [it];
+      for (const occ of candidates) {
+        const endMs = new Date(occ.end).getTime();
+        const startMs = new Date(occ.start).getTime();
+        if (endMs < fromMs) continue;
+        if (startMs < bestStart) {
+          best = occ;
+          bestStart = startMs;
+        }
+      }
+    }
 
-  return [...nonRecurring, ...nextOccurrences].sort(
+    // Jeśli wszystkie wystąpienia są w przeszłości, pokaż ostatnie znane (np. coroczne).
+    if (!best) {
+      let latest: Item | null = null;
+      let latestStart = -Infinity;
+      for (const it of arr) {
+        const s = new Date(it.start).getTime();
+        if (s > latestStart) {
+          latest = it;
+          latestStart = s;
+        }
+      }
+      if (latest && hasRecurrence(latest)) {
+        // dla cykli spróbuj policzyć kolejne wystąpienie w szerszym oknie
+        const wide = expandItemOccurrences(latest, from, new Date(to.getTime() + 366 * 86_400_000));
+        best = wide.find((o) => new Date(o.end).getTime() >= fromMs) ?? null;
+      }
+    }
+
+    if (best) nextPerGroup.push(best);
+  }
+
+  return [...standalone, ...nextPerGroup].sort(
     (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
   );
 }

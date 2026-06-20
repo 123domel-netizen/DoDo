@@ -69,6 +69,8 @@ export interface Item {
   googleRecurringSeriesId?: string;
   googleRecurrenceExceptions?: GoogleRecurrenceException[];
   googleCalendarEventId?: string;
+  /** "google" gdy element pochodzi z importu Google (tylko do odczytu). */
+  syncSource?: "local" | "google";
   createdAt: string;
   updatedAt: string;
 }

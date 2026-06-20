@@ -83,6 +83,7 @@ function rowToItem(row: Record<string, unknown>): Item {
     googleRecurrenceExceptions:
       (payload.googleRecurrenceExceptions as Item["googleRecurrenceExceptions"]) ?? undefined,
     googleCalendarEventId: (payload.googleCalendarEventId as string | undefined) ?? undefined,
+    syncSource: (payload.syncSource as Item["syncSource"]) ?? undefined,
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
