@@ -12,6 +12,7 @@ import {
 import { useStore } from "@/state/store";
 import type { Item } from "@/types";
 import { fmt, fmtRange, tint } from "@/lib/format";
+import { allDayCalendarDate } from "@/lib/allDay";
 import { groupIdForNewItem, findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
 import { defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { isToday, isPast, isTomorrow, addMonths } from "date-fns";
@@ -246,7 +247,7 @@ function EventRow({
   group?: { name: string; color: string };
   onOpen: () => void;
 }) {
-  const start = new Date(item.start);
+  const start = item.allDay ? allDayCalendarDate(item.start) : new Date(item.start);
   const today = isToday(start);
   const tomorrow = isTomorrow(start);
   const color = group?.color ?? "#5E7FA8";

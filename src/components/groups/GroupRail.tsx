@@ -134,17 +134,26 @@ export function GroupRail() {
               </button>
             );
           })}
-        </div>
 
-        {google && (
-          <SystemRailButton
-            active={googleActive}
-            onClick={() => setActiveGroupFilter(google.id)}
-            title="Zaimportowane z Google"
-            label={GOOGLE_GROUP_NAME}
-            accent={google.color}
-          />
-        )}
+          {google && (
+            <button
+              type="button"
+              onClick={() => setActiveGroupFilter(google.id)}
+              title="Zaimportowane z Google"
+              className={userRailButtonClass(googleActive)}
+              style={groupRailStyle(google.color, googleActive)}
+            >
+              <span
+                className={`vertical-text max-h-full truncate text-[14px] font-semibold leading-none ${
+                  googleActive ? "text-white/95" : ""
+                }`}
+                style={googleActive ? undefined : railLabelStyle(google.color, false)}
+              >
+                {GOOGLE_GROUP_NAME}
+              </span>
+            </button>
+          )}
+        </div>
 
         {archive && (
           <SystemRailButton

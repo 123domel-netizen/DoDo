@@ -24,9 +24,18 @@ export function isGoogleGroup(group: Pick<Group, "name" | "system">): boolean {
   return group.system === "google" || group.name === GOOGLE_GROUP_NAME;
 }
 
-/** Grupy systemowe (ARCH / GOOGLE) — niesortowalne, nieusuwalne. */
 export function isSystemGroup(group: Pick<Group, "name" | "system">): boolean {
   return isArchiveGroup(group) || isGoogleGroup(group);
+}
+
+/** Nazwa / kolejność / usuwanie zablokowane (ARCH + GOOGLE). */
+export function isGroupStructureLocked(group: Pick<Group, "name" | "system">): boolean {
+  return isSystemGroup(group);
+}
+
+/** Kolor edytowalny tylko dla grup użytkownika i GOOGLE (ARCH ma stały kolor). */
+export function isGroupColorLocked(group: Pick<Group, "name" | "system">): boolean {
+  return isArchiveGroup(group);
 }
 
 export function findArchiveGroup(groups: Group[]): Group | undefined {
@@ -61,6 +70,7 @@ export function ensureGoogleGroup(groups: Group[]): Group[] {
       color: GOOGLE_GROUP_COLOR,
       sortOrder: GOOGLE_GROUP_SORT_ORDER,
       system: "google",
+      hideFromAll: true,
     },
   ];
 }
@@ -75,9 +85,17 @@ export function itemMatchesGroupFilter(
   scope: GroupFilterScope = "calendar",
 ): boolean {
   const archiveId = findArchiveGroup(useStore.getState().groups)?.id ?? null;
+  const google = findGoogleGroup(useStore.getState().groups);
 
   if (!filterGroupId) {
     if (scope === "todo" && archiveId && item.groupId === archiveId) return false;
+    if (
+      google &&
+      google.hideFromAll !== false &&
+      item.groupId === google.id
+    ) {
+      return false;
+    }
     return true;
   }
   return item.groupId === filterGroupId;

@@ -18,6 +18,7 @@ export const GROUP_COLORS = [
   "#8A7B68",
   "#857A9E",
   "#737881",
+  "#4285F4",
 ];
 
 export const LEGACY_GROUP_COLOR_MAP: Record<string, string> = {

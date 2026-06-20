@@ -3,7 +3,8 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings } from "@/types";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
-import { ensureArchiveGroup, ensureGoogleGroup, findArchiveGroup, findGoogleGroup, isArchiveGroup, isSystemGroup, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
+import { ensureArchiveGroup, ensureGoogleGroup, findArchiveGroup, findGoogleGroup, isArchiveGroup, isGoogleGroup, isGroupStructureLocked, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
+import { normalizeAllDayRange } from "@/lib/allDay";
 import { startOfDay } from "date-fns";
 
 interface AppState {
@@ -67,7 +68,7 @@ function defaultSettings(): Settings {
     anchorDate: startOfDay(new Date()).toISOString(),
     nineDayStartWeekday: 5,
     hourHeight: 52,
-    settingsVersion: 5,
+    settingsVersion: 7,
   };
 }
 
@@ -120,6 +121,25 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
         }),
       )
     : undefined;
+  if ((settings.settingsVersion ?? 0) < 6 && items) {
+    items = Object.fromEntries(
+      Object.entries(items).map(([id, it]) => {
+        if (!it.allDay || !it.hasDueDate) return [id, it];
+        const { start, end } = normalizeAllDayRange(it.start, it.end);
+        if (start === it.start && end === it.end) return [id, it];
+        return [id, { ...it, start, end, updatedAt: new Date().toISOString() }];
+      }),
+    );
+    settings.settingsVersion = 6;
+  }
+  if ((settings.settingsVersion ?? 0) < 7) {
+    groups = groups.map((g) =>
+      isGoogleGroup(g) && g.hideFromAll === undefined
+        ? { ...g, hideFromAll: true }
+        : g,
+    );
+    settings.settingsVersion = 7;
+  }
   return { settings, groups, items, activeGroupFilter: state?.activeGroupFilter ?? null };
 }
 
@@ -240,7 +260,7 @@ export const useStore = create<AppState>()(
       },
 
       addGroup: (name, color) => {
-        const userGroups = get().groups.filter((g) => !isSystemGroup(g));
+        const userGroups = get().groups.filter((g) => !isGroupStructureLocked(g));
         const maxOrder = userGroups.reduce((m, g) => Math.max(m, g.sortOrder), -1);
         const group: Group = {
           id: uid(),
@@ -260,7 +280,7 @@ export const useStore = create<AppState>()(
       moveGroup: (id, direction) =>
         set((s) => {
           const target = s.groups.find((g) => g.id === id);
-          if (!target || isSystemGroup(target)) return {};
+          if (!target || isGroupStructureLocked(target)) return {};
 
           const ordered = sortGroupsForRail(s.groups);
           const idx = ordered.findIndex((g) => g.id === id);
@@ -275,7 +295,7 @@ export const useStore = create<AppState>()(
 
           return {
             groups: s.groups.map((g) =>
-              isSystemGroup(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
+              isGroupStructureLocked(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
             ),
           };
         }),
@@ -283,7 +303,7 @@ export const useStore = create<AppState>()(
       deleteGroup: (id) =>
         set((s) => {
           const target = s.groups.find((g) => g.id === id);
-          if (target && isSystemGroup(target)) return {};
+          if (target && isGroupStructureLocked(target)) return {};
           const items = { ...s.items };
           for (const key of Object.keys(items)) {
             if (items[key].groupId === id) items[key] = { ...items[key], groupId: null };

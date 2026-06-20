@@ -17,6 +17,7 @@ import {
 } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { fmt, fmtTime } from "@/lib/format";
+import { normalizeAllDayRange } from "@/lib/allDay";
 
 const SLOT_MINUTES = 15;
 
@@ -127,8 +128,7 @@ function changeEndTime(startIso: string, _endIso: string, h: number, m: number) 
 }
 
 function toAllDay(startIso: string) {
-  const s = startOfDay(new Date(startIso));
-  return { start: s.toISOString(), end: addDays(s, 1).toISOString() };
+  return normalizeAllDayRange(startIso);
 }
 
 function fromAllDay(startIso: string) {

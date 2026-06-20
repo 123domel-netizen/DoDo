@@ -1,6 +1,6 @@
 import { addDays, startOfDay } from "date-fns";
 import { rrulestr } from "rrule";
-import { normalizeAllDayRange, withNormalizedAllDay } from "@/lib/allDay";
+import { allDayCalendarDate, normalizeAllDayRange, noonAnchorFromCalendarDate, withNormalizedAllDay } from "@/lib/allDay";
 import type { GoogleRecurrenceException, Item } from "@/types";
 
 export function hasRecurrence(item: Item): boolean {
@@ -24,13 +24,14 @@ export function seriesKey(item: Item): string {
 }
 
 function formatRruleDtstart(item: Item): string {
-  const d = startOfDay(new Date(item.start));
   if (item.allDay) {
+    const d = allDayCalendarDate(item.start);
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
     return `DTSTART;VALUE=DATE:${y}${m}${day}`;
   }
+  const d = startOfDay(new Date(item.start));
   const p = (n: number) => String(n).padStart(2, "0");
   return `DTSTART:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
 }
@@ -77,12 +78,17 @@ export function expandItemOccurrences(item: Item, rangeStart: Date, rangeEnd: Da
     const ex = exceptionForOccurrence(exceptions, occStart);
     if (ex?.status === "cancelled") continue;
 
-    const start = startOfDay(ex?.start ? new Date(ex.start) : occStart);
+    const calStart = ex?.start
+      ? allDayCalendarDate(ex.start)
+      : allDayCalendarDate(occStart.toISOString());
     if (base.allDay) {
-      const { start: ns, end: ne } = normalizeAllDayRange(start.toISOString(), start.toISOString());
+      const { start: ns, end: ne } = normalizeAllDayRange(
+        noonAnchorFromCalendarDate(calStart),
+        noonAnchorFromCalendarDate(addDays(calStart, 1)),
+      );
       out.push({
         ...base,
-        id: `${base.id}__${start.getTime()}`,
+        id: `${base.id}__${calStart.getTime()}`,
         title: ex?.title ?? base.title,
         start: ns,
         end: ne,

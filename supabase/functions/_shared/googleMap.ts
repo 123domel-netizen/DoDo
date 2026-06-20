@@ -146,13 +146,21 @@ function addDaysToYmd(ymd: string, days: number): string {
 export function googleAllDayRangeToApp(
   startDate: string,
   endDateExclusive: string | undefined,
-  timeZone = DEFAULT_TIME_ZONE,
+  _timeZone = DEFAULT_TIME_ZONE,
 ): { start_at: string; end_at: string } {
   const endExclusive = endDateExclusive ?? addDaysToYmd(startDate, 1);
+  // Kotwica w południe UTC — ten sam dzień kalendarzowy co w Google (date),
+  // bez przesunięć przy konwersji stref czasowych.
   return {
-    start_at: localMidnightIsoFromYmd(startDate, timeZone),
-    end_at: localMidnightIsoFromYmd(endExclusive, timeZone),
+    start_at: `${startDate}T12:00:00.000Z`,
+    end_at: `${endExclusive}T12:00:00.000Z`,
   };
+}
+
+/** YYYY-MM-DD z ISO wydarzenia całodniowego (kotwica południa UTC lub legacy). */
+export function allDayYmdFromIso(iso: string): string {
+  if (/^\d{4}-\d{2}-\d{2}T12:00:00\.000Z$/.test(iso)) return iso.slice(0, 10);
+  return ymdInTimeZone(iso, DEFAULT_TIME_ZONE);
 }
 
 /** Zwraca ISO dla północy danego dnia kalendarzowego w `timeZone`. */
@@ -195,8 +203,8 @@ export function toCalendarEvent(item: ItemRow, timeZone = DEFAULT_TIME_ZONE) {
   };
 
   if (item.all_day) {
-    event.start = { date: ymdInTimeZone(item.start_at, timeZone), timeZone };
-    event.end = { date: ymdInTimeZone(item.end_at, timeZone), timeZone };
+    event.start = { date: allDayYmdFromIso(item.start_at), timeZone };
+    event.end = { date: allDayYmdFromIso(item.end_at), timeZone };
     if (item.payload.googleRecurrence?.length) {
       event.recurrence = item.payload.googleRecurrence;
     }

@@ -1,7 +1,7 @@
 import { Modal } from "@/components/ui/Modal";
 import { useStore } from "@/state/store";
 import { GROUP_COLORS } from "@/lib/factory";
-import { findArchiveGroup, findGoogleGroup, isSystemGroup, sortGroupsForRail } from "@/lib/groups";
+import { findArchiveGroup, findGoogleGroup, isGoogleGroup, isGroupColorLocked, isGroupStructureLocked, sortGroupsForRail } from "@/lib/groups";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 
 export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -25,14 +25,16 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
         </p>
         <div className="space-y-2">
           {displayGroups.map((g) => {
-            const locked = isSystemGroup(g);
+            const structureLocked = isGroupStructureLocked(g);
+            const colorLocked = isGroupColorLocked(g);
             const userIndex = userGroups.findIndex((u) => u.id === g.id);
-            const canMoveUp = !locked && userIndex > 0;
-            const canMoveDown = !locked && userIndex >= 0 && userIndex < userGroups.length - 1;
+            const canMoveUp = !structureLocked && userIndex > 0;
+            const canMoveDown = !structureLocked && userIndex >= 0 && userIndex < userGroups.length - 1;
 
             return (
-              <div key={g.id} className="flex items-center gap-1.5">
-                {!locked ? (
+              <div key={g.id} className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  {!structureLocked ? (
                   <div className="flex shrink-0 flex-col">
                     <button
                       type="button"
@@ -62,17 +64,17 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
                 <ColorPicker
                   value={g.color}
                   onChange={(color) => patchGroup(g.id, { color })}
-                  disabled={locked}
+                  disabled={colorLocked}
                 />
                 <input
                   value={g.name}
-                  readOnly={locked}
+                  readOnly={structureLocked}
                   onChange={(e) => patchGroup(g.id, { name: e.target.value })}
                   className={`flex-1 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-ink outline-none focus:border-line-strong ${
-                    locked ? "cursor-default opacity-80" : ""
+                    structureLocked ? "cursor-default opacity-80" : ""
                   }`}
                 />
-                {!locked && (
+                {!structureLocked && (
                   <button
                     type="button"
                     onClick={() => {
@@ -84,6 +86,18 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
                   >
                     <Trash2 size={15} />
                   </button>
+                )}
+                </div>
+                {isGoogleGroup(g) && (
+                  <label className="ml-[30px] flex cursor-pointer items-center gap-2 text-[11px] text-ink-faint">
+                    <input
+                      type="checkbox"
+                      checked={g.hideFromAll !== false}
+                      onChange={(e) => patchGroup(g.id, { hideFromAll: e.target.checked })}
+                      className="h-3.5 w-3.5 accent-accent"
+                    />
+                    Ukryj w widoku ALL
+                  </label>
                 )}
               </div>
             );
@@ -140,6 +154,7 @@ function colorName(hex: string): string {
     "#8a7b68": "Brąz",
     "#857a9e": "Lawenda",
     "#737881": "Grafit",
+    "#4285f4": "Google",
   };
   return names[hex.toLowerCase()] ?? hex;
 }

@@ -82,6 +82,8 @@ export interface Group {
   sortOrder: number;
   /** Grupa systemowa (archiwum ukończonych zadań / import z Google). */
   system?: "archive" | "google";
+  /** Tylko GOOGLE: gdy true, elementy nie widać przy filtrze ALL (domyślnie włączone). */
+  hideFromAll?: boolean;
 }
 
 export type CalendarViewKind = "day" | "week" | "eleven" | "month";
