@@ -47,6 +47,9 @@ export interface ItemRow {
     syncSource?: "local" | "google";
     /** reminderId → Google Calendar event id (zarządzane przez sync) */
     googleReminderEventIds?: Record<string, string>;
+    /** Id w Google — do ponownego łączenia po reconnect */
+    googleCalendarEventId?: string;
+    googleTaskId?: string;
   };
   updated_at: string;
 }
@@ -101,9 +104,65 @@ export function wantsTasks(item: ItemRow, settings: GoogleSyncSettingsRow): bool
   return mode === "tasks_only" || mode === "both_linked";
 }
 
-export function toCalendarEvent(item: ItemRow, timeZone = "Europe/Warsaw") {
-  const start = new Date(item.start_at);
-  const end = new Date(item.end_at);
+const DEFAULT_TIME_ZONE = "Europe/Warsaw";
+
+/** YYYY-MM-DD w podanej strefie (en-CA daje format ISO). */
+export function ymdInTimeZone(iso: string, timeZone = DEFAULT_TIME_ZONE): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+
+function addDaysToYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Google Calendar: pola `date` to północ w strefie kalendarza, `end.date` jest wyłączne.
+ * Aplikacja: `end_at` też jest wyłączne (północ dnia po ostatnim dniu wydarzenia).
+ */
+export function googleAllDayRangeToApp(
+  startDate: string,
+  endDateExclusive: string | undefined,
+  timeZone = DEFAULT_TIME_ZONE,
+): { start_at: string; end_at: string } {
+  const endExclusive = endDateExclusive ?? addDaysToYmd(startDate, 1);
+  return {
+    start_at: localMidnightIsoFromYmd(startDate, timeZone),
+    end_at: localMidnightIsoFromYmd(endExclusive, timeZone),
+  };
+}
+
+/** Zwraca ISO dla północy danego dnia kalendarzowego w `timeZone`. */
+function localMidnightIsoFromYmd(ymd: string, timeZone: string): string {
+  const noonUtc = Date.parse(`${ymd}T12:00:00.000Z`);
+  const partsAtNoon = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(noonUtc));
+  const part = (type: string) => partsAtNoon.find((p) => p.type === type)?.value ?? "0";
+  const hourAtNoon = Number(part("hour")) % 24;
+  const midnightUtc = noonUtc - hourAtNoon * 3_600_000;
+  const check = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(midnightUtc));
+  if (check === ymd) return new Date(midnightUtc).toISOString();
+  return new Date(midnightUtc + 3_600_000).toISOString();
+}
+
+export function toCalendarEvent(item: ItemRow, timeZone = DEFAULT_TIME_ZONE) {
   const reminders = item.payload.reminders ?? [];
 
   const event: Record<string, unknown> = {
@@ -119,8 +178,8 @@ export function toCalendarEvent(item: ItemRow, timeZone = "Europe/Warsaw") {
   };
 
   if (item.all_day) {
-    event.start = { date: start.toISOString().slice(0, 10), timeZone };
-    event.end = { date: end.toISOString().slice(0, 10), timeZone };
+    event.start = { date: ymdInTimeZone(item.start_at, timeZone), timeZone };
+    event.end = { date: ymdInTimeZone(item.end_at, timeZone), timeZone };
   } else {
     event.start = { dateTime: item.start_at, timeZone };
     event.end = { dateTime: item.end_at, timeZone };
@@ -197,12 +256,17 @@ export function googleEventToItemPatch(
   ev: Record<string, unknown>,
   existing: ItemRow | null,
 ): Partial<ItemRow> & { payload: ItemRow["payload"] } {
-  const startObj = ev.start as { dateTime?: string; date?: string };
-  const endObj = ev.end as { dateTime?: string; date?: string };
+  const startObj = ev.start as { dateTime?: string; date?: string; timeZone?: string };
+  const endObj = ev.end as { dateTime?: string; date?: string; timeZone?: string };
   const allDay = Boolean(startObj?.date && !startObj?.dateTime);
-  const start = startObj?.dateTime ?? (startObj?.date ? `${startObj.date}T00:00:00.000Z` : new Date().toISOString());
-  const end = endObj?.dateTime ??
-    (endObj?.date ? `${endObj.date}T23:59:59.000Z` : start);
+  const timeZone = startObj?.timeZone ?? endObj?.timeZone ?? DEFAULT_TIME_ZONE;
+  const timedRange = allDay && startObj?.date
+    ? googleAllDayRangeToApp(startObj.date, endObj?.date, timeZone)
+    : null;
+  const start = timedRange?.start_at ??
+    (startObj?.dateTime ?? new Date().toISOString());
+  const end = timedRange?.end_at ??
+    (endObj?.dateTime ?? start);
 
   const googleUpdated = (ev.updated as string) ?? new Date().toISOString();
   const existingUpdated = existing?.updated_at ?? "1970-01-01T00:00:00.000Z";
@@ -223,6 +287,7 @@ export function googleEventToItemPatch(
       ...(existing?.payload ?? {}),
       hasDueDate: true,
       syncSource: "google",
+      googleCalendarEventId: (ev.id as string) ?? existing?.payload.googleCalendarEventId,
       checklist: existing?.payload.checklist ?? [],
       reminders: existing?.payload.reminders ?? [],
     },
@@ -256,6 +321,7 @@ export function googleTaskToItemPatch(
       ...(existing?.payload ?? {}),
       hasDueDate: Boolean(due),
       syncSource: "google",
+      googleTaskId: (task.id as string) ?? existing?.payload.googleTaskId,
       checklist: existing?.payload.checklist ?? [],
       reminders: existing?.payload.reminders ?? [],
     },

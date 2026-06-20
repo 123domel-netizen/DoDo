@@ -21,6 +21,170 @@ import {
 const CAL_BASE = "https://www.googleapis.com/calendar/v3";
 const TASKS_BASE = "https://www.googleapis.com/tasks/v1";
 
+async function itemHasProviderLink(
+  admin: SupabaseClient,
+  itemId: string,
+  provider: ExternalLinkRow["provider"],
+): Promise<boolean> {
+  const { data } = await admin.from("item_external_links").select("id").eq("item_id", itemId).eq(
+    "provider",
+    provider,
+  ).maybeSingle();
+  return Boolean(data);
+}
+
+async function findOrphanGoogleCalendarItem(
+  admin: SupabaseClient,
+  userId: string,
+  googleEventId: string,
+  title: string,
+): Promise<ItemRow | null> {
+  const { data: byPayload } = await admin.from("items").select("*").eq("user_id", userId).filter(
+    "payload->>googleCalendarEventId",
+    "eq",
+    googleEventId,
+  ).limit(1);
+  if (byPayload?.[0]) return byPayload[0] as ItemRow;
+
+  const { data: candidates } = await admin.from("items").select("*").eq("user_id", userId).eq(
+    "title",
+    title,
+  ).filter("payload->>syncSource", "eq", "google");
+  for (const candidate of candidates ?? []) {
+    if (await itemHasProviderLink(admin, candidate.id, "google_calendar")) continue;
+    return candidate as ItemRow;
+  }
+  return null;
+}
+
+async function findOrphanGoogleTaskItem(
+  admin: SupabaseClient,
+  userId: string,
+  googleTaskId: string,
+  title: string,
+): Promise<ItemRow | null> {
+  const { data: byPayload } = await admin.from("items").select("*").eq("user_id", userId).filter(
+    "payload->>googleTaskId",
+    "eq",
+    googleTaskId,
+  ).limit(1);
+  if (byPayload?.[0]) return byPayload[0] as ItemRow;
+
+  const { data: candidates } = await admin.from("items").select("*").eq("user_id", userId).eq(
+    "title",
+    title,
+  ).filter("payload->>syncSource", "eq", "google");
+  for (const candidate of candidates ?? []) {
+    if (await itemHasProviderLink(admin, candidate.id, "google_tasks")) continue;
+    return candidate as ItemRow;
+  }
+  return null;
+}
+
+async function deleteItemAndLinks(
+  admin: SupabaseClient,
+  userId: string,
+  itemId: string,
+) {
+  await admin.from("item_external_links").delete().eq("user_id", userId).eq("item_id", itemId);
+  await admin.from("items").delete().eq("id", itemId);
+}
+
+/** Usuwa duplikaty po reconnect (stary wpis bez linku + nowy z linkiem). */
+async function dedupeGoogleImports(admin: SupabaseClient, userId: string) {
+  const { data: calLinks } = await admin.from("item_external_links").select("item_id").eq(
+    "user_id",
+    userId,
+  ).eq("provider", "google_calendar");
+  const linkedCal = new Set((calLinks ?? []).map((l) => l.item_id as string));
+
+  const { data: calItems } = await admin.from("items").select("id, title, updated_at, payload")
+    .eq("user_id", userId).eq("show_in_calendar", true).filter(
+      "payload->>syncSource",
+      "eq",
+      "google",
+    );
+
+  const linkedCalTitles = new Set<string>();
+  for (const item of calItems ?? []) {
+    if (linkedCal.has(item.id as string)) linkedCalTitles.add(item.title as string);
+  }
+
+  const byCalExt = new Map<string, { id: string; hasLink: boolean; updatedAt: number }[]>();
+  for (const item of calItems ?? []) {
+    const payload = item.payload as { googleCalendarEventId?: string };
+    const extId = payload?.googleCalendarEventId;
+    if (extId) {
+      const arr = byCalExt.get(extId) ?? [];
+      arr.push({
+        id: item.id as string,
+        hasLink: linkedCal.has(item.id as string),
+        updatedAt: new Date(item.updated_at as string).getTime(),
+      });
+      byCalExt.set(extId, arr);
+    }
+
+    if (!linkedCal.has(item.id as string) && linkedCalTitles.has(item.title as string)) {
+      await deleteItemAndLinks(admin, userId, item.id as string);
+    }
+  }
+
+  for (const group of byCalExt.values()) {
+    if (group.length <= 1) continue;
+    group.sort((a, b) => {
+      if (a.hasLink !== b.hasLink) return a.hasLink ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+    for (let i = 1; i < group.length; i++) {
+      await deleteItemAndLinks(admin, userId, group[i].id);
+    }
+  }
+
+  const { data: taskLinks } = await admin.from("item_external_links").select("item_id").eq(
+    "user_id",
+    userId,
+  ).eq("provider", "google_tasks");
+  const linkedTasks = new Set((taskLinks ?? []).map((l) => l.item_id as string));
+
+  const { data: taskItems } = await admin.from("items").select("id, title, updated_at, payload")
+    .eq("user_id", userId).eq("type", "task").filter("payload->>syncSource", "eq", "google");
+
+  const linkedTaskTitles = new Set<string>();
+  for (const item of taskItems ?? []) {
+    if (linkedTasks.has(item.id as string)) linkedTaskTitles.add(item.title as string);
+  }
+
+  const byTaskExt = new Map<string, { id: string; hasLink: boolean; updatedAt: number }[]>();
+  for (const item of taskItems ?? []) {
+    const payload = item.payload as { googleTaskId?: string };
+    const extId = payload?.googleTaskId;
+    if (extId) {
+      const arr = byTaskExt.get(extId) ?? [];
+      arr.push({
+        id: item.id as string,
+        hasLink: linkedTasks.has(item.id as string),
+        updatedAt: new Date(item.updated_at as string).getTime(),
+      });
+      byTaskExt.set(extId, arr);
+    }
+
+    if (!linkedTasks.has(item.id as string) && linkedTaskTitles.has(item.title as string)) {
+      await deleteItemAndLinks(admin, userId, item.id as string);
+    }
+  }
+
+  for (const group of byTaskExt.values()) {
+    if (group.length <= 1) continue;
+    group.sort((a, b) => {
+      if (a.hasLink !== b.hasLink) return a.hasLink ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+    for (let i = 1; i < group.length; i++) {
+      await deleteItemAndLinks(admin, userId, group[i].id);
+    }
+  }
+}
+
 async function getLinks(
   admin: SupabaseClient,
   userId: string,
@@ -433,17 +597,18 @@ export async function pushItem(
 
   const wantCal = wantsCalendar(item, settings);
   const wantTask = wantsTasks(item, settings);
+  const isGoogleImport = item.payload.syncSource === "google";
 
   const calLink = links.find((l) => l.provider === "google_calendar");
   const taskLink = links.find((l) => l.provider === "google_tasks");
 
-  if (wantCal) {
+  if (wantCal && !(isGoogleImport && !calLink)) {
     await pushCalendarItem(admin, userId, item, settings, links);
   } else if (calLink) {
     await removeCalendarLink(admin, userId, calLink);
   }
 
-  if (wantTask) {
+  if (wantTask && !(isGoogleImport && !taskLink)) {
     await pushTaskItem(admin, userId, item, settings, links);
   } else if (taskLink) {
     await removeTaskLink(admin, userId, taskLink);
@@ -537,26 +702,50 @@ export async function pullCalendar(
           last_pulled_at: new Date().toISOString(),
         }).eq("id", link.id);
       } else if (!link) {
-        const itemId = crypto.randomUUID();
-        await admin.from("items").insert({
-          id: itemId,
-          user_id: userId,
-          type: "event",
-          title: patch.title ?? "",
-          description: patch.description ?? "",
-          start_at: patch.start_at!,
-          end_at: patch.end_at!,
-          all_day: patch.all_day ?? false,
-          show_in_calendar: true,
-          show_in_todo: false,
-          done: false,
-          payload: patch.payload,
-        });
+        const googleEventId = ev.id as string;
+        const orphan = await findOrphanGoogleCalendarItem(
+          admin,
+          userId,
+          googleEventId,
+          patch.title ?? "",
+        );
+        const itemId = orphan?.id ?? crypto.randomUUID();
+        const payload = {
+          ...patch.payload,
+          googleCalendarEventId: googleEventId,
+        };
+        if (orphan) {
+          await admin.from("items").update({
+            title: patch.title ?? orphan.title,
+            description: patch.description ?? orphan.description,
+            start_at: patch.start_at ?? orphan.start_at,
+            end_at: patch.end_at ?? orphan.end_at,
+            all_day: patch.all_day ?? orphan.all_day,
+            show_in_calendar: true,
+            payload,
+            updated_at: patch.updated_at ?? new Date().toISOString(),
+          }).eq("id", itemId);
+        } else {
+          await admin.from("items").insert({
+            id: itemId,
+            user_id: userId,
+            type: "event",
+            title: patch.title ?? "",
+            description: patch.description ?? "",
+            start_at: patch.start_at!,
+            end_at: patch.end_at!,
+            all_day: patch.all_day ?? false,
+            show_in_calendar: true,
+            show_in_todo: false,
+            done: false,
+            payload,
+          });
+        }
         await upsertLink(admin, {
           user_id: userId,
           item_id: itemId,
           provider: "google_calendar",
-          external_id: ev.id,
+          external_id: googleEventId,
           external_calendar_id: settings.calendar_id,
           etag: ev.etag,
           link_group_id: crypto.randomUUID(),
@@ -653,26 +842,51 @@ export async function pullTasks(
           last_pulled_at: new Date().toISOString(),
         }).eq("id", link.id);
       } else if (!link) {
-        const itemId = crypto.randomUUID();
-        await admin.from("items").insert({
-          id: itemId,
-          user_id: userId,
-          type: "task",
-          title: patch.title ?? "",
-          description: patch.description ?? "",
-          start_at: patch.start_at!,
-          end_at: patch.end_at!,
-          all_day: false,
-          show_in_calendar: false,
-          show_in_todo: true,
-          done: patch.done ?? false,
-          payload: patch.payload,
-        });
+        const googleTaskId = task.id as string;
+        const orphan = await findOrphanGoogleTaskItem(
+          admin,
+          userId,
+          googleTaskId,
+          patch.title ?? "",
+        );
+        const itemId = orphan?.id ?? crypto.randomUUID();
+        const payload = {
+          ...patch.payload,
+          googleTaskId,
+        };
+        if (orphan) {
+          await admin.from("items").update({
+            title: patch.title ?? orphan.title,
+            description: patch.description ?? orphan.description,
+            start_at: patch.start_at ?? orphan.start_at,
+            end_at: patch.end_at ?? orphan.end_at,
+            done: patch.done ?? orphan.done,
+            show_in_todo: true,
+            type: "task",
+            payload,
+            updated_at: patch.updated_at ?? new Date().toISOString(),
+          }).eq("id", itemId);
+        } else {
+          await admin.from("items").insert({
+            id: itemId,
+            user_id: userId,
+            type: "task",
+            title: patch.title ?? "",
+            description: patch.description ?? "",
+            start_at: patch.start_at!,
+            end_at: patch.end_at!,
+            all_day: false,
+            show_in_calendar: false,
+            show_in_todo: true,
+            done: patch.done ?? false,
+            payload,
+          });
+        }
         await upsertLink(admin, {
           user_id: userId,
           item_id: itemId,
           provider: "google_tasks",
-          external_id: task.id,
+          external_id: googleTaskId,
           external_task_list_id: settings.task_list_id,
           etag: task.etag,
           link_group_id: crypto.randomUUID(),
@@ -774,6 +988,7 @@ export async function runSyncForUser(
     if (mode === "pull" || mode === "full") {
       if (settings.calendar_enabled) await pullCalendar(admin, userId, settings);
       if (settings.tasks_enabled) await pullTasks(admin, userId, settings);
+      await dedupeGoogleImports(admin, userId);
       await setupCalendarWatch(admin, userId, settings);
     }
 
