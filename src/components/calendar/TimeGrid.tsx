@@ -92,7 +92,6 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
     actions: MenuAction[];
   } | null>(null);
 
-  const ndays = days.length;
   const columnLayout = useMemo(() => dayColumnLayout(days), [days]);
   const gridHeight = (dayEndHour - dayStartHour) * hourHeight;
 

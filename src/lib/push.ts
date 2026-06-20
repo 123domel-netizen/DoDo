@@ -26,7 +26,7 @@ export async function enablePush(): Promise<{ ok: boolean; reason?: string }> {
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC) as BufferSource,
   });
 
   if (supabase) {

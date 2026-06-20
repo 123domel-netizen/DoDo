@@ -1,7 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { Settings2, Plus } from "lucide-react";
 import { useStore } from "@/state/store";
-import { GROUP_COLORS } from "@/lib/factory";
 import {
   ARCHIVE_GROUP_NAME,
   findArchiveGroup,
