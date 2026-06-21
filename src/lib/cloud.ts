@@ -421,8 +421,23 @@ function schedulePush() {
       }
     }
 
-    const rows = items.map((item) => itemToRow(item, payloadExtrasById.get(item.id)));
-    if (rows.length) await supabase!.from("items").upsert(rows);
+    // Defensywnie: nie wysyłaj group_id wskazującego grupę, której nie ma lokalnie
+    // (klucz obcy items.group_id → groups.id). Inaczej jeden „osierocony" wiersz
+    // wywala cały batch i blokuje synchronizację wszystkich elementów.
+    const localGroupIds = new Set(useStore.getState().groups.map((g) => g.id));
+    const rows = items.map((item) => {
+      const row = itemToRow(item, payloadExtrasById.get(item.id));
+      if (row.group_id && !localGroupIds.has(row.group_id)) row.group_id = null;
+      return row;
+    });
+    if (rows.length) {
+      const { error } = await supabase!.from("items").upsert(rows);
+      if (error) {
+        console.warn("[cloud] item upsert failed:", error.message);
+        lastPushedSnapshot = ""; // ponów przy następnej zmianie
+        return;
+      }
+    }
     scheduleGoogleSync();
   }, 800);
 }
