@@ -9,10 +9,8 @@ import { Webhook } from "npm:standardwebhooks@1.0.0";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const HOOK_SECRET_RAW =
-  Deno.env.get("BEFORE_USER_CREATED_HOOK_SECRET") ??
-  Deno.env.get("AUTH_HOOK_SECRET") ??
-  "";
+
+const HOOK_SECRET_RE = /^v1,whsec_[A-Za-z0-9+/=_-]+$/;
 
 interface HookPayload {
   user?: { email?: string };
@@ -69,8 +67,53 @@ function allow() {
   });
 }
 
-function hookSigningSecret(raw: string): string {
-  return raw.replace(/^v1,whsec_/, "");
+/** Tylko sekrety Standard Webhooks (v1,whsec_...). Własny string z AUTH_HOOK_SECRET nie zadziała. */
+function collectHookSigningSecrets(): string[] {
+  const candidates = [
+    Deno.env.get("BEFORE_USER_CREATED_HOOK_SECRET"),
+    Deno.env.get("AUTH_HOOK_SECRET"),
+  ];
+  const out: string[] = [];
+  for (const raw of candidates) {
+    const trimmed = raw?.trim();
+    if (!trimmed) continue;
+    if (!HOOK_SECRET_RE.test(trimmed)) {
+      console.warn(
+        "[auth-allowlist] pomijam sekret w złym formacie (wymagane v1,whsec_...):",
+        trimmed.slice(0, 12) + "...",
+      );
+      continue;
+    }
+    out.push(trimmed.replace(/^v1,whsec_/, ""));
+  }
+  return [...new Set(out)];
+}
+
+function webhookHeaders(req: Request): Record<string, string> {
+  const h: Record<string, string> = {};
+  for (const key of ["webhook-id", "webhook-timestamp", "webhook-signature"]) {
+    const v = req.headers.get(key);
+    if (v) h[key] = v;
+  }
+  return h;
+}
+
+function verifyHookPayload(payloadText: string, headers: Record<string, string>): HookPayload {
+  const secrets = collectHookSigningSecrets();
+  if (secrets.length === 0) {
+    throw new Error("no_valid_hook_secret");
+  }
+
+  let lastErr: unknown;
+  for (const secret of secrets) {
+    try {
+      const wh = new Webhook(secret);
+      return wh.verify(payloadText, headers) as HookPayload;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("verify_failed");
 }
 
 Deno.serve(async (req) => {
@@ -79,19 +122,21 @@ Deno.serve(async (req) => {
   }
 
   const payloadText = await req.text();
-  const headers = Object.fromEntries(req.headers);
+  const headers = webhookHeaders(req);
 
   let event: HookPayload;
   try {
-    if (HOOK_SECRET_RAW) {
-      const wh = new Webhook(hookSigningSecret(HOOK_SECRET_RAW));
-      event = wh.verify(payloadText, headers) as HookPayload;
-    } else {
-      event = JSON.parse(payloadText) as HookPayload;
-    }
+    event = verifyHookPayload(payloadText, headers);
   } catch (e) {
     console.error("[auth-allowlist] verify", e);
-    return deny("Nieprawidłowe żądanie hooka (podpis).");
+    if (String(e).includes("no_valid_hook_secret")) {
+      return deny(
+        "Hook auth nie skonfigurowany. W Dashboard → Authentication → Auth Hooks skopiuj sekret (v1,whsec_...) i ustaw: supabase secrets set BEFORE_USER_CREATED_HOOK_SECRET=\"v1,whsec_...\"",
+      );
+    }
+    return deny(
+      "Sekret hooka nie zgadza się z Dashboardem. Skopiuj ponownie sekret z Authentication → Auth Hooks → before-user-created, ustaw BEFORE_USER_CREATED_HOOK_SECRET i usuń stary AUTH_HOOK_SECRET jeśli był własny string.",
+    );
   }
 
   try {

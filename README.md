@@ -101,16 +101,21 @@ z Google Calendar/Tasks po zalogowaniu.
    supabase functions deploy auth-allowlist --no-verify-jwt
    ```
 
-   **Sekret hooka (ważne — bez tego błąd „Hook requires authorization token"):**
+   **Sekret hooka (ważne — bez tego błąd podpisu lub „Hook requires authorization token"):**
    w konfiguracji hooka w Dashboardzie kliknij **Generate secret** — dostaniesz
-   wartość w formacie `v1,whsec_...`. Tę samą wartość ustaw jako sekret funkcji:
+   wartość w formacie `v1,whsec_...`. Tę **dokładnie tę** wartość ustaw jako sekret funkcji:
 
    ```bash
    supabase secrets set BEFORE_USER_CREATED_HOOK_SECRET="v1,whsec_..."
    ```
 
-   Funkcja weryfikuje podpis Standard Webhooks tym sekretem. Sekret w Dashboardzie
-   i w `secrets` muszą być **identyczne**.
+   Sekret w Dashboardzie i w `secrets` muszą być **identyczne**. Nie używaj własnego
+   losowego stringa — podpis Standard Webhooks wymaga formatu `v1,whsec_...`.
+   Jeśli wcześniej ustawiłeś `AUTH_HOOK_SECRET` na własny tekst, usuń go:
+
+   ```bash
+   supabase secrets unset AUTH_HOOK_SECRET
+   ```
 
    Alternatywa whitelisty bez tabeli: sekret `ALLOWED_EMAILS=mail1@gmail.com,mail2@gmail.com`.
 
