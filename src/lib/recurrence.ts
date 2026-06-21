@@ -96,6 +96,7 @@ export function expandItemOccurrences(item: Item, rangeStart: Date, rangeEnd: Da
       continue;
     }
 
+    const start = ex?.start ? new Date(ex.start) : occStart;
     const end = ex?.end ? new Date(ex.end) : occurrenceEnd(base, start);
     out.push({
       ...base,

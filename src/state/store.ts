@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings } from "@/types";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
-import { ensureArchiveGroup, ensureGoogleGroup, findArchiveGroup, findGoogleGroup, isArchiveGroup, isGoogleGroup, isGroupStructureLocked, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
+import { ensureArchiveGroup, ensureGoogleGroup, findArchiveGroup, findGoogleGroup, GOOGLE_GROUP_SORT_ORDER, isArchiveGroup, isGoogleGroup, isGroupStructureLocked, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
 import { normalizeAllDayRange } from "@/lib/allDay";
 import { startOfDay } from "date-fns";
 
@@ -68,7 +68,7 @@ function defaultSettings(): Settings {
     anchorDate: startOfDay(new Date()).toISOString(),
     nineDayStartWeekday: 5,
     hourHeight: 52,
-    settingsVersion: 7,
+    settingsVersion: 8,
   };
 }
 
@@ -139,6 +139,19 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
         : g,
     );
     settings.settingsVersion = 7;
+  }
+  if ((settings.settingsVersion ?? 0) < 8) {
+    groups = groups.map((g) =>
+      isGoogleGroup(g) && g.system !== "google"
+        ? {
+            ...g,
+            system: "google" as const,
+            hideFromAll: g.hideFromAll ?? true,
+            sortOrder: GOOGLE_GROUP_SORT_ORDER,
+          }
+        : g,
+    );
+    settings.settingsVersion = 8;
   }
   return { settings, groups, items, activeGroupFilter: state?.activeGroupFilter ?? null };
 }
