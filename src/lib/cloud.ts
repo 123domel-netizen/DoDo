@@ -1,7 +1,13 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { withNormalizedAllDay } from "@/lib/allDay";
-import { findGoogleGroup } from "@/lib/groups";
-import type { Item } from "@/types";
+import {
+  ensureArchiveGroup,
+  ensureGoogleGroup,
+  findGoogleGroup,
+  isArchiveGroup,
+  isGoogleGroup,
+} from "@/lib/groups";
+import type { Group, Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { enqueueGoogleSync } from "@/lib/googleSync";
@@ -22,6 +28,11 @@ const pendingGoogleItemIds = new Set<string>();
 let pendingGoogleDelete = false;
 let realtimeChannel: RealtimeChannel | null = null;
 let storeSubscribed = false;
+
+// Synchronizacja grup
+let groupsReady = false;
+let lastGroupsSnapshot = "";
+const pendingGroupDeletes = new Set<string>();
 
 function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
   return {
@@ -101,6 +112,159 @@ function isGoogleOriginatedRow(row: Record<string, unknown>): boolean {
   return payload.syncSource === "google";
 }
 
+function groupToRow(group: Group) {
+  return {
+    id: group.id,
+    user_id: userId,
+    name: group.name,
+    color: group.color,
+    sort_order: group.sortOrder,
+    system: group.system ?? null,
+    hide_from_all: group.hideFromAll ?? false,
+  };
+}
+
+function rowToGroup(row: Record<string, unknown>): Group {
+  const name = (row.name as string) ?? "";
+  const base = { name, system: (row.system as Group["system"]) ?? undefined };
+  const system: Group["system"] =
+    base.system ?? (isArchiveGroup(base) ? "archive" : isGoogleGroup(base) ? "google" : undefined);
+  return {
+    id: row.id as string,
+    name,
+    color: (row.color as string) ?? "#5E7FA8",
+    sortOrder: (row.sort_order as number) ?? 0,
+    system,
+    hideFromAll: (row.hide_from_all as boolean | null) ?? undefined,
+  };
+}
+
+function groupsSnapshot(groups: Group[]): string {
+  return JSON.stringify(
+    groups.map((g) => [g.id, g.name, g.color, g.sortOrder, g.system ?? null, g.hideFromAll ?? false]),
+  );
+}
+
+/**
+ * Sprowadza listę zdalnych grup do jednej grupy systemowej każdego typu.
+ * Zwraca też mapę remap (stare id duplikatu → id zachowane) oraz id do usunięcia.
+ */
+function reconcileGroups(remote: Group[]): {
+  groups: Group[];
+  remap: Map<string, string>;
+  deleteIds: string[];
+} {
+  const remap = new Map<string, string>();
+  const deleteIds: string[] = [];
+  let archiveKept: Group | null = null;
+  let googleKept: Group | null = null;
+  const result: Group[] = [];
+
+  for (const g of remote) {
+    if (isArchiveGroup(g)) {
+      if (archiveKept) {
+        remap.set(g.id, archiveKept.id);
+        deleteIds.push(g.id);
+      } else {
+        archiveKept = g;
+        result.push(g);
+      }
+    } else if (isGoogleGroup(g)) {
+      if (googleKept) {
+        remap.set(g.id, googleKept.id);
+        deleteIds.push(g.id);
+      } else {
+        googleKept = g;
+        result.push(g);
+      }
+    } else {
+      result.push(g);
+    }
+  }
+  return { groups: result, remap, deleteIds };
+}
+
+function remapItemGroups(items: Record<string, Item>, remap: Map<string, string>): Record<string, Item> {
+  if (!remap.size) return items;
+  let changed = false;
+  const next: Record<string, Item> = {};
+  for (const [id, it] of Object.entries(items)) {
+    const target = it.groupId ? remap.get(it.groupId) : undefined;
+    if (target && target !== it.groupId) {
+      next[id] = { ...it, groupId: target };
+      changed = true;
+    } else {
+      next[id] = it;
+    }
+  }
+  return changed ? next : items;
+}
+
+async function pushGroupsFull() {
+  if (!supabase || !userId || !groupsReady) return;
+  const groups = useStore.getState().groups;
+  const snap = groupsSnapshot(groups);
+  const dels = [...pendingGroupDeletes];
+  if (snap === lastGroupsSnapshot && dels.length === 0) return;
+  lastGroupsSnapshot = snap;
+  if (groups.length) {
+    const { error } = await supabase.from("groups").upsert(groups.map(groupToRow));
+    if (error) {
+      console.warn("[cloud] group upsert failed:", error.message);
+      lastGroupsSnapshot = "";
+      return;
+    }
+  }
+  if (dels.length) {
+    pendingGroupDeletes.clear();
+    await supabase.from("groups").delete().in("id", dels);
+  }
+}
+
+async function pullGroups() {
+  if (!supabase || !userId) return;
+  const { data, error } = await supabase.from("groups").select("*");
+  if (error) {
+    console.warn("[cloud] group pull failed:", error.message);
+    groupsReady = true;
+    return;
+  }
+  const remote = (data ?? []).map(rowToGroup);
+
+  if (remote.length === 0) {
+    // Pierwsze urządzenie: zasiej bazę lokalnymi grupami.
+    groupsReady = true;
+    lastGroupsSnapshot = "";
+    await pushGroupsFull();
+    return;
+  }
+
+  const { groups, remap, deleteIds } = reconcileGroups(remote);
+  const ensured = ensureGoogleGroup(ensureArchiveGroup(groups));
+
+  applyingRemote = true;
+  try {
+    useStore.setState((s) => ({
+      groups: ensured,
+      items: remapItemGroups(s.items, remap),
+    }));
+  } finally {
+    applyingRemote = false;
+  }
+
+  groupsReady = true;
+  lastGroupsSnapshot = groupsSnapshot(ensured);
+
+  if (deleteIds.length) {
+    await supabase.from("groups").delete().in("id", deleteIds);
+  }
+  // Dosyłka, gdy ensure dodał brakującą grupę systemową lub trzeba poprawić wiersze.
+  if (ensured.length !== remote.length - deleteIds.length || remap.size) {
+    lastGroupsSnapshot = "";
+    await pushGroupsFull();
+  }
+}
+
 async function pullAll(replace = false) {
   if (!supabase || !userId) return;
   const { data, error } = await supabase.from("items").select("*");
@@ -153,6 +317,25 @@ function setupRealtime() {
         applyingRemote = false;
       }
     })
+    .on("postgres_changes", { event: "*", schema: "public", table: "groups" }, (payload) => {
+      applyingRemote = true;
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = (payload.old as { id: string }).id;
+          useStore.setState((s) => ({ groups: s.groups.filter((g) => g.id !== id) }));
+        } else {
+          const group = rowToGroup(payload.new as Record<string, unknown>);
+          useStore.setState((s) => ({
+            groups: s.groups.some((g) => g.id === group.id)
+              ? s.groups.map((g) => (g.id === group.id ? group : g))
+              : [...s.groups, group],
+          }));
+        }
+        lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
+      } finally {
+        applyingRemote = false;
+      }
+    })
     .subscribe();
 }
 
@@ -170,20 +353,29 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     lastPushedSnapshot = "";
     pendingGoogleItemIds.clear();
     pendingGoogleDelete = false;
+    groupsReady = false;
+    lastGroupsSnapshot = "";
+    pendingGroupDeletes.clear();
     return;
   }
 
   const isUserSwitch = previousUserId !== null && previousUserId !== nextUserId;
   previousUserId = nextUserId;
 
+  groupsReady = false;
+  lastGroupsSnapshot = "";
+  pendingGroupDeletes.clear();
+
   await switchPersistUser(nextUserId);
 
-  if (isUserSwitch) {
-    resetLocalUserState();
-    await pullAll(true);
-  } else {
-    await pullAll(false);
-  }
+  if (isUserSwitch) resetLocalUserState();
+
+  // Grupy najpierw — items.group_id ma klucz obcy do groups(id).
+  await pullGroups();
+  await pullAll(isUserSwitch);
+
+  // Odrzuć ewentualne „usunięcia" wywołane resetem stanu przy przełączaniu konta.
+  pendingGroupDeletes.clear();
 
   teardownRealtime();
   setupRealtime();
@@ -193,6 +385,9 @@ function schedulePush() {
   if (!supabase || !userId || applyingRemote) return;
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(async () => {
+    // Grupy przed itemami — items.group_id ma klucz obcy do groups(id).
+    await pushGroupsFull();
+
     const items = Object.values(useStore.getState().items);
     const snapshot = JSON.stringify(items.map((i) => [i.id, i.updatedAt]));
     if (snapshot === lastPushedSnapshot) return;
@@ -266,6 +461,14 @@ function trackLocalChange(prev: Record<string, Item>, next: Record<string, Item>
   scheduleGoogleSync();
 }
 
+function trackGroupChange(prev: Group[], next: Group[]) {
+  if (applyingRemote || prev === next) return;
+  const nextIds = new Set(next.map((g) => g.id));
+  for (const g of prev) {
+    if (!nextIds.has(g.id)) pendingGroupDeletes.add(g.id);
+  }
+}
+
 export async function initCloudSync() {
   if (!cloudEnabled || !supabase) return;
   try {
@@ -280,6 +483,7 @@ export async function initCloudSync() {
       storeSubscribed = true;
       useStore.subscribe((state, prev) => {
         trackLocalChange(prev.items, state.items);
+        trackGroupChange(prev.groups, state.groups);
         schedulePush();
       });
     }

@@ -95,16 +95,46 @@ z Google Calendar/Tasks po zalogowaniu.
    ```
 
 5. Wdróż Auth Hook i podepnij w Dashboard → Authentication → **Auth Hooks** →
-   `before-user-created`:
+   `before-user-created` (typ **HTTPS**, URI funkcji `auth-allowlist`):
 
    ```bash
    supabase functions deploy auth-allowlist --no-verify-jwt
-   supabase secrets set AUTH_HOOK_SECRET=<losowy-długi-string>
    ```
 
-   W konfiguracji hooka ustaw nagłówek `Authorization: Bearer <AUTH_HOOK_SECRET>`.
+   **Sekret hooka (ważne — bez tego błąd „Hook requires authorization token"):**
+   w konfiguracji hooka w Dashboardzie kliknij **Generate secret** — dostaniesz
+   wartość w formacie `v1,whsec_...`. Tę samą wartość ustaw jako sekret funkcji:
 
-   Alternatywa bez tabeli: sekret `ALLOWED_EMAILS=mail1@gmail.com,mail2@gmail.com`.
+   ```bash
+   supabase secrets set BEFORE_USER_CREATED_HOOK_SECRET="v1,whsec_..."
+   ```
+
+   Funkcja weryfikuje podpis Standard Webhooks tym sekretem. Sekret w Dashboardzie
+   i w `secrets` muszą być **identyczne**.
+
+   Alternatywa whitelisty bez tabeli: sekret `ALLOWED_EMAILS=mail1@gmail.com,mail2@gmail.com`.
+
+   > **Diagnostyka błędu `Hook requires authorization token`.** Hook uruchamia się
+   > **tylko przy pierwszym logowaniu nowego konta** — dlatego dotychczasowy
+   > użytkownik loguje się bez problemu, a nowe maile (mimo wpisu w `allowed_users`)
+   > są blokowane. Dwie możliwe przyczyny:
+   >
+   > 1. **Funkcja ma włączoną weryfikację JWT** (najczęstsze, gdy sekret jest już
+   >    ustawiony). GoTrue uwierzytelnia się do hooka podpisem Standard Webhooks,
+   >    a nie tokenem JWT, więc brama Edge odrzuca wywołanie. Wdróż funkcję z
+   >    `verify_jwt = false`:
+   >
+   >    ```bash
+   >    supabase functions deploy auth-allowlist --no-verify-jwt
+   >    ```
+   >
+   >    (`supabase/config.toml` ustawia to na stałe dla tej funkcji.)
+   >
+   > 2. **Brak/niezgodny sekret** hooka — patrz punkt o sekrecie wyżej.
+   >
+   > Awaryjnie możesz tymczasowo **wyłączyć hook** w Dashboard → Authentication →
+   > Auth Hooks, żeby od razu odblokować logowanie (whitelista nie będzie wtedy
+   > wymuszana).
 
 6. W aplikacji: ekran startowy → **Zaloguj przez Google**. Wylogowanie: awatar
    w prawym górnym rogu paska.
