@@ -8,17 +8,19 @@ import { expandItemsForRange } from "@/lib/recurrence";
 import { withNormalizedAllDay } from "@/lib/allDay";
 import { TimeGrid } from "./TimeGrid";
 import { MonthView } from "./MonthView";
-import type { Group } from "@/types";
+import type { CalendarViewKind, Group } from "@/types";
 
-export function CalendarView() {
+export function CalendarView({ view: viewOverride }: { view?: CalendarViewKind } = {}) {
   const settings = useStore((s) => s.settings);
   const itemsMap = useStore((s) => s.items);
   const groupsArr = useStore((s) => s.groups);
   const activeGroupFilter = useStore((s) => s.activeGroupFilter);
 
+  const view = viewOverride ?? settings.view;
+
   const days = useMemo(
-    () => getViewDays(settings.view, new Date(settings.anchorDate), settings.nineDayStartWeekday),
-    [settings.view, settings.anchorDate, settings.nineDayStartWeekday],
+    () => getViewDays(view, new Date(settings.anchorDate), settings.nineDayStartWeekday),
+    [view, settings.anchorDate, settings.nineDayStartWeekday],
   );
 
   const groups = useMemo(() => {
@@ -51,7 +53,7 @@ export function CalendarView() {
 
   return (
     <div className="flex h-full flex-col bg-surface">
-      {settings.view === "month" ? (
+      {view === "month" ? (
         <MonthView days={days} items={items} reminderMarkers={reminderMarkers} groups={groups} />
       ) : (
         <TimeGrid days={days} items={items} reminderMarkers={reminderMarkers} groups={groups} />

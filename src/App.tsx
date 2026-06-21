@@ -4,14 +4,17 @@ import { CalendarView } from "@/components/calendar/CalendarView";
 import { SidePanel } from "@/components/SidePanel";
 import { GroupRail } from "@/components/groups/GroupRail";
 import { AuthGate } from "@/components/AuthGate";
+import { MobileShell } from "@/components/mobile/MobileShell";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { handleGoogleOAuthReturn } from "@/components/settings/GoogleIntegrationPanel";
 import { cloudEnabled } from "@/lib/supabase";
 
 export default function App() {
   const hydrated = useStore((s) => s.hydrated);
   const editingId = useStore((s) => s.editingId);
+  const isMobile = useIsMobile();
   const [todoOpen, setTodoOpen] = useState(() => window.innerWidth >= 1024);
   useReminderScheduler();
 
@@ -37,20 +40,24 @@ export default function App() {
 
   return (
     <AuthGate>
-      <div className="flex h-full flex-col">
-        <Toolbar todoOpen={todoOpen} onToggleTodo={() => setTodoOpen((v) => !v)} />
-        <div className="flex min-h-0 flex-1">
-          <main className="min-w-0 flex-1">
-            <CalendarView />
-          </main>
-          {panelOpen && (
-            <aside className="w-full max-w-[400px] shrink-0 border-l border-line md:w-[380px] lg:w-[400px]">
-              <SidePanel />
-            </aside>
-          )}
-          <GroupRail />
+      {isMobile ? (
+        <MobileShell />
+      ) : (
+        <div className="flex h-full flex-col">
+          <Toolbar todoOpen={todoOpen} onToggleTodo={() => setTodoOpen((v) => !v)} />
+          <div className="flex min-h-0 flex-1">
+            <main className="min-w-0 flex-1">
+              <CalendarView />
+            </main>
+            {panelOpen && (
+              <aside className="w-full max-w-[400px] shrink-0 border-l border-line md:w-[380px] lg:w-[400px]">
+                <SidePanel />
+              </aside>
+            )}
+            <GroupRail />
+          </div>
         </div>
-      </div>
+      )}
     </AuthGate>
   );
 }
