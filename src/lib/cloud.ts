@@ -2,9 +2,9 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { withNormalizedAllDay } from "@/lib/allDay";
 import {
   ensureArchiveGroup,
-  ensureGoogleGroup,
   isArchiveGroup,
   isGoogleGroup,
+  stripGoogleGroups,
 } from "@/lib/groups";
 import type { Group, Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
@@ -143,7 +143,6 @@ function reconcileGroups(remote: Group[]): {
   const remap = new Map<string, string>();
   const deleteIds: string[] = [];
   let archiveKept: Group | null = null;
-  let googleKept: Group | null = null;
   // Deduplikacja grup użytkownika po nazwie — naprawia duplikaty powstałe, gdy
   // dwa urządzenia zasiały tabelę zanim się nawzajem zobaczyły.
   const userByName = new Map<string, Group>();
@@ -159,13 +158,8 @@ function reconcileGroups(remote: Group[]): {
         result.push(g);
       }
     } else if (isGoogleGroup(g)) {
-      if (googleKept) {
-        remap.set(g.id, googleKept.id);
-        deleteIds.push(g.id);
-      } else {
-        googleKept = g;
-        result.push(g);
-      }
+      // Legacy — integracja Google usunięta.
+      deleteIds.push(g.id);
     } else {
       const key = g.name.trim().toLowerCase();
       const kept = userByName.get(key);
@@ -197,9 +191,27 @@ function remapItemGroups(items: Record<string, Item>, remap: Map<string, string>
   return changed ? next : items;
 }
 
+function clearGoogleGroupRefs(
+  items: Record<string, Item>,
+  googleIds: Set<string>,
+): Record<string, Item> {
+  if (!googleIds.size) return items;
+  let changed = false;
+  const next: Record<string, Item> = {};
+  for (const [id, it] of Object.entries(items)) {
+    if (it.groupId && googleIds.has(it.groupId)) {
+      next[id] = { ...it, groupId: null };
+      changed = true;
+    } else {
+      next[id] = it;
+    }
+  }
+  return changed ? next : items;
+}
+
 async function pushGroupsFull() {
   if (!supabase || !userId || !groupsReady) return;
-  const groups = useStore.getState().groups;
+  const groups = stripGoogleGroups(useStore.getState().groups);
   const snap = groupsSnapshot(groups);
   const dels = [...pendingGroupDeletes];
   if (snap === lastGroupsSnapshot && dels.length === 0) return;
@@ -237,13 +249,14 @@ async function pullGroups() {
   }
 
   const { groups, remap, deleteIds } = reconcileGroups(remote);
-  const ensured = ensureGoogleGroup(ensureArchiveGroup(groups));
+  const googleIds = new Set(remote.filter(isGoogleGroup).map((g) => g.id));
+  const ensured = ensureArchiveGroup(groups);
 
   applyingRemote = true;
   try {
     useStore.setState((s) => ({
       groups: ensured,
-      items: remapItemGroups(s.items, remap),
+      items: clearGoogleGroupRefs(remapItemGroups(s.items, remap), googleIds),
     }));
   } finally {
     applyingRemote = false;

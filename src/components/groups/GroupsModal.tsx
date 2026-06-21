@@ -1,7 +1,7 @@
 import { Modal } from "@/components/ui/Modal";
 import { useStore } from "@/state/store";
 import { GROUP_COLORS } from "@/lib/factory";
-import { findArchiveGroup, findGoogleGroup, isGoogleGroup, isGroupColorLocked, isGroupStructureLocked, sortGroupsForRail } from "@/lib/groups";
+import { findArchiveGroup, isGroupColorLocked, isGroupStructureLocked, sortGroupsForRail } from "@/lib/groups";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 
 export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -13,8 +13,7 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
 
   const userGroups = sortGroupsForRail(groups);
   const archive = findArchiveGroup(groups);
-  const google = findGoogleGroup(groups);
-  const displayGroups = [...userGroups, ...(google ? [google] : []), ...(archive ? [archive] : [])];
+  const displayGroups = [...userGroups, ...(archive ? [archive] : [])];
 
   return (
     <Modal open={open} onClose={onClose} width={460}>
@@ -88,17 +87,6 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
                   </button>
                 )}
                 </div>
-                {isGoogleGroup(g) && (
-                  <label className="ml-[30px] flex cursor-pointer items-center gap-2 text-[11px] text-ink-faint">
-                    <input
-                      type="checkbox"
-                      checked={g.hideFromAll !== false}
-                      onChange={(e) => patchGroup(g.id, { hideFromAll: e.target.checked })}
-                      className="h-3.5 w-3.5 accent-accent"
-                    />
-                    Ukryj w widoku ALL
-                  </label>
-                )}
               </div>
             );
           })}
@@ -154,7 +142,6 @@ function colorName(hex: string): string {
     "#8a7b68": "Brąz",
     "#857a9e": "Lawenda",
     "#737881": "Grafit",
-    "#4285f4": "Google",
   };
   return names[hex.toLowerCase()] ?? hex;
 }

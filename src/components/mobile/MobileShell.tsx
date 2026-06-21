@@ -24,9 +24,7 @@ import { AddGroupDialog } from "@/components/groups/AddGroupDialog";
 import { getViewLabel } from "@/lib/viewLabel";
 import {
   ARCHIVE_GROUP_NAME,
-  GOOGLE_GROUP_NAME,
   findArchiveGroup,
-  findGoogleGroup,
   groupIdForNewItem,
   sortGroupsForRail,
 } from "@/lib/groups";
@@ -122,7 +120,6 @@ export function MobileShell() {
 
   const userGroups = sortGroupsForRail(groups);
   const archive = findArchiveGroup(groups);
-  const google = findGoogleGroup(groups);
 
   return (
     <div className="flex h-full flex-col bg-canvas">
@@ -237,14 +234,6 @@ export function MobileShell() {
             onClick={() => setActiveGroupFilter(g.id)}
           />
         ))}
-        {google && (
-          <GroupChip
-            label={GOOGLE_GROUP_NAME}
-            color={google.color}
-            active={activeGroupFilter === google.id}
-            onClick={() => setActiveGroupFilter(google.id)}
-          />
-        )}
         {archive && (
           <GroupChip
             label={ARCHIVE_GROUP_NAME}

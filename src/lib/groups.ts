@@ -25,15 +25,15 @@ export function isGoogleGroup(group: Pick<Group, "name" | "system">): boolean {
 }
 
 export function isSystemGroup(group: Pick<Group, "name" | "system">): boolean {
-  return isArchiveGroup(group) || isGoogleGroup(group);
+  return isArchiveGroup(group);
 }
 
-/** Nazwa / kolejność / usuwanie zablokowane (ARCH + GOOGLE). */
+/** Nazwa / kolejność / usuwanie zablokowane (ARCH). */
 export function isGroupStructureLocked(group: Pick<Group, "name" | "system">): boolean {
-  return isSystemGroup(group);
+  return isArchiveGroup(group);
 }
 
-/** Kolor edytowalny tylko dla grup użytkownika i GOOGLE (ARCH ma stały kolor). */
+/** Kolor edytowalny tylko dla grup użytkownika (ARCH ma stały kolor). */
 export function isGroupColorLocked(group: Pick<Group, "name" | "system">): boolean {
   return isArchiveGroup(group);
 }
@@ -60,19 +60,9 @@ export function ensureArchiveGroup(groups: Group[]): Group[] {
   ];
 }
 
-export function ensureGoogleGroup(groups: Group[]): Group[] {
-  if (findGoogleGroup(groups)) return groups;
-  return [
-    ...groups,
-    {
-      id: uid(),
-      name: GOOGLE_GROUP_NAME,
-      color: GOOGLE_GROUP_COLOR,
-      sortOrder: GOOGLE_GROUP_SORT_ORDER,
-      system: "google",
-      hideFromAll: true,
-    },
-  ];
+/** Usuwa legacy grupę GOOGLE (integracja Google została wyłączona). */
+export function stripGoogleGroups(groups: Group[]): Group[] {
+  return groups.filter((g) => !isGoogleGroup(g));
 }
 
 /** Zakres filtra: w ToDo widok ALL ukrywa ARCH; kalendarz pokazuje wszystko. */
@@ -85,17 +75,9 @@ export function itemMatchesGroupFilter(
   scope: GroupFilterScope = "calendar",
 ): boolean {
   const archiveId = findArchiveGroup(useStore.getState().groups)?.id ?? null;
-  const google = findGoogleGroup(useStore.getState().groups);
 
   if (!filterGroupId) {
     if (scope === "todo" && archiveId && item.groupId === archiveId) return false;
-    if (
-      google &&
-      google.hideFromAll !== false &&
-      item.groupId === google.id
-    ) {
-      return false;
-    }
     return true;
   }
   return item.groupId === filterGroupId;

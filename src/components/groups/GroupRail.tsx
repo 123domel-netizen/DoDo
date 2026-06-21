@@ -3,9 +3,7 @@ import { Settings2, Plus } from "lucide-react";
 import { useStore } from "@/state/store";
 import {
   ARCHIVE_GROUP_NAME,
-  GOOGLE_GROUP_NAME,
   findArchiveGroup,
-  findGoogleGroup,
   sortGroupsForRail,
 } from "@/lib/groups";
 import { GroupsModal } from "./GroupsModal";
@@ -89,10 +87,8 @@ export function GroupRail() {
 
   const userGroups = sortGroupsForRail(groups);
   const archive = findArchiveGroup(groups);
-  const google = findGoogleGroup(groups);
   const allActive = activeGroupFilter === null;
   const archiveActive = archive ? activeGroupFilter === archive.id : false;
-  const googleActive = google ? activeGroupFilter === google.id : false;
 
   return (
     <div className="flex h-full w-16 min-h-0 flex-col border-l border-line bg-surface py-2">
@@ -135,24 +131,6 @@ export function GroupRail() {
             );
           })}
 
-          {google && (
-            <button
-              type="button"
-              onClick={() => setActiveGroupFilter(google.id)}
-              title="Zaimportowane z Google"
-              className={userRailButtonClass(googleActive)}
-              style={groupRailStyle(google.color, googleActive)}
-            >
-              <span
-                className={`vertical-text max-h-full truncate text-[14px] font-semibold leading-none ${
-                  googleActive ? "text-white/95" : ""
-                }`}
-                style={googleActive ? undefined : railLabelStyle(google.color, false)}
-              >
-                {GOOGLE_GROUP_NAME}
-              </span>
-            </button>
-          )}
         </div>
 
         {archive && (

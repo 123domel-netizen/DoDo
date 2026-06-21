@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings } from "@/types";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
-import { ensureArchiveGroup, ensureGoogleGroup, findArchiveGroup, findGoogleGroup, GOOGLE_GROUP_SORT_ORDER, isArchiveGroup, isGoogleGroup, isGroupStructureLocked, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail } from "@/lib/groups";
+import { ensureArchiveGroup, findArchiveGroup, findGoogleGroup, GOOGLE_GROUP_SORT_ORDER, isArchiveGroup, isGoogleGroup, isGroupStructureLocked, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail, stripGoogleGroups } from "@/lib/groups";
 import { normalizeAllDayRange } from "@/lib/allDay";
 import { startOfDay } from "date-fns";
 
@@ -68,7 +68,7 @@ function defaultSettings(): Settings {
     anchorDate: startOfDay(new Date()).toISOString(),
     nineDayStartWeekday: 5,
     hourHeight: 52,
-    settingsVersion: 9,
+    settingsVersion: 10,
   };
 }
 
@@ -85,9 +85,8 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     settings.settingsVersion = 3;
   }
   groups = ensureArchiveGroup(groups);
-  groups = ensureGoogleGroup(groups);
   const archive = findArchiveGroup(groups)!;
-  const googleGroup = findGoogleGroup(groups)!;
+  const googleGroup = findGoogleGroup(groups);
   if ((settings.settingsVersion ?? 0) < 4) {
     groups = groups.map((g) =>
       isArchiveGroup(g) ? { ...g, system: "archive" as const, sortOrder: 9999 } : g,
@@ -113,8 +112,8 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
               groupId: archive.id,
             };
           }
-          // Importy z Google bez grupy → grupa „GOOGLE”.
-          if (!next.groupId && next.syncSource === "google") {
+          // Importy z Google bez grupy → grupa „GOOGLE” (legacy, przed v10).
+          if (!next.groupId && next.syncSource === "google" && googleGroup) {
             next = { ...next, groupId: googleGroup.id };
           }
           return [id, next];
@@ -161,11 +160,28 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     );
     settings.settingsVersion = 9;
   }
-  return { settings, groups, items, activeGroupFilter: state?.activeGroupFilter ?? null };
+  let activeGroupFilter = state?.activeGroupFilter ?? null;
+  if ((settings.settingsVersion ?? 0) < 10) {
+    const googleIds = new Set(groups.filter(isGoogleGroup).map((g) => g.id));
+    groups = stripGoogleGroups(groups);
+    if (items) {
+      items = Object.fromEntries(
+        Object.entries(items).map(([id, it]) => {
+          if (it.groupId && googleIds.has(it.groupId)) {
+            return [id, { ...it, groupId: null, updatedAt: new Date().toISOString() }];
+          }
+          return [id, it];
+        }),
+      );
+    }
+    if (activeGroupFilter && googleIds.has(activeGroupFilter)) activeGroupFilter = null;
+    settings.settingsVersion = 10;
+  }
+  return { settings, groups, items, activeGroupFilter };
 }
 
 export function resetLocalUserState() {
-  const groups = ensureGoogleGroup(ensureArchiveGroup(defaultGroups()));
+  const groups = ensureArchiveGroup(defaultGroups());
   useStore.setState({
     items: {},
     groups,
