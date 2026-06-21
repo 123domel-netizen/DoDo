@@ -6,7 +6,6 @@ import {
   Plus,
   Settings2,
   Bell,
-  Link2,
   LogOut,
   PanelRightClose,
   PanelRightOpen,
@@ -20,7 +19,6 @@ import { enablePush, ensureLocalNotificationPermission, pushSupported } from "@/
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
 import { Logo } from "@/components/brand/Logo";
-import { GoogleIntegrationPanel } from "@/components/settings/GoogleIntegrationPanel";
 import { ViewSettings } from "@/components/settings/ViewSettings";
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
@@ -39,10 +37,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const startDraft = useStore((s) => s.startDraft);
-  const [settingsPanel, setSettingsPanel] = useState<"view" | "google" | null>(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("google") === "connected" ? "google" : null;
-  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const anchor = new Date(settings.anchorDate);
 
@@ -142,9 +137,9 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
         </div>
 
         <button
-          onClick={() => setSettingsPanel((v) => (v === "view" ? null : "view"))}
+          onClick={() => setSettingsOpen((v) => !v)}
           className={`rounded-lg p-1.5 transition hover:bg-surface-overlay hover:text-ink ${
-            settingsPanel === "view" ? "bg-surface-overlay text-ink" : "text-ink-light"
+            settingsOpen ? "bg-surface-overlay text-ink" : "text-ink-light"
           }`}
           aria-label="Ustawienia widoku"
           title="Ustawienia widoku (godziny, wysokość siatki)"
@@ -152,18 +147,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
           <Settings2 size={18} />
         </button>
 
-        <button
-          onClick={() => setSettingsPanel((v) => (v === "google" ? null : "google"))}
-          className={`rounded-lg p-1.5 transition hover:bg-surface-overlay hover:text-ink ${
-            settingsPanel === "google" ? "bg-surface-overlay text-ink" : "text-ink-light"
-          }`}
-          aria-label="Integracja Google"
-          title="Integracja Google (Kalendarz + Tasks)"
-        >
-          <Link2 size={18} />
-        </button>
-
-        <UserMenu onClosePanels={() => setSettingsPanel(null)} />
+        <UserMenu onClosePanels={() => setSettingsOpen(false)} />
 
         <button
           onClick={enableNotifications}
@@ -191,43 +175,12 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
         </button>
       </div>
 
-      {settingsPanel && (
+      {settingsOpen && (
         <div className="absolute right-3 top-full z-40 mt-2 w-80 max-h-[min(70vh,520px)] overflow-y-auto thin-scrollbar rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
-          <div className="mb-3 flex gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
-            <button
-              type="button"
-              onClick={() => setSettingsPanel("view")}
-              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
-                settingsPanel === "view"
-                  ? "bg-accent text-white shadow-glow"
-                  : "text-ink-light hover:text-ink"
-              }`}
-            >
-              Widok
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsPanel("google")}
-              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
-                settingsPanel === "google"
-                  ? "bg-accent text-white shadow-glow"
-                  : "text-ink-light hover:text-ink"
-              }`}
-            >
-              Google
-            </button>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+            Ustawienia widoku
           </div>
-
-          {settingsPanel === "view" ? (
-            <ViewSettings />
-          ) : (
-            <>
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-                Integracja Google
-              </div>
-              <GoogleIntegrationPanel />
-            </>
-          )}
+          <ViewSettings />
         </div>
       )}
     </header>

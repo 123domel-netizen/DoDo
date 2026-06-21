@@ -8,10 +8,9 @@ import {
   type SetStateAction,
 } from "react";
 import { useStore } from "@/state/store";
-import type { Attachment, ChecklistItem, DualVisibilityMode, Item, Participant, Reminder } from "@/types";
+import type { Attachment, ChecklistItem, Item, Participant, Reminder } from "@/types";
 import { uid, defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { parseChecklistPaste, shouldParseChecklistPaste } from "@/lib/checklistPaste";
-import { cloudEnabled } from "@/lib/supabase";
 import { TimeEditor } from "@/components/item/TimeEditor";
 import {
   CalendarClock,
@@ -425,28 +424,6 @@ export function ItemEditorPanel() {
             checked={it.showInTodo}
             onChange={(v) => update({ showInTodo: v })}
           />
-          {cloudEnabled && it.type === "task" && it.showInCalendar && it.showInTodo && (
-            <>
-              <div className="border-t border-line" />
-              <div className="px-3 py-2.5">
-                <div className="mb-1 text-xs text-ink-light">Sync Google (to zadanie)</div>
-                <select
-                  value={it.googleSyncOverride ?? ""}
-                  onChange={(e) =>
-                    update({
-                      googleSyncOverride: (e.target.value || null) as DualVisibilityMode | null,
-                    })
-                  }
-                  className="w-full rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink"
-                >
-                  <option value="">Domyślnie (z ustawień)</option>
-                  <option value="both_linked">Kalendarz + Tasks</option>
-                  <option value="calendar_only">Tylko Kalendarz</option>
-                  <option value="tasks_only">Tylko Tasks</option>
-                </select>
-              </div>
-            </>
-          )}
         </div>
       </div>
 

@@ -3,14 +3,12 @@ import { withNormalizedAllDay } from "@/lib/allDay";
 import {
   ensureArchiveGroup,
   ensureGoogleGroup,
-  findGoogleGroup,
   isArchiveGroup,
   isGoogleGroup,
 } from "@/lib/groups";
 import type { Group, Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
-import { enqueueGoogleSync } from "@/lib/googleSync";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
@@ -21,11 +19,8 @@ import { enqueueGoogleSync } from "@/lib/googleSync";
 let userId: string | null = null;
 let previousUserId: string | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
-let googleSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let lastPushedSnapshot = "";
 let applyingRemote = false;
-const pendingGoogleItemIds = new Set<string>();
-let pendingGoogleDelete = false;
 let realtimeChannel: RealtimeChannel | null = null;
 let storeSubscribed = false;
 
@@ -70,11 +65,7 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
 
 function rowToItem(row: Record<string, unknown>): Item {
   const payload = (row.payload ?? {}) as Record<string, unknown>;
-  // Importy z Google bez przypisanej grupy trafiają do lokalnej grupy „GOOGLE”.
-  let groupId = (row.group_id as string | null) ?? null;
-  if (!groupId && payload.syncSource === "google") {
-    groupId = findGoogleGroup(useStore.getState().groups)?.id ?? null;
-  }
+  const groupId = (row.group_id as string | null) ?? null;
   const item: Item = {
     id: row.id as string,
     type: row.type as Item["type"],
@@ -105,11 +96,6 @@ function rowToItem(row: Record<string, unknown>): Item {
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
   return item.allDay ? withNormalizedAllDay(item) : item;
-}
-
-function isGoogleOriginatedRow(row: Record<string, unknown>): boolean {
-  const payload = (row.payload ?? {}) as Record<string, unknown>;
-  return payload.syncSource === "google";
 }
 
 function groupToRow(group: Group) {
@@ -158,6 +144,9 @@ function reconcileGroups(remote: Group[]): {
   const deleteIds: string[] = [];
   let archiveKept: Group | null = null;
   let googleKept: Group | null = null;
+  // Deduplikacja grup użytkownika po nazwie — naprawia duplikaty powstałe, gdy
+  // dwa urządzenia zasiały tabelę zanim się nawzajem zobaczyły.
+  const userByName = new Map<string, Group>();
   const result: Group[] = [];
 
   for (const g of remote) {
@@ -178,7 +167,15 @@ function reconcileGroups(remote: Group[]): {
         result.push(g);
       }
     } else {
-      result.push(g);
+      const key = g.name.trim().toLowerCase();
+      const kept = userByName.get(key);
+      if (kept) {
+        remap.set(g.id, kept.id);
+        deleteIds.push(g.id);
+      } else {
+        userByName.set(key, g);
+        result.push(g);
+      }
     }
   }
   return { groups: result, remap, deleteIds };
@@ -309,9 +306,6 @@ function setupRealtime() {
           const row = payload.new as Record<string, unknown>;
           const item = rowToItem(row);
           useStore.setState((s) => ({ items: { ...s.items, [item.id]: item } }));
-          if (isGoogleOriginatedRow(row)) {
-            pendingGoogleItemIds.delete(item.id);
-          }
         }
       } finally {
         applyingRemote = false;
@@ -351,8 +345,6 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     await switchPersistUser(null);
     previousUserId = null;
     lastPushedSnapshot = "";
-    pendingGoogleItemIds.clear();
-    pendingGoogleDelete = false;
     groupsReady = false;
     lastGroupsSnapshot = "";
     pendingGroupDeletes.clear();
@@ -438,42 +430,7 @@ function schedulePush() {
         return;
       }
     }
-    scheduleGoogleSync();
   }, 800);
-}
-
-function scheduleGoogleSync() {
-  if (!cloudEnabled || !userId) return;
-  if (googleSyncTimer) clearTimeout(googleSyncTimer);
-  googleSyncTimer = setTimeout(async () => {
-    try {
-      const ids = pendingGoogleDelete
-        ? undefined
-        : pendingGoogleItemIds.size
-          ? [...pendingGoogleItemIds]
-          : undefined;
-      pendingGoogleItemIds.clear();
-      pendingGoogleDelete = false;
-      await enqueueGoogleSync(ids);
-    } catch (err) {
-      console.warn("[cloud] google sync enqueue failed:", err);
-    }
-  }, 1500);
-}
-
-function trackLocalChange(prev: Record<string, Item>, next: Record<string, Item>) {
-  if (applyingRemote) return;
-  for (const id of Object.keys(next)) {
-    const item = next[id];
-    const was = prev[id];
-    if (!was || item.updatedAt !== was.updatedAt) {
-      pendingGoogleItemIds.add(id);
-    }
-  }
-  for (const id of Object.keys(prev)) {
-    if (!next[id]) pendingGoogleDelete = true;
-  }
-  scheduleGoogleSync();
 }
 
 function trackGroupChange(prev: Group[], next: Group[]) {
@@ -497,7 +454,6 @@ export async function initCloudSync() {
     if (!storeSubscribed) {
       storeSubscribed = true;
       useStore.subscribe((state, prev) => {
-        trackLocalChange(prev.items, state.items);
         trackGroupChange(prev.groups, state.groups);
         schedulePush();
       });

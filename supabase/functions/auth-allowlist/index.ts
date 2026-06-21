@@ -47,14 +47,18 @@ async function isAllowedEmail(email: string): Promise<boolean> {
 }
 
 function deny(message: string) {
+  // WAŻNE: Supabase Auth czyta treść odpowiedzi hooka tylko przy statusie 200/202.
+  // Zwrócenie 4xx sprawia, że GoTrue traktuje to jak błąd wywołania i pokazuje
+  // „Invalid payload sent to hook" zamiast naszego komunikatu. Dlatego odrzucenie
+  // zwracamy ze statusem 200 i obiektem `error` (z polami top-level dla zgodności).
+  // Patrz: https://github.com/supabase/auth/issues/2235
   return new Response(
     JSON.stringify({
-      error: {
-        http_code: 403,
-        message,
-      },
+      message,
+      http_code: 403,
+      error: { http_code: 403, message },
     }),
-    { status: 400, headers: { "content-type": "application/json" } },
+    { status: 200, headers: { "content-type": "application/json" } },
   );
 }
 

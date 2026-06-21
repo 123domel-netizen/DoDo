@@ -68,7 +68,7 @@ function defaultSettings(): Settings {
     anchorDate: startOfDay(new Date()).toISOString(),
     nineDayStartWeekday: 5,
     hourHeight: 52,
-    settingsVersion: 8,
+    settingsVersion: 9,
   };
 }
 
@@ -152,6 +152,14 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
         : g,
     );
     settings.settingsVersion = 8;
+  }
+  if ((settings.settingsVersion ?? 0) < 9 && items) {
+    // Integracja Kalendarz/Zadania Google została usunięta — czyścimy lokalnie
+    // wszystkie zaimportowane pozycje (rozwinięte cykliczne urodziny/rocznice itd.).
+    items = Object.fromEntries(
+      Object.entries(items).filter(([, it]) => it.syncSource !== "google"),
+    );
+    settings.settingsVersion = 9;
   }
   return { settings, groups, items, activeGroupFilter: state?.activeGroupFilter ?? null };
 }

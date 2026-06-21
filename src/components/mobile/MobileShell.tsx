@@ -19,7 +19,6 @@ import { TodoPanel } from "@/components/todo/TodoPanel";
 import { ItemEditorPanel } from "@/components/item/ItemEditorPanel";
 import { Logo } from "@/components/brand/Logo";
 import { ViewSettings } from "@/components/settings/ViewSettings";
-import { GoogleIntegrationPanel } from "@/components/settings/GoogleIntegrationPanel";
 import { GroupsModal } from "@/components/groups/GroupsModal";
 import { AddGroupDialog } from "@/components/groups/AddGroupDialog";
 import { getViewLabel } from "@/lib/viewLabel";
@@ -67,7 +66,7 @@ export function MobileShell() {
 
   const [tab, setTab] = useState<Tab>("calendar");
   const [mobileView, setMobileView] = useState<CalendarViewKind>("day");
-  const [sheet, setSheet] = useState<"view" | "google" | null>(null);
+  const [sheet, setSheet] = useState<boolean>(false);
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
 
@@ -144,7 +143,7 @@ export function MobileShell() {
             <Bell size={18} />
           </button>
           <button
-            onClick={() => setSheet((v) => (v ? null : "view"))}
+            onClick={() => setSheet((v) => !v)}
             className={`rounded-lg p-2 transition hover:bg-surface-overlay hover:text-ink ${
               sheet ? "bg-surface-overlay text-ink" : "text-ink-light"
             }`}
@@ -292,7 +291,7 @@ export function MobileShell() {
             type="button"
             className="absolute inset-0 bg-black/50"
             aria-label="Zamknij ustawienia"
-            onClick={() => setSheet(null)}
+            onClick={() => setSheet(false)}
           />
           <div
             className="relative max-h-[80vh] overflow-y-auto thin-scrollbar rounded-t-2xl border-t border-line bg-surface-overlay p-4 shadow-pop"
@@ -300,33 +299,10 @@ export function MobileShell() {
           >
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-line-strong" />
             <div className="mb-3 flex items-center gap-2">
-              <div className="flex flex-1 gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setSheet("view")}
-                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
-                    sheet === "view"
-                      ? "bg-accent text-white shadow-glow"
-                      : "text-ink-light hover:text-ink"
-                  }`}
-                >
-                  Widok
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSheet("google")}
-                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
-                    sheet === "google"
-                      ? "bg-accent text-white shadow-glow"
-                      : "text-ink-light hover:text-ink"
-                  }`}
-                >
-                  Google
-                </button>
-              </div>
+              <div className="flex-1 text-sm font-semibold text-ink">Ustawienia widoku</div>
               <button
                 type="button"
-                onClick={() => setSheet(null)}
+                onClick={() => setSheet(false)}
                 className="rounded-lg p-2 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
                 aria-label="Zamknij"
               >
@@ -334,7 +310,7 @@ export function MobileShell() {
               </button>
             </div>
 
-            {sheet === "view" ? <ViewSettings /> : <GoogleIntegrationPanel />}
+            <ViewSettings />
 
             {cloudEnabled && (
               <button

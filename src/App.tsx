@@ -8,8 +8,6 @@ import { MobileShell } from "@/components/mobile/MobileShell";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useIsMobile } from "@/hooks/useMediaQuery";
-import { handleGoogleOAuthReturn } from "@/components/settings/GoogleIntegrationPanel";
-import { cloudEnabled } from "@/lib/supabase";
 
 export default function App() {
   const hydrated = useStore((s) => s.hydrated);
@@ -20,11 +18,6 @@ export default function App() {
 
   useEffect(() => {
     document.title = "DoDo";
-  }, []);
-
-  useEffect(() => {
-    if (!cloudEnabled) return;
-    void handleGoogleOAuthReturn();
   }, []);
 
   // The editor lives in the side panel, so opening an item forces the panel open.
