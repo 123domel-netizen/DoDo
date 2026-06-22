@@ -11,11 +11,18 @@ import { useStore } from "@/state/store";
 import type { Attachment, ChecklistItem, Item, Participant, Reminder, TeamMember } from "@/types";
 import { uid, defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { parseChecklistPaste, shouldParseChecklistPaste } from "@/lib/checklistPaste";
-import { participantFromTeamMember } from "@/lib/participants";
+import { participantFromTeamMember, PARTICIPANT_STATUS_LABELS } from "@/lib/participants";
 import { fmt } from "@/lib/format";
-import { isShareGroup, isSharedItem, updateSharedItemContent } from "@/lib/share";
+import {
+  isShareGroup,
+  isSharedItem,
+  updateSharedItemContent,
+  updateOwnParticipationReminders,
+} from "@/lib/share";
 import { isItemDeleted } from "@/lib/items";
 import { rejectItemParticipation, teamMemberLabel } from "@/lib/team";
+import { ATTACHMENT_TOO_LARGE_MESSAGE, isAttachmentTooLarge } from "@/lib/attachments";
+import { effectiveReminders } from "@/lib/reminders";
 import { TimeEditor } from "@/components/item/TimeEditor";
 import {
   CalendarClock,
@@ -53,6 +60,7 @@ export function ItemEditorPanel() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const patchDraft = useStore((s) => s.patchDraft);
   const deleteItem = useStore((s) => s.deleteItem);
+  const removeSharedItem = useStore((s) => s.removeSharedItem);
   const discardDraft = useStore((s) => s.discardDraft);
   const closeEditor = useStore((s) => s.closeEditor);
   const setEditing = useStore((s) => s.setEditing);
@@ -83,21 +91,33 @@ export function ItemEditorPanel() {
   const it = item;
   const shareMode = isSharedItem(it);
   const group = !shareMode && it.groupId ? groups.find((g) => g.id === it.groupId) : undefined;
+  const displayReminders = effectiveReminders(it);
 
   const update = (patch: Partial<Item>) => {
     if (shareMode) {
       const allowed: Partial<Item> = {};
       if (patch.description !== undefined) allowed.description = patch.description;
       if (patch.checklist !== undefined) allowed.checklist = patch.checklist;
+      if (patch.attachments !== undefined) allowed.attachments = patch.attachments;
       if (Object.keys(allowed).length === 0) return;
       patchItem(it.id, allowed);
       void updateSharedItemContent(it.id, {
         description: allowed.description,
         checklist: allowed.checklist,
+        attachments: allowed.attachments,
       });
       return;
     }
     isDraft ? patchDraft(patch) : patchItem(it.id, patch);
+  };
+
+  const updateReminders = (reminders: Reminder[]) => {
+    if (shareMode) {
+      patchItem(it.id, { personalReminders: reminders });
+      void updateOwnParticipationReminders(it.id, reminders);
+      return;
+    }
+    update({ reminders });
   };
   const canAdd = it.title.trim().length > 0;
 
@@ -229,7 +249,7 @@ export function ItemEditorPanel() {
               type="button"
               onClick={() => {
                 void rejectItemParticipation(it.id).then(() => {
-                  deleteItem(it.id);
+                  removeSharedItem(it.id);
                   setEditing(null);
                 });
               }}
@@ -412,17 +432,17 @@ export function ItemEditorPanel() {
           <OptionalRow
             icon={<Bell size={15} />}
             label="Przypomnienia"
-            hasContent={it.reminders.length > 0}
+            hasContent={displayReminders.length > 0}
             openKey="reminders"
             open={open}
             setOpen={setOpen}
             summary={
-              it.reminders.length > 0 ? `${it.reminders.length}` : undefined
+              displayReminders.length > 0 ? `${displayReminders.length}` : undefined
             }
           >
             <RemindersEditor
-              reminders={it.reminders}
-              onChange={(reminders) => update({ reminders })}
+              reminders={displayReminders}
+              onChange={updateReminders}
             />
           </OptionalRow>
         ) : (
@@ -491,26 +511,21 @@ export function ItemEditorPanel() {
 
         <Divider />
 
-        {/* Visibility — de-emphasised footer */}
-        <div
-          className={`overflow-hidden rounded-lg border border-line bg-surface-raised/50 ${
-            shareMode ? "opacity-70" : ""
-          }`}
-        >
-          <VisibilityRow
-            label="Pokaż w kalendarzu"
-            checked={it.showInCalendar}
-            onChange={handleShowInCalendar}
-            disabled={shareMode}
-          />
-          <div className="border-t border-line" />
-          <VisibilityRow
-            label="Pokaż na liście ToDo"
-            checked={it.showInTodo}
-            onChange={(v) => update({ showInTodo: v })}
-            disabled={shareMode}
-          />
-        </div>
+        {!shareMode && (
+          <div className="overflow-hidden rounded-lg border border-line bg-surface-raised/50">
+            <VisibilityRow
+              label="Pokaż w kalendarzu"
+              checked={it.showInCalendar}
+              onChange={handleShowInCalendar}
+            />
+            <div className="border-t border-line" />
+            <VisibilityRow
+              label="Pokaż na liście ToDo"
+              checked={it.showInTodo}
+              onChange={(v) => update({ showInTodo: v })}
+            />
+          </div>
+        )}
       </div>
 
       {isDraft && (
@@ -661,14 +676,26 @@ function ParticipantsReadOnly({ participants }: { participants: Participant[] })
   return (
     <div className="flex flex-wrap gap-1">
       {participants.map((p) => (
-        <span
-          key={p.id}
-          className="rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink"
-        >
-          {p.name || p.email}
-        </span>
+        <ParticipantChip key={p.id} participant={p} />
       ))}
     </div>
+  );
+}
+
+function ParticipantChip({ participant: p }: { participant: Participant }) {
+  const status = p.status ?? "invited";
+  const rejected = status === "rejected";
+  return (
+    <span
+      className={`rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink ${
+        rejected ? "opacity-60" : ""
+      }`}
+    >
+      {p.name || p.email}
+      <span className="ml-1 text-[10px] text-ink-faint">
+        · {PARTICIPANT_STATUS_LABELS[status]}
+      </span>
+    </span>
   );
 }
 
@@ -694,22 +721,35 @@ function TeamParticipantsEditor({
     <div className="space-y-2">
       {participants.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {participants.map((p) => (
-            <span
-              key={p.id}
-              className="flex items-center gap-1 rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink"
-            >
-              {p.name || p.email}
-              <button
-                type="button"
-                onClick={() => onChange(participants.filter((x) => x.id !== p.id))}
-                className="text-ink-faint hover:text-ink"
-                aria-label="Usuń uczestnika"
+          {participants.map((p) => {
+            const status = p.status ?? "invited";
+            const rejected = status === "rejected";
+            return (
+              <span
+                key={p.id}
+                className={`flex items-center gap-1 rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink ${
+                  rejected ? "opacity-60" : ""
+                }`}
               >
-                <X size={12} />
-              </button>
-            </span>
-          ))}
+                <span>
+                  {p.name || p.email}
+                  <span className="ml-1 text-[10px] text-ink-faint">
+                    · {PARTICIPANT_STATUS_LABELS[status]}
+                  </span>
+                </span>
+                {!rejected && (
+                  <button
+                    type="button"
+                    onClick={() => onChange(participants.filter((x) => x.id !== p.id))}
+                    className="text-ink-faint hover:text-ink"
+                    aria-label="Usuń uczestnika"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
       {available.length > 0 ? (
@@ -834,8 +874,8 @@ function AttachmentsEditor({
   fileRef: RefObject<HTMLInputElement>;
 }) {
   const addFile = (file: File) => {
-    if (file.size > 1_500_000) {
-      alert("Plik jest za duży do trybu lokalnego (max ~1.5 MB). Użyj linku lub backendu.");
+    if (isAttachmentTooLarge(file)) {
+      alert(ATTACHMENT_TOO_LARGE_MESSAGE);
       return;
     }
     const reader = new FileReader();

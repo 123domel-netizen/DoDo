@@ -110,13 +110,16 @@ export function itemMatchesGroupFilter(
     return isSharedItem(item);
   }
 
-  if (isSharedItem(item)) return false;
-
-  if (!filterGroupId) {
-    if (scope === "todo" && archiveId && item.groupId === archiveId) return false;
-    return true;
+  if (filterGroupId) {
+    if (isSharedItem(item)) return false;
+    return item.groupId === filterGroupId;
   }
-  return item.groupId === filterGroupId;
+
+  // ALL: moje itemy + SHARE; ARCH w ToDo nadal ukryty poniżej.
+  if (isSharedItem(item)) return true;
+
+  if (scope === "todo" && archiveId && item.groupId === archiveId) return false;
+  return true;
 }
 
 /** Przypisz aktywny filtr grupy do nowego elementu (gdy wybrana konkretna grupa). */

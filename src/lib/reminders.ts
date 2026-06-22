@@ -1,4 +1,11 @@
-import type { Item } from "@/types";
+import type { Item, Reminder } from "@/types";
+import { isSharedItem } from "@/lib/share";
+
+/** Przypomnienia widoczne dla bieżącego użytkownika (właściciel vs uczestnik SHARE). */
+export function effectiveReminders(item: Item): Reminder[] {
+  if (isSharedItem(item)) return item.personalReminders ?? [];
+  return item.reminders;
+}
 
 /** Pinezka na kalendarzu: tylko dzwoneczek w chwili przypomnienia. */
 export interface ReminderMarker {
@@ -17,7 +24,7 @@ export function collectReminderMarkers(items: Item[]): ReminderMarker[] {
   const markers: ReminderMarker[] = [];
   for (const item of items) {
     if (!item.hasDueDate || item.showInCalendar || item.done || item.allDay) continue;
-    for (const r of item.reminders) {
+    for (const r of effectiveReminders(item)) {
       markers.push({
         key: `${item.id}:${r.id}`,
         item,

@@ -20,6 +20,13 @@ export interface Participant {
 
 export type ParticipantStatus = "invited" | "accepted" | "rejected" | "active";
 
+export const PARTICIPANT_STATUS_LABELS: Record<ParticipantStatus, string> = {
+  invited: "Zaproszony",
+  accepted: "Akceptował",
+  rejected: "Odrzucił",
+  active: "Działam",
+};
+
 export interface TeamMember {
   id: string;
   ownerUserId: string;
@@ -96,6 +103,8 @@ export interface Item {
   /** Tombstone — item usunięty (ukryty w UI, sync do deleted_at). */
   deletedAt?: string | null;
   deletedBy?: string | null;
+  /** Osobiste przypomnienia uczestnika (SHARE). */
+  personalReminders?: Reminder[];
   createdAt: string;
   updatedAt: string;
 }

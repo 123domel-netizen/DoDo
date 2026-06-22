@@ -15,6 +15,7 @@ import { fmt, fmtRange, tint } from "@/lib/format";
 import { allDayCalendarDate } from "@/lib/allDay";
 import { groupIdForNewItem, findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
 import { isSharedItem, SHARE_CALENDAR_COLOR } from "@/lib/share";
+import { effectiveReminders } from "@/lib/reminders";
 import { defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { isToday, isPast, isTomorrow, addMonths } from "date-fns";
 import { itemsForUpcomingEventsList } from "@/lib/recurrence";
@@ -254,6 +255,7 @@ export function EventRow({
   const tomorrow = isTomorrow(start);
   const shared = isSharedItem(item);
   const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#5E7FA8");
+  const reminderCount = effectiveReminders(item).length;
 
   const whenLabel = item.allDay
     ? today
@@ -301,9 +303,9 @@ export function EventRow({
               <Users size={11} /> {item.participants.length}
             </span>
           )}
-          {item.reminders.length > 0 && (
+          {reminderCount > 0 && (
             <span className="inline-flex items-center gap-0.5">
-              <Bell size={11} /> {item.reminders.length}
+              <Bell size={11} /> {reminderCount}
             </span>
           )}
           {item.attachments.length > 0 && (
@@ -335,6 +337,7 @@ export function TodoRow({
   const checklistDone = item.checklist.filter((c) => c.done).length;
   const shared = isSharedItem(item);
   const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#9b9a97");
+  const reminderCount = effectiveReminders(item).length;
 
   return (
     <div
@@ -380,9 +383,9 @@ export function TodoRow({
               <CheckSquare size={11} /> {checklistDone}/{item.checklist.length}
             </span>
           )}
-          {item.reminders.length > 0 && (
+          {reminderCount > 0 && (
             <span className="inline-flex items-center gap-0.5">
-              <Bell size={11} /> {item.reminders.length}
+              <Bell size={11} /> {reminderCount}
             </span>
           )}
           {item.participants.length > 0 && (

@@ -47,6 +47,8 @@ interface AppState {
   toggleTaskDone: (id: string) => void;
   addItem: (partial: Partial<Item>) => Item;
   deleteItem: (id: string) => void;
+  /** Usuń item SHARE z lokalnego widoku (np. po odrzuceniu udziału). */
+  removeSharedItem: (id: string) => void;
   duplicateItem: (id: string) => Item | null;
 
   /** Start a new, uncommitted draft and open it in the side panel. */
@@ -309,6 +311,15 @@ export const useStore = create<AppState>()(
             },
             editingId: s.editingId === id ? null : s.editingId,
           };
+        }),
+
+      removeSharedItem: (id) =>
+        set((s) => {
+          const target = s.items[id];
+          if (!target || !isSharedItem(target)) return {};
+          const next = { ...s.items };
+          delete next[id];
+          return { items: next, editingId: s.editingId === id ? null : s.editingId };
         }),
 
       duplicateItem: (id) => {

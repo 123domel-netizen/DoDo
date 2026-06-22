@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { useStore } from "@/state/store";
 import { isItemDeleted } from "@/lib/items";
+import { effectiveReminders } from "@/lib/reminders";
+import { isSharedItem, updateOwnParticipationReminders } from "@/lib/share";
 import { showLocalNotification } from "@/lib/push";
 import { fmtTime } from "@/lib/format";
 
@@ -18,8 +20,9 @@ export function useReminderScheduler() {
       const items = Object.values(useStore.getState().items);
       for (const item of items) {
         if (isItemDeleted(item) || item.done || !item.hasDueDate) continue;
+        const reminders = effectiveReminders(item);
         const start = new Date(item.start).getTime();
-        for (const r of item.reminders) {
+        for (const r of reminders) {
           if (r.firedAt) continue;
           const fireAt = start - r.offsetMinutes * 60_000;
           if (fireAt <= now && now - fireAt < 5 * 60_000) {
@@ -27,11 +30,19 @@ export function useReminderScheduler() {
               item.title || "Wydarzenie",
               `${item.type === "task" ? "Zadanie" : "Wydarzenie"} o ${fmtTime(item.start)}`,
             );
-            patchItem(item.id, {
-              reminders: item.reminders.map((x) =>
+            if (isSharedItem(item)) {
+              const next = reminders.map((x) =>
                 x.id === r.id ? { ...x, firedAt: new Date().toISOString() } : x,
-              ),
-            });
+              );
+              patchItem(item.id, { personalReminders: next });
+              void updateOwnParticipationReminders(item.id, next);
+            } else {
+              patchItem(item.id, {
+                reminders: item.reminders.map((x) =>
+                  x.id === r.id ? { ...x, firedAt: new Date().toISOString() } : x,
+                ),
+              });
+            }
           }
         }
       }

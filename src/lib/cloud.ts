@@ -7,9 +7,14 @@ import {
   isGoogleGroup,
   stripGoogleGroups,
 } from "@/lib/groups";
-import { isShareGroup, updateSharedItemContent } from "@/lib/share";
+import { isShareGroup, updateSharedItemContent, updateOwnParticipationReminders } from "@/lib/share";
 import { mergeItemOnSync } from "@/lib/items";
-import { participantRowFromParticipant } from "@/lib/participants";
+import {
+  participantRowFromParticipant,
+  mergeParticipantsWithDb,
+  personalRemindersFromDbRow,
+  type ParticipantDbRow,
+} from "@/lib/participants";
 import type { Group, Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
@@ -299,7 +304,7 @@ async function pullSharedItems(): Promise<Record<string, Item>> {
   const email = userEmail?.toLowerCase() ?? "";
   let query = supabase
     .from("item_participants")
-    .select("status, items(*)")
+    .select("status, personal_reminders, items(*)")
     .neq("status", "rejected");
 
   if (email) {
@@ -319,18 +324,55 @@ async function pullSharedItems(): Promise<Record<string, Item>> {
     const itemRow = row.items as unknown as Record<string, unknown> | null;
     if (!itemRow) continue;
     const item = rowToItem(itemRow, "participant");
+    item.personalReminders = personalRemindersFromDbRow({
+      personal_reminders: row.personal_reminders,
+    } as ParticipantDbRow);
     out[item.id] = item;
   }
   return out;
 }
 
+async function pullOwnerParticipantRows(): Promise<Record<string, ParticipantDbRow[]>> {
+  if (!supabase || !userId) return {};
+  const { data, error } = await supabase
+    .from("item_participants")
+    .select("*")
+    .eq("owner_user_id", userId);
+  if (error) {
+    console.warn("[cloud] owner participants pull failed:", error.message);
+    return {};
+  }
+  const byItem: Record<string, ParticipantDbRow[]> = {};
+  for (const row of data ?? []) {
+    const itemId = row.item_id as string;
+    (byItem[itemId] ??= []).push(row as ParticipantDbRow);
+  }
+  return byItem;
+}
+
 async function syncItemParticipants(item: Item) {
   if (!supabase || !userId || item.shareRole === "participant" || item.deletedAt) return;
   const rows = item.participants
+    .filter((p) => p.status !== "rejected")
     .map((p) => participantRowFromParticipant(item.id, userId!, p))
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
-  await supabase.from("item_participants").delete().eq("item_id", item.id);
+  const payloadEmails = new Set(rows.map((r) => r.participant_email));
+
+  const { data: existing } = await supabase
+    .from("item_participants")
+    .select("id, participant_email, status")
+    .eq("item_id", item.id);
+
+  for (const row of existing ?? []) {
+    const email = row.participant_email as string;
+    const status = row.status as string;
+    if (status === "rejected") continue;
+    if (!payloadEmails.has(email)) {
+      await supabase.from("item_participants").delete().eq("id", row.id as string);
+    }
+  }
+
   if (rows.length) {
     const { error } = await supabase.from("item_participants").upsert(rows, {
       onConflict: "item_id,participant_email",
@@ -343,11 +385,18 @@ async function pushParticipantPatches(items: Item[]) {
   if (!supabase || !userId) return;
   for (const item of items) {
     if (item.shareRole !== "participant") continue;
-    const { error } = await updateSharedItemContent(item.id, {
+    const { error: contentError } = await updateSharedItemContent(item.id, {
       description: item.description,
       checklist: item.checklist,
+      attachments: item.attachments,
     });
-    if (error) console.warn("[cloud] participant patch failed:", error);
+    if (contentError) console.warn("[cloud] participant patch failed:", contentError);
+
+    const { error: reminderError } = await updateOwnParticipationReminders(
+      item.id,
+      item.personalReminders ?? [],
+    );
+    if (reminderError) console.warn("[cloud] personal reminders patch failed:", reminderError);
   }
 }
 
@@ -355,8 +404,16 @@ async function pullAll(replace = false) {
   if (!supabase || !userId) return;
   const { data, error } = await supabase.from("items").select("*");
   if (error) return;
+  const participantByItem = await pullOwnerParticipantRows();
   const owned: Record<string, Item> = {};
-  for (const row of data ?? []) owned[row.id] = rowToItem(row, "owner");
+  for (const row of data ?? []) {
+    let item = rowToItem(row, "owner");
+    const dbRows = participantByItem[item.id];
+    if (dbRows?.length) {
+      item = { ...item, participants: mergeParticipantsWithDb(item.participants, dbRows) };
+    }
+    owned[item.id] = item;
+  }
 
   const shared = await pullSharedItems();
   const remoteItems = { ...owned, ...shared };
