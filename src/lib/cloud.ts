@@ -19,6 +19,15 @@ import type { Group, Item, UserTag } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { fetchTeamMembers } from "@/lib/team";
+import {
+  clearDirtyItems,
+  clearDirtyParticipants,
+  getSyncDiagnostics,
+  resetSyncState,
+  shouldSchedulePush,
+  syncState,
+  trackStoreDirty,
+} from "@/lib/syncState";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
@@ -30,10 +39,12 @@ let userId: string | null = null;
 let userEmail: string | null = null;
 let previousUserId: string | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
-let lastPushedSnapshot = "";
-let applyingRemote = false;
 let realtimeChannel: RealtimeChannel | null = null;
 let storeSubscribed = false;
+
+function setApplyingRemote(v: boolean) {
+  syncState.applyingRemote = v;
+}
 
 // Synchronizacja grup
 let groupsReady = false;
@@ -276,6 +287,7 @@ async function pushTagAssignments() {
     }
   }
   lastAssignmentsSnapshot = snapshot;
+  syncState.tagAssignmentsDirty = false;
 }
 
 function syncMyTagIdsFromOwnedItems(items: Record<string, Item>) {
@@ -417,14 +429,14 @@ async function pullGroups() {
   const googleIds = new Set(remote.filter(isGoogleGroup).map((g) => g.id));
   const ensured = ensureShareGroup(ensureArchiveGroup(groups));
 
-  applyingRemote = true;
+  setApplyingRemote(true);
   try {
     useStore.setState((s) => ({
       groups: ensured,
       items: clearGoogleGroupRefs(remapItemGroups(s.items, remap), googleIds),
     }));
   } finally {
-    applyingRemote = false;
+    setApplyingRemote(false);
   }
 
   groupsReady = true;
@@ -522,23 +534,34 @@ async function syncItemParticipants(item: Item) {
   }
 }
 
-async function pushParticipantPatches(items: Item[]) {
-  if (!supabase || !userId) return;
+async function pushParticipantPatches(items: Item[]): Promise<string[]> {
+  if (!supabase || !userId) return [];
+  const pushed: string[] = [];
   for (const item of items) {
     if (item.shareRole !== "participant") continue;
+    let ok = true;
     const { error: contentError } = await updateSharedItemContent(item.id, {
       description: item.description,
       checklist: item.checklist,
       attachments: item.attachments,
     });
-    if (contentError) console.warn("[cloud] participant patch failed:", contentError);
+    if (contentError) {
+      console.warn("[cloud] participant patch failed:", contentError);
+      ok = false;
+    }
 
     const { error: reminderError } = await updateOwnParticipationReminders(
       item.id,
       item.personalReminders ?? [],
     );
-    if (reminderError) console.warn("[cloud] personal reminders patch failed:", reminderError);
+    if (reminderError) {
+      console.warn("[cloud] personal reminders patch failed:", reminderError);
+      ok = false;
+    }
+
+    if (ok) pushed.push(item.id);
   }
+  return pushed;
 }
 
 async function pullAll(replace = false) {
@@ -560,18 +583,30 @@ async function pullAll(replace = false) {
   const remoteItems = { ...owned, ...shared };
 
   if (replace) {
-    useStore.setState({ items: remoteItems });
-    syncMyTagIdsFromOwnedItems(remoteItems);
+    setApplyingRemote(true);
+    try {
+      useStore.setState({ items: remoteItems });
+      syncMyTagIdsFromOwnedItems(remoteItems);
+    } finally {
+      setApplyingRemote(false);
+    }
+    syncState.lastPullAt = new Date().toISOString();
     return;
   }
 
-  const local = useStore.getState().items;
-  const merged = { ...local };
-  for (const [id, remote] of Object.entries(remoteItems)) {
-    merged[id] = mergeItemOnSync(local[id], remote);
+  setApplyingRemote(true);
+  try {
+    const local = useStore.getState().items;
+    const merged = { ...local };
+    for (const [id, remote] of Object.entries(remoteItems)) {
+      merged[id] = mergeItemOnSync(local[id], remote);
+    }
+    useStore.setState({ items: merged });
+    syncMyTagIdsFromOwnedItems(merged);
+  } finally {
+    setApplyingRemote(false);
   }
-  useStore.setState({ items: merged });
-  syncMyTagIdsFromOwnedItems(merged);
+  syncState.lastPullAt = new Date().toISOString();
 }
 
 function teardownRealtime() {
@@ -586,7 +621,7 @@ function setupRealtime() {
   realtimeChannel = supabase
     .channel(`items-sync-${userId}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "items" }, (payload) => {
-      applyingRemote = true;
+      setApplyingRemote(true);
       try {
         if (payload.eventType === "DELETE") {
           const id = (payload.old as { id: string }).id;
@@ -603,11 +638,11 @@ function setupRealtime() {
           useStore.setState((s) => ({ items: { ...s.items, [remote.id]: merged } }));
         }
       } finally {
-        applyingRemote = false;
+        setApplyingRemote(false);
       }
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "groups" }, (payload) => {
-      applyingRemote = true;
+      setApplyingRemote(true);
       try {
         if (payload.eventType === "DELETE") {
           const id = (payload.old as { id: string }).id;
@@ -622,10 +657,50 @@ function setupRealtime() {
         }
         lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
       } finally {
-        applyingRemote = false;
+        setApplyingRemote(false);
       }
     })
     .subscribe();
+}
+
+export function getSyncDiagnosticsSnapshot() {
+  return getSyncDiagnostics();
+}
+
+/** Pełny pull z chmury — zastępuje lokalny cache itemów (Sync v2). */
+export async function forceCloudRefresh(): Promise<{ ok: boolean; message: string }> {
+  if (!cloudEnabled || !supabase || !userId) {
+    return { ok: false, message: "Synchronizacja niedostępna" };
+  }
+
+  syncState.pushBlocked = true;
+  syncState.booting = true;
+  try {
+    syncState.dirtyItemIds.clear();
+    syncState.dirtyParticipantIds.clear();
+    syncState.tagAssignmentsDirty = false;
+
+    await pullUserTags();
+    await pullTagAssignments();
+    await pullGroups();
+    await pullAll(true);
+
+    const team = await fetchTeamMembers();
+    useStore.getState().setTeamMembers(team);
+
+    lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
+    lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
+    lastAssignmentsSnapshot = assignmentsSnapshot(useStore.getState().myTagIdsByItem);
+
+    return { ok: true, message: "Dane odświeżone" };
+  } catch (err) {
+    console.warn("[cloud] force refresh failed:", err);
+    return { ok: false, message: "Odświeżanie nie powiodło się" };
+  } finally {
+    syncState.booting = false;
+    syncState.pushBlocked = false;
+    syncState.ready = true;
+  }
 }
 
 export async function handleAuthUserChange(nextUserId: string | null) {
@@ -641,15 +716,22 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     resetLocalUserState();
     await switchPersistUser(null);
     previousUserId = null;
-    lastPushedSnapshot = "";
     groupsReady = false;
     lastGroupsSnapshot = "";
     pendingGroupDeletes.clear();
+    resetSyncState();
+    syncState.ready = true;
     return;
   }
 
   const isUserSwitch = previousUserId !== null && previousUserId !== nextUserId;
   previousUserId = nextUserId;
+
+  syncState.booting = true;
+  syncState.ready = false;
+  syncState.dirtyItemIds.clear();
+  syncState.dirtyParticipantIds.clear();
+  syncState.tagAssignmentsDirty = false;
 
   groupsReady = false;
   lastGroupsSnapshot = "";
@@ -663,93 +745,128 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 
   if (isUserSwitch) resetLocalUserState();
 
-  const team = await fetchTeamMembers();
-  useStore.getState().setTeamMembers(team);
+  try {
+    const team = await fetchTeamMembers();
+    useStore.getState().setTeamMembers(team);
 
-  // Grupy najpierw — items.group_id ma klucz obcy do groups(id).
-  await pullUserTags();
-  await pullTagAssignments();
-  await pullGroups();
-  await pullAll(isUserSwitch);
+    // Grupy najpierw — items.group_id ma klucz obcy do groups(id).
+    await pullUserTags();
+    await pullTagAssignments();
+    await pullGroups();
+    await pullAll(isUserSwitch);
 
-  // Odrzuć ewentualne „usunięcia" wywołane resetem stanu przy przełączaniu konta.
-  pendingGroupDeletes.clear();
+    pendingGroupDeletes.clear();
 
-  teardownRealtime();
-  setupRealtime();
+    teardownRealtime();
+    setupRealtime();
+  } finally {
+    syncState.booting = false;
+    syncState.ready = true;
+  }
+}
+
+async function pushDirtyItems() {
+  if (!supabase || !userId) return;
+
+  const dirtyIds = [...syncState.dirtyItemIds];
+  if (!dirtyIds.length) return;
+
+  const state = useStore.getState();
+  const ownedItems = dirtyIds
+    .map((id) => state.items[id])
+    .filter((i): i is Item => Boolean(i) && i.shareRole !== "participant");
+
+  const missingIds = dirtyIds.filter((id) => !state.items[id]);
+  if (missingIds.length) clearDirtyItems(missingIds);
+
+  if (!ownedItems.length) return;
+
+  const pushedIds: string[] = [];
+  const ids = ownedItems.map((i) => i.id);
+  const payloadExtrasById = new Map<string, Record<string, unknown>>();
+  const { data: existingRows } = await supabase
+    .from("items")
+    .select("id, payload")
+    .in("id", ids);
+  for (const row of existingRows ?? []) {
+    const payload = (row.payload ?? {}) as Record<string, unknown>;
+    const extras: Record<string, unknown> = {};
+    if (payload.googleReminderEventIds) {
+      extras.googleReminderEventIds = payload.googleReminderEventIds;
+    }
+    if (payload.syncSource) extras.syncSource = payload.syncSource;
+    if (payload.googleRecurrence) extras.googleRecurrence = payload.googleRecurrence;
+    if (payload.googleRecurringSeriesId) {
+      extras.googleRecurringSeriesId = payload.googleRecurringSeriesId;
+    }
+    if (payload.googleRecurrenceExceptions) {
+      extras.googleRecurrenceExceptions = payload.googleRecurrenceExceptions;
+    }
+    if (payload.googleCalendarEventId) {
+      extras.googleCalendarEventId = payload.googleCalendarEventId;
+    }
+    if (Object.keys(extras).length) payloadExtrasById.set(row.id as string, extras);
+  }
+
+  const localGroupIds = new Set(useStore.getState().groups.map((g) => g.id));
+  const rows = ownedItems.map((item) => {
+    const row = itemToRow(item, payloadExtrasById.get(item.id));
+    if (row.group_id && !localGroupIds.has(row.group_id)) row.group_id = null;
+    return row;
+  });
+
+  const { error } = await supabase.from("items").upsert(rows);
+  if (error) {
+    console.warn("[cloud] item upsert failed:", error.message);
+    return;
+  }
+
+  for (const item of ownedItems) {
+    await syncItemParticipants(item);
+    pushedIds.push(item.id);
+  }
+
+  clearDirtyItems(pushedIds);
+}
+
+async function pushDirtyParticipants() {
+  if (!supabase || !userId) return;
+
+  const dirtyIds = [...syncState.dirtyParticipantIds];
+  if (!dirtyIds.length) return;
+
+  const state = useStore.getState();
+  const items = dirtyIds
+    .map((id) => state.items[id])
+    .filter((i): i is Item => Boolean(i) && i.shareRole === "participant");
+
+  const missingIds = dirtyIds.filter((id) => !state.items[id]);
+  if (missingIds.length) clearDirtyParticipants(missingIds);
+
+  if (!items.length) return;
+
+  const pushed = await pushParticipantPatches(items);
+  clearDirtyParticipants(pushed);
 }
 
 function schedulePush() {
-  if (!supabase || !userId || applyingRemote) return;
+  if (!shouldSchedulePush() || !supabase || !userId) return;
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(async () => {
+    if (!shouldSchedulePush()) return;
+
     await pushGroupsFull();
     await pushUserTags();
-
-    const allItems = Object.values(useStore.getState().items);
-    const ownedItems = allItems.filter((i) => i.shareRole !== "participant");
-    const sharedItems = allItems.filter((i) => i.shareRole === "participant");
-
-    const snapshot = JSON.stringify(allItems.map((i) => [i.id, i.updatedAt]));
-    const itemsChanged = snapshot !== lastPushedSnapshot;
-
-    if (itemsChanged) {
-      lastPushedSnapshot = snapshot;
-
-      const ids = ownedItems.map((i) => i.id);
-      const payloadExtrasById = new Map<string, Record<string, unknown>>();
-      if (ids.length) {
-        const { data: existingRows } = await supabase!
-          .from("items")
-          .select("id, payload")
-          .in("id", ids);
-        for (const row of existingRows ?? []) {
-          const payload = (row.payload ?? {}) as Record<string, unknown>;
-          const extras: Record<string, unknown> = {};
-          if (payload.googleReminderEventIds) {
-            extras.googleReminderEventIds = payload.googleReminderEventIds;
-          }
-          if (payload.syncSource) extras.syncSource = payload.syncSource;
-          if (payload.googleRecurrence) extras.googleRecurrence = payload.googleRecurrence;
-          if (payload.googleRecurringSeriesId) {
-            extras.googleRecurringSeriesId = payload.googleRecurringSeriesId;
-          }
-          if (payload.googleRecurrenceExceptions) {
-            extras.googleRecurrenceExceptions = payload.googleRecurrenceExceptions;
-          }
-          if (payload.googleCalendarEventId) {
-            extras.googleCalendarEventId = payload.googleCalendarEventId;
-          }
-          if (Object.keys(extras).length) payloadExtrasById.set(row.id as string, extras);
-        }
-      }
-
-      const localGroupIds = new Set(useStore.getState().groups.map((g) => g.id));
-      const rows = ownedItems.map((item) => {
-        const row = itemToRow(item, payloadExtrasById.get(item.id));
-        if (row.group_id && !localGroupIds.has(row.group_id)) row.group_id = null;
-        return row;
-      });
-      if (rows.length) {
-        const { error } = await supabase!.from("items").upsert(rows);
-        if (error) {
-          console.warn("[cloud] item upsert failed:", error.message);
-          lastPushedSnapshot = "";
-        } else {
-          for (const item of ownedItems) {
-            await syncItemParticipants(item);
-          }
-        }
-      }
-      await pushParticipantPatches(sharedItems);
-    }
-
+    await pushDirtyItems();
+    await pushDirtyParticipants();
     await pushTagAssignments();
+
+    syncState.lastPushAt = new Date().toISOString();
   }, 800);
 }
 
 function trackGroupChange(prev: Group[], next: Group[]) {
-  if (applyingRemote || prev === next) return;
+  if (syncState.applyingRemote || prev === next) return;
   const nextIds = new Set(next.map((g) => g.id));
   for (const g of prev) {
     if (!nextIds.has(g.id)) pendingGroupDeletes.add(g.id);
@@ -757,14 +874,19 @@ function trackGroupChange(prev: Group[], next: Group[]) {
 }
 
 function trackTagChange(prev: Record<string, UserTag>, next: Record<string, UserTag>) {
-  if (applyingRemote || prev === next) return;
+  if (syncState.applyingRemote || prev === next) return;
   for (const id of Object.keys(prev)) {
     if (!next[id]) pendingTagDeletes.add(id);
   }
 }
 
 export async function initCloudSync() {
-  if (!cloudEnabled || !supabase) return;
+  if (!cloudEnabled || !supabase) {
+    syncState.ready = true;
+    return;
+  }
+  syncState.booting = true;
+  syncState.ready = false;
   try {
     const { data } = await supabase.auth.getUser();
     await handleAuthUserChange(data.user?.id ?? null);
@@ -778,10 +900,18 @@ export async function initCloudSync() {
       useStore.subscribe((state, prev) => {
         trackGroupChange(prev.groups, state.groups);
         trackTagChange(prev.tags, state.tags);
+        trackStoreDirty(prev, state);
         schedulePush();
       });
     }
   } catch (err) {
     console.warn("[cloud] sync disabled:", err);
+    syncState.booting = false;
+    syncState.ready = true;
+  } finally {
+    if (!userId) {
+      syncState.booting = false;
+      syncState.ready = true;
+    }
   }
 }

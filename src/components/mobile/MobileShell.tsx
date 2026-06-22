@@ -38,6 +38,7 @@ import { cloudEnabled } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
 import { TeamSettings } from "@/components/settings/TeamSettings";
 import { TagsSettings } from "@/components/settings/TagsSettings";
+import { SyncSettings } from "@/components/settings/SyncSettings";
 
 type Tab = "dashboard" | "calendar" | "tasks";
 type MobileCalendarMode = CalendarViewKind | "today";
@@ -74,7 +75,7 @@ export function MobileShell() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [mobileView, setMobileView] = useState<MobileCalendarMode>("day");
   const [sheet, setSheet] = useState<boolean>(false);
-  const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags">("view");
+  const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags" | "sync">("view");
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
 
@@ -365,14 +366,27 @@ export function MobileShell() {
               >
                 Tagi
               </button>
+              {cloudEnabled && (
+                <button
+                  type="button"
+                  onClick={() => setSettingsTab("sync")}
+                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                    settingsTab === "sync" ? "bg-accent text-white" : "text-ink-light hover:text-ink"
+                  }`}
+                >
+                  Sync
+                </button>
+              )}
             </div>
 
             {settingsTab === "view" ? (
               <ViewSettings />
             ) : settingsTab === "team" ? (
               <TeamSettings />
-            ) : (
+            ) : settingsTab === "tags" ? (
               <TagsSettings />
+            ) : (
+              <SyncSettings />
             )}
 
             {cloudEnabled && (

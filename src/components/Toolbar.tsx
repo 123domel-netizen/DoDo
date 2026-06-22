@@ -22,6 +22,7 @@ import { Logo } from "@/components/brand/Logo";
 import { ViewSettings } from "@/components/settings/ViewSettings";
 import { TagsSettings } from "@/components/settings/TagsSettings";
 import { TeamSettings } from "@/components/settings/TeamSettings";
+import { SyncSettings } from "@/components/settings/SyncSettings";
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "day", label: "Dzień" },
@@ -40,7 +41,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const setSettings = useStore((s) => s.setSettings);
   const startDraft = useStore((s) => s.startDraft);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags">("view");
+  const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags" | "sync">("view");
 
   const anchor = new Date(settings.anchorDate);
 
@@ -214,13 +215,28 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
             >
               Tagi
             </button>
+            {cloudEnabled && (
+              <button
+                type="button"
+                onClick={() => setSettingsTab("sync")}
+                className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+                  settingsTab === "sync"
+                    ? "bg-accent text-white shadow-glow"
+                    : "text-ink-light hover:text-ink"
+                }`}
+              >
+                Sync
+              </button>
+            )}
           </div>
           {settingsTab === "view" ? (
             <ViewSettings />
           ) : settingsTab === "team" ? (
             <TeamSettings />
-          ) : (
+          ) : settingsTab === "tags" ? (
             <TagsSettings />
+          ) : (
+            <SyncSettings />
           )}
         </div>
       )}

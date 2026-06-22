@@ -8,7 +8,7 @@ export function filterVisibleItems(items: Iterable<Item>): Item[] {
   return [...items].filter((it) => !isItemDeleted(it));
 }
 
-/** Merge przy pull/realtime — tombstone wygrywa nad starszą aktywną wersją. */
+/** Merge przy pull/realtime — last-write-wins z poprawnym rozstrzyganiem tombstone. */
 export function mergeItemOnSync(local: Item | undefined, remote: Item): Item {
   if (!local) return remote;
 
@@ -16,10 +16,15 @@ export function mergeItemOnSync(local: Item | undefined, remote: Item): Item {
   const rDeleted = isItemDeleted(remote);
   const lTs = new Date(local.updatedAt).getTime();
   const rTs = new Date(remote.updatedAt).getTime();
+  const lDeleteTs = local.deletedAt ? new Date(local.deletedAt).getTime() : lTs;
 
   if (rDeleted && lDeleted) return rTs >= lTs ? remote : local;
   if (rDeleted) return remote;
-  if (lDeleted) return local;
+  if (lDeleted) {
+    // Lokalny tombstone vs aktywny remote — nowsza wersja wygrywa.
+    if (rTs > lDeleteTs) return remote;
+    return local;
+  }
 
   return rTs >= lTs ? remote : local;
 }
