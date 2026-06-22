@@ -43,7 +43,8 @@ export default function App() {
               <CalendarView />
             </main>
             {panelOpen && (
-              <aside className="w-full max-w-[400px] shrink-0 border-l border-line md:w-[380px] lg:w-[400px]">
+              <aside className="relative w-full max-w-[400px] shrink-0 border-l border-accent/15 bg-gradient-to-b from-surface-raised/80 to-surface shadow-[-6px_0_24px_rgba(0,0,0,0.12)] md:w-[380px] lg:w-[400px]">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-accent/35 via-accent/10 to-transparent" />
                 <SidePanel />
               </aside>
             )}

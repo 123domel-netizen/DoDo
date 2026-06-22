@@ -108,8 +108,9 @@ export function TodoPanel() {
         : `${activeTasks} aktywnych`;
 
   return (
-    <div className="flex h-full flex-col bg-surface">
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+    <div className="flex h-full flex-col bg-surface/95">
+      <div className="pointer-events-none h-0.5 shrink-0 bg-gradient-to-r from-accent/30 via-accent/10 to-transparent" />
+      <div className="flex items-center gap-2 border-b border-line/80 bg-surface-raised/40 px-3 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-lg border border-line bg-surface-raised p-0.5">
           <TabButton
             active={tab === "tasks"}
@@ -238,7 +239,7 @@ function TabButton({
   );
 }
 
-function EventRow({
+export function EventRow({
   item,
   group,
   onOpen,
@@ -303,7 +304,7 @@ function EventRow({
   );
 }
 
-function TodoRow({
+export function TodoRow({
   item,
   group,
   onToggle,

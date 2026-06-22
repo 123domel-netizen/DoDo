@@ -3,6 +3,7 @@ import { Bell } from "lucide-react";
 import type { Group, Item } from "@/types";
 import { useStore } from "@/state/store";
 import { fmt, fmtTime, tint } from "@/lib/format";
+import { itemCoversCalendarDay } from "@/lib/allDay";
 import { weekendColumnBg } from "@/lib/weekend";
 import { groupIdForNewItem } from "@/lib/groups";
 import type { ReminderMarker } from "@/lib/reminders";
@@ -23,14 +24,8 @@ export function MonthView({ days, items, reminderMarkers, groups }: MonthViewPro
   const weekdayLabels = days.slice(0, 7);
 
   function entriesForDay(day: Date) {
-    const ds = startOfDay(day).getTime();
-    const de = ds + 86400000;
     const dayItems = items
-      .filter((it) => {
-        const s = new Date(it.start).getTime();
-        const e = new Date(it.end).getTime();
-        return e > ds && s < de;
-      })
+      .filter((it) => itemCoversCalendarDay(it, day))
       .map((it) => ({ kind: "item" as const, at: new Date(it.start), item: it }));
     const dayMarkers = reminderMarkers
       .filter((m) => isSameDay(m.at, day))

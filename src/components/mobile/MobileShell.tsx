@@ -15,6 +15,7 @@ import {
 import { useStore } from "@/state/store";
 import type { CalendarViewKind } from "@/types";
 import { CalendarView } from "@/components/calendar/CalendarView";
+import { MobileTodayPanel } from "@/components/mobile/MobileTodayPanel";
 import { TodoPanel } from "@/components/todo/TodoPanel";
 import { ItemEditorPanel } from "@/components/item/ItemEditorPanel";
 import { Logo } from "@/components/brand/Logo";
@@ -33,8 +34,10 @@ import { cloudEnabled } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
 
 type Tab = "calendar" | "tasks";
+type MobileCalendarMode = CalendarViewKind | "today";
 
-const MOBILE_VIEWS: { key: CalendarViewKind; label: string }[] = [
+const MOBILE_VIEWS: { key: MobileCalendarMode; label: string }[] = [
+  { key: "today", label: "Lista" },
   { key: "day", label: "Dzień" },
   { key: "week", label: "Tydzień" },
   { key: "month", label: "Miesiąc" },
@@ -63,7 +66,7 @@ export function MobileShell() {
   const addGroup = useStore((s) => s.addGroup);
 
   const [tab, setTab] = useState<Tab>("calendar");
-  const [mobileView, setMobileView] = useState<CalendarViewKind>("day");
+  const [mobileView, setMobileView] = useState<MobileCalendarMode>("day");
   const [sheet, setSheet] = useState<boolean>(false);
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
@@ -171,34 +174,38 @@ export function MobileShell() {
         />
       </div>
 
-      {/* Pasek nawigacji daty + przełącznik widoku (tylko kalendarz) */}
+      {/* Pasek nawigacji daty + przełącznik widoku (kalendarz) */}
       {tab === "calendar" && (
         <div className="flex flex-col gap-2 border-b border-line px-3 py-2">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={goToday}
-              className="rounded-lg border border-line bg-surface-raised px-2.5 py-1 text-xs font-medium text-ink transition hover:border-line-strong"
-            >
-              Dziś
-            </button>
-            <button
-              onClick={() => shift(-1)}
-              className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-              aria-label="Poprzedni"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <div className="min-w-0 flex-1 truncate text-center text-sm font-medium capitalize text-ink">
-              {getViewLabel(mobileView, anchor, settings.nineDayStartWeekday)}
+          {mobileView !== "today" ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={goToday}
+                className="rounded-lg border border-line bg-surface-raised px-2.5 py-1 text-xs font-medium text-ink transition hover:border-line-strong"
+              >
+                Dziś
+              </button>
+              <button
+                onClick={() => shift(-1)}
+                className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+                aria-label="Poprzedni"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <div className="min-w-0 flex-1 truncate text-center text-sm font-medium capitalize text-ink">
+                {getViewLabel(mobileView, anchor, settings.nineDayStartWeekday)}
+              </div>
+              <button
+                onClick={() => shift(1)}
+                className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+                aria-label="Następny"
+              >
+                <ChevronRight size={20} />
+              </button>
             </div>
-            <button
-              onClick={() => shift(1)}
-              className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-              aria-label="Następny"
-            >
-              <ChevronRight size={20} />
-            </button>
-          </div>
+          ) : (
+            <div className="text-center text-sm font-medium text-ink">Dziś · wydarzenia i zadania</div>
+          )}
           <div className="flex items-center gap-0.5 self-center rounded-lg border border-line bg-surface-raised p-0.5">
             {MOBILE_VIEWS.map((v) => (
               <button
@@ -260,7 +267,15 @@ export function MobileShell() {
 
       {/* Treść */}
       <main className="min-h-0 flex-1 overflow-hidden">
-        {tab === "calendar" ? <CalendarView view={mobileView} /> : <TodoPanel />}
+        {tab === "calendar" ? (
+          mobileView === "today" ? (
+            <MobileTodayPanel />
+          ) : (
+            <CalendarView view={mobileView} />
+          )
+        ) : (
+          <TodoPanel />
+        )}
       </main>
 
       {/* Edytor pełnoekranowy */}

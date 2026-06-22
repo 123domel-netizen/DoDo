@@ -192,19 +192,19 @@ export function ItemEditorPanel() {
           <ChevronDown size={13} className="text-ink-faint" />
         </button>
 
-        <div className="ml-auto flex items-center gap-0.5">
+        <div className="ml-auto flex items-center gap-1.5">
           {it.type === "task" && (
             <button
               onClick={() =>
                 isDraft ? update({ done: !it.done }) : toggleTaskDone(it.id)
               }
-              className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+              className={`flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
                 it.done
                   ? "bg-emerald-500/20 text-emerald-300"
                   : "text-ink-light hover:bg-surface-raised hover:text-ink"
               }`}
             >
-              <Check size={13} /> {it.done ? "Zrobione" : "Oznacz"}
+              <Check size={18} /> {it.done ? "Zrobione" : "Oznacz"}
             </button>
           )}
           <button
@@ -215,17 +215,18 @@ export function ItemEditorPanel() {
                 setEditing(null);
               }
             }}
-            className="rounded-md p-1.5 text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
+            className="flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
             title={isDraft ? "Odrzuć" : "Usuń"}
           >
-            <Trash2 size={16} />
+            <Trash2 size={18} /> {isDraft ? "Odrzuć" : "Usuń"}
           </button>
           <button
             onClick={closeEditor}
-            className="rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-faint transition hover:bg-surface-raised hover:text-ink"
             title="Zamknij (Esc)"
+            aria-label="Zamknij"
           >
-            <X size={18} />
+            <X size={22} />
           </button>
         </div>
       </div>

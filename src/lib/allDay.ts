@@ -39,6 +39,47 @@ export function allDaySpanDays(start: string, end: string): number {
   return differenceInCalendarDays(allDayCalendarDate(end), allDayCalendarDate(start));
 }
 
+/** Ostatni dzień kalendarzowy (włącznie) wydarzenia całodniowego. */
+export function allDayLastCalendarDate(end: string): Date {
+  return addDays(allDayCalendarDate(end), -1);
+}
+
+/** Indeksy kolumn siatki dla paska wydarzeń całodniowych. */
+export function allDayBarIndices(
+  start: string,
+  end: string,
+  rangeStart: Date,
+  ndays: number,
+): { startIdx: number; endIdx: number } | null {
+  const eventStart = allDayCalendarDate(start);
+  const eventEndExclusive = allDayCalendarDate(end);
+  const rangeEnd = addDays(startOfDay(rangeStart), ndays);
+  if (eventEndExclusive <= rangeStart || eventStart >= rangeEnd) return null;
+  const startIdx = Math.max(0, differenceInCalendarDays(eventStart, rangeStart));
+  const endIdx = Math.min(
+    ndays - 1,
+    differenceInCalendarDays(allDayLastCalendarDate(end), rangeStart),
+  );
+  return { startIdx, endIdx };
+}
+
+/** Czy element (całodniowy lub z godziną) obejmuje dany dzień kalendarzowy. */
+export function itemCoversCalendarDay(
+  item: Pick<Item, "start" | "end" | "allDay">,
+  day: Date,
+): boolean {
+  const dayStart = startOfDay(day);
+  const dayEnd = addDays(dayStart, 1);
+  if (item.allDay) {
+    const eventStart = allDayCalendarDate(item.start);
+    const eventEndExclusive = allDayCalendarDate(item.end);
+    return eventEndExclusive > dayStart && eventStart < dayEnd;
+  }
+  const s = new Date(item.start).getTime();
+  const e = new Date(item.end).getTime();
+  return e > dayStart.getTime() && s < dayEnd.getTime();
+}
+
 /** Pojedyncze wydarzenie całodniowe: end = następny dzień kalendarzowy (wyłączny). */
 export function normalizeAllDayRange(start: string, end?: string): { start: string; end: string } {
   const startDate = allDayCalendarDate(start);

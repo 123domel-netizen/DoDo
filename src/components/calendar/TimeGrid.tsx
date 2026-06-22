@@ -17,6 +17,7 @@ import {
   range,
 } from "@/lib/time";
 import { fmt, fmtRange, fmtTime, tint } from "@/lib/format";
+import { allDayBarIndices } from "@/lib/allDay";
 import { weekendColumnBg, dayColumnWeight, dayColumnLayout, dayIndexAtX, spanColumnLayout } from "@/lib/weekend";
 import { groupIdForNewItem } from "@/lib/groups";
 import type { ReminderMarker } from "@/lib/reminders";
@@ -620,6 +621,11 @@ function AllDayBand({
 
   const bars = items
     .map((it) => {
+      if (it.allDay) {
+        const idx = allDayBarIndices(it.start, it.end, rangeStart, ndays);
+        if (!idx) return null;
+        return { item: it, ...idx };
+      }
       const s = new Date(it.start);
       const e = new Date(it.end);
       if (e <= rangeStart || s >= rangeEnd) return null;
@@ -651,7 +657,7 @@ function AllDayBand({
 
   return (
     <div className="flex border-b border-line bg-surface" style={{ paddingLeft: 56 }}>
-      <div className="relative flex-1" style={{ height: rowCount * 22 + 6 }}>
+      <div className="relative flex-1" style={{ height: rowCount * 26 + 8 }}>
         {days.map((day, i) => (
           <div
             key={`allday-bg-${i}`}
@@ -671,13 +677,13 @@ function AllDayBand({
             <button
               key={item.id}
               onClick={() => onOpen(item.id)}
-              className="absolute flex items-center gap-0.5 overflow-hidden rounded text-left text-[11px] font-semibold text-ink"
+              className="absolute flex items-center gap-0.5 overflow-hidden rounded-md text-left text-[11px] font-semibold text-ink"
               style={{
                 left: `calc(${span.leftPct}% + 2px)`,
                 width: `calc(${span.widthPct}% - 4px)`,
-                top: row * 22 + 3,
-                height: 19,
-                lineHeight: "19px",
+                top: row * 26 + 4,
+                height: 22,
+                lineHeight: "22px",
                 paddingLeft: 8,
                 paddingRight: 8,
                 background: tint(color, 0.22),
