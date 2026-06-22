@@ -63,11 +63,19 @@ export function clearAuthErrorFromUrl() {
   window.history.replaceState({}, "", `${url.pathname}${url.search}`);
 }
 
+/** Powrót po Google OAuth — bieżący origin (localhost w dev, pages.dev w prod). */
+export function oauthRedirectUrl(): string {
+  const { origin, pathname } = window.location;
+  const path = pathname && pathname !== "/" ? pathname : "";
+  return `${origin}${path}`;
+}
+
 export async function signInWithGoogle(): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak konfiguracji Supabase." };
+  const redirectTo = oauthRedirectUrl();
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo: window.location.origin },
+    options: { redirectTo },
   });
   return error ? { error: error.message } : {};
 }

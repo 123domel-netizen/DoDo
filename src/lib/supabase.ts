@@ -7,6 +7,11 @@ export const cloudEnabled = Boolean(url && anonKey);
 
 export const supabase: SupabaseClient | null = cloudEnabled
   ? createClient(url!, anonKey!, {
-      auth: { persistSession: true, autoRefreshToken: true },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: "pkce",
+      },
     })
   : null;

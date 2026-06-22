@@ -14,7 +14,7 @@ export default function App() {
   const hydrated = useStore((s) => s.hydrated);
   const editingId = useStore((s) => s.editingId);
   const isMobile = useIsMobile();
-  const [todoOpen, setTodoOpen] = useState(() => window.innerWidth >= 1024);
+  const [todoOpen, setTodoOpen] = useState(true);
   useReminderScheduler();
 
   useEffect(() => {
