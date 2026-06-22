@@ -14,6 +14,7 @@ import type { Item } from "@/types";
 import { fmt, fmtRange, tint } from "@/lib/format";
 import { allDayCalendarDate } from "@/lib/allDay";
 import { groupIdForNewItem, findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
+import { isSharedItem, SHARE_CALENDAR_COLOR } from "@/lib/share";
 import { defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { isToday, isPast, isTomorrow, addMonths } from "date-fns";
 import { itemsForUpcomingEventsList } from "@/lib/recurrence";
@@ -251,7 +252,8 @@ export function EventRow({
   const start = item.allDay ? allDayCalendarDate(item.start) : new Date(item.start);
   const today = isToday(start);
   const tomorrow = isTomorrow(start);
-  const color = group?.color ?? "#5E7FA8";
+  const shared = isSharedItem(item);
+  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#5E7FA8");
 
   const whenLabel = item.allDay
     ? today
@@ -269,20 +271,31 @@ export function EventRow({
     <button
       type="button"
       onClick={onOpen}
-      className="group flex w-full gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition hover:bg-surface-overlay"
+      className={`group flex w-full gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition hover:bg-surface-overlay ${
+        shared ? "opacity-[0.72]" : ""
+      }`}
       style={{ borderLeft: `3px solid ${color}` }}
     >
       <CalendarClock size={15} className="mt-0.5 shrink-0 text-ink-faint" />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-ink">{item.title || "(bez tytułu)"}</div>
+        <div className="text-sm font-medium text-ink">
+          {item.title || "(bez tytułu)"}
+          {shared && (
+            <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              SHARE
+            </span>
+          )}
+        </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-faint">
           <span className={today ? "font-medium text-accent-soft" : ""}>{whenLabel}</span>
-          {group && (
+          {shared ? (
+            <span className="inline-flex items-center gap-1 text-ink-faint">SHARE</span>
+          ) : group ? (
             <span className="inline-flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
               {group.name}
             </span>
-          )}
+          ) : null}
           {item.participants.length > 0 && (
             <span className="inline-flex items-center gap-0.5">
               <Users size={11} /> {item.participants.length}
@@ -320,22 +333,31 @@ export function TodoRow({
   const due = new Date(item.end);
   const overdue = item.hasDueDate && !item.done && isPast(due) && !isToday(due);
   const checklistDone = item.checklist.filter((c) => c.done).length;
-  const color = group?.color ?? "#9b9a97";
+  const shared = isSharedItem(item);
+  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#9b9a97");
 
   return (
     <div
-      className="group flex gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay"
+      className={`group flex gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
+        shared ? "opacity-[0.72]" : ""
+      }`}
       style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
     >
       <input
         type="checkbox"
         checked={item.done}
         onChange={onToggle}
-        className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+        disabled={shared}
+        className={`mt-0.5 h-4 w-4 shrink-0 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
       />
       <div className="min-w-0 flex-1 cursor-pointer" onClick={onOpen}>
         <div className={`text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"}`}>
           {item.title || "(bez tytułu)"}
+          {shared && (
+            <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              SHARE
+            </span>
+          )}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-faint">
           {item.hasDueDate ? (
@@ -345,12 +367,14 @@ export function TodoRow({
           ) : (
             <span>Bez terminu</span>
           )}
-          {group && (
+          {shared ? (
+            <span className="inline-flex items-center gap-1 text-ink-faint">SHARE</span>
+          ) : group ? (
             <span className="inline-flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
               {group.name}
             </span>
-          )}
+          ) : null}
           {item.checklist.length > 0 && (
             <span className="inline-flex items-center gap-0.5">
               <CheckSquare size={11} /> {checklistDone}/{item.checklist.length}

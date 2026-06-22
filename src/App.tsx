@@ -5,6 +5,7 @@ import { SidePanel } from "@/components/SidePanel";
 import { GroupRail } from "@/components/groups/GroupRail";
 import { AuthGate } from "@/components/AuthGate";
 import { MobileShell } from "@/components/mobile/MobileShell";
+import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useIsMobile } from "@/hooks/useMediaQuery";
@@ -33,6 +34,7 @@ export default function App() {
 
   return (
     <AuthGate>
+      <GroupSelectPrompt />
       {isMobile ? (
         <MobileShell />
       ) : (

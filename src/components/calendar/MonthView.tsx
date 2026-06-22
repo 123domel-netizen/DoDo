@@ -6,6 +6,7 @@ import { fmt, fmtTime, tint } from "@/lib/format";
 import { itemCoversCalendarDay } from "@/lib/allDay";
 import { weekendColumnBg } from "@/lib/weekend";
 import { groupIdForNewItem } from "@/lib/groups";
+import { isSharedItem, SHARE_CALENDAR_COLOR, SHARE_CALENDAR_OPACITY } from "@/lib/share";
 import type { ReminderMarker } from "@/lib/reminders";
 import { ReminderBell } from "@/components/calendar/ReminderBell";
 
@@ -108,14 +109,21 @@ export function MonthView({ days, items, reminderMarkers, groups }: MonthViewPro
                     );
                   }
                   const it = entry.item;
-                  const g = it.groupId ? groups[it.groupId] : undefined;
-                  const color = g?.color ?? "#0b6e99";
+                  const shared = isSharedItem(it);
+                  const g = !shared && it.groupId ? groups[it.groupId] : undefined;
+                  const color = shared ? SHARE_CALENDAR_COLOR : (g?.color ?? "#0b6e99");
                   return (
                     <button
                       key={it.id}
                       onClick={() => setEditing(it.id)}
-                      className="flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] text-ink"
-                      style={{ background: tint(color, 0.18), boxShadow: `inset 2px 0 0 ${color}` }}
+                      className={`flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] text-ink ${
+                        shared ? "border border-dashed border-line" : ""
+                      }`}
+                      style={{
+                        background: tint(color, 0.18),
+                        boxShadow: `inset 2px 0 0 ${color}`,
+                        opacity: shared ? SHARE_CALENDAR_OPACITY : 1,
+                      }}
                     >
                       {!it.allDay && <span className="text-ink-faint">{fmtTime(it.start)}</span>}
                       <span className={`min-w-0 truncate font-medium ${it.done ? "line-through opacity-60" : ""}`}>

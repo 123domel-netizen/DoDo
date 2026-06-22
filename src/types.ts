@@ -12,6 +12,22 @@ export interface Participant {
   id: string;
   name: string;
   email?: string;
+  teamMemberId?: string;
+  userId?: string | null;
+  /** invited | accepted | rejected | active */
+  status?: ParticipantStatus;
+}
+
+export type ParticipantStatus = "invited" | "accepted" | "rejected" | "active";
+
+export interface TeamMember {
+  id: string;
+  ownerUserId: string;
+  memberUserId: string | null;
+  email: string;
+  displayName: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Attachment {
@@ -71,6 +87,12 @@ export interface Item {
   googleCalendarEventId?: string;
   /** "google" gdy element pochodzi z importu Google (tylko do odczytu). */
   syncSource?: "local" | "google";
+  /** Właściciel rekordu w chmurze (user_id). */
+  ownerUserId?: string;
+  /** owner = mój wpis; participant = udostępniony (SHARE). */
+  shareRole?: "owner" | "participant";
+  /** Ukryte: prompt wyboru grupy zamknięty przez użytkownika. */
+  groupPromptDismissed?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,8 +102,8 @@ export interface Group {
   name: string;
   color: string;
   sortOrder: number;
-  /** Grupa systemowa (archiwum ukończonych zadań / import z Google). */
-  system?: "archive" | "google";
+  /** Grupa systemowa (archiwum / SHARE). */
+  system?: "archive" | "google" | "share";
   /** Tylko GOOGLE: gdy true, elementy nie widać przy filtrze ALL (domyślnie włączone). */
   hideFromAll?: boolean;
 }

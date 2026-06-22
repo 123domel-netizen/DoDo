@@ -8,9 +8,13 @@ import {
   type SetStateAction,
 } from "react";
 import { useStore } from "@/state/store";
-import type { Attachment, ChecklistItem, Item, Participant, Reminder } from "@/types";
+import type { Attachment, ChecklistItem, Item, Participant, Reminder, TeamMember } from "@/types";
 import { uid, defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { parseChecklistPaste, shouldParseChecklistPaste } from "@/lib/checklistPaste";
+import { participantFromTeamMember } from "@/lib/participants";
+import { fmt } from "@/lib/format";
+import { isShareGroup, isSharedItem, updateSharedItemContent } from "@/lib/share";
+import { rejectItemParticipation, teamMemberLabel } from "@/lib/team";
 import { TimeEditor } from "@/components/item/TimeEditor";
 import {
   CalendarClock,
@@ -43,6 +47,7 @@ export function ItemEditorPanel() {
   const draft = useStore((s) => s.draft);
   const items = useStore((s) => s.items);
   const groups = useStore((s) => s.groups);
+  const teamMembers = useStore((s) => s.teamMembers);
   const patchItem = useStore((s) => s.patchItem);
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const patchDraft = useStore((s) => s.patchDraft);
@@ -70,10 +75,24 @@ export function ItemEditorPanel() {
 
   if (!item) return null;
   const it = item;
-  const group = it.groupId ? groups.find((g) => g.id === it.groupId) : undefined;
+  const shareMode = isSharedItem(it);
+  const group = !shareMode && it.groupId ? groups.find((g) => g.id === it.groupId) : undefined;
 
-  const update = (patch: Partial<Item>) =>
+  const update = (patch: Partial<Item>) => {
+    if (shareMode) {
+      const allowed: Partial<Item> = {};
+      if (patch.description !== undefined) allowed.description = patch.description;
+      if (patch.checklist !== undefined) allowed.checklist = patch.checklist;
+      if (Object.keys(allowed).length === 0) return;
+      patchItem(it.id, allowed);
+      void updateSharedItemContent(it.id, {
+        description: allowed.description,
+        checklist: allowed.checklist,
+      });
+      return;
+    }
     isDraft ? patchDraft(patch) : patchItem(it.id, patch);
+  };
   const canAdd = it.title.trim().length > 0;
 
   const isOpen = (k: string, hasContent: boolean) => open[k] ?? hasContent;
@@ -182,44 +201,67 @@ export function ItemEditorPanel() {
     <div className="flex h-full flex-col bg-surface">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5">
-        <button
-          onClick={() => (it.type === "task" ? convertToEvent() : convertToTask())}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-ink-light transition hover:bg-surface-raised hover:text-ink"
-          title="Przełącz typ"
-        >
-          {it.type === "task" ? <CheckSquare size={13} /> : <CalendarClock size={13} />}
-          {it.type === "task" ? "Zadanie" : "Wydarzenie"}
-          <ChevronDown size={13} className="text-ink-faint" />
-        </button>
+        {shareMode ? (
+          <span className="rounded-md bg-surface-raised px-2 py-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+            SHARE · Udostępnione Tobie
+          </span>
+        ) : (
+          <button
+            onClick={() => (it.type === "task" ? convertToEvent() : convertToTask())}
+            className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-ink-light transition hover:bg-surface-raised hover:text-ink"
+            title="Przełącz typ"
+          >
+            {it.type === "task" ? <CheckSquare size={13} /> : <CalendarClock size={13} />}
+            {it.type === "task" ? "Zadanie" : "Wydarzenie"}
+            <ChevronDown size={13} className="text-ink-faint" />
+          </button>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
-          {it.type === "task" && (
+          {shareMode ? (
             <button
-              onClick={() =>
-                isDraft ? update({ done: !it.done }) : toggleTaskDone(it.id)
-              }
-              className={`flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                it.done
-                  ? "bg-emerald-500/20 text-emerald-300"
-                  : "text-ink-light hover:bg-surface-raised hover:text-ink"
-              }`}
+              type="button"
+              onClick={() => {
+                void rejectItemParticipation(it.id).then(() => {
+                  deleteItem(it.id);
+                  setEditing(null);
+                });
+              }}
+              className="flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-light transition hover:bg-red-500/10 hover:text-red-400"
             >
-              <Check size={18} /> {it.done ? "Zrobione" : "Oznacz"}
+              Odrzuć udział
             </button>
+          ) : (
+            <>
+              {it.type === "task" && (
+                <button
+                  onClick={() =>
+                    isDraft ? update({ done: !it.done }) : toggleTaskDone(it.id)
+                  }
+                  className={`flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                    it.done
+                      ? "bg-emerald-500/20 text-emerald-300"
+                      : "text-ink-light hover:bg-surface-raised hover:text-ink"
+                  }`}
+                >
+                  <Check size={18} /> {it.done ? "Zrobione" : "Oznacz"}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (isDraft) discardDraft();
+                  else {
+                    deleteItem(it.id);
+                    setEditing(null);
+                  }
+                }}
+                className="flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
+                title={isDraft ? "Odrzuć" : "Usuń"}
+              >
+                <Trash2 size={18} /> {isDraft ? "Odrzuć" : "Usuń"}
+              </button>
+            </>
           )}
-          <button
-            onClick={() => {
-              if (isDraft) discardDraft();
-              else {
-                deleteItem(it.id);
-                setEditing(null);
-              }
-            }}
-            className="flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
-            title={isDraft ? "Odrzuć" : "Usuń"}
-          >
-            <Trash2 size={18} /> {isDraft ? "Odrzuć" : "Usuń"}
-          </button>
           <button
             onClick={closeEditor}
             className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-faint transition hover:bg-surface-raised hover:text-ink"
@@ -234,10 +276,13 @@ export function ItemEditorPanel() {
       <div className="flex-1 overflow-y-auto thin-scrollbar px-5 pb-5">
         <input
           value={it.title}
+          readOnly={shareMode}
           onChange={(e) => update({ title: e.target.value })}
           placeholder="Bez tytułu"
-          autoFocus
-          className="mb-3 w-full border-0 bg-transparent text-2xl font-semibold text-ink outline-none placeholder:font-normal placeholder:text-ink-faint"
+          autoFocus={!shareMode}
+          className={`mb-3 w-full border-0 bg-transparent text-2xl font-semibold text-ink outline-none placeholder:font-normal placeholder:text-ink-faint ${
+            shareMode ? "cursor-default opacity-90" : ""
+          }`}
         />
 
         {/* Time */}
@@ -246,7 +291,19 @@ export function ItemEditorPanel() {
             <CalendarClock size={16} />
           </Icon>
           <div className="min-w-0 flex-1">
-            {!showDueDate ? (
+            {shareMode ? (
+              <div className="text-sm text-ink-light">
+                {showDueDate ? (
+                  it.allDay ? (
+                    fmt(it.start, "d MMMM yyyy")
+                  ) : (
+                    `${fmt(it.start, "d MMM HH:mm")} – ${fmt(it.end, "HH:mm")}`
+                  )
+                ) : (
+                  <span className="text-ink-faint">Bez terminu</span>
+                )}
+              </div>
+            ) : !showDueDate ? (
               <button
                 type="button"
                 onClick={setDueDate}
@@ -270,40 +327,51 @@ export function ItemEditorPanel() {
         </div>
 
         {/* Group */}
-        <button
-          onClick={() => toggle("group")}
-          className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-surface-raised"
-        >
-          <Icon>
-            <Tag size={15} />
-          </Icon>
-          {group ? (
-            <span className="flex items-center gap-2 text-sm text-ink">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ background: group.color }} />
-              {group.name}
-            </span>
-          ) : (
-            <span className="text-sm text-ink-faint">Grupa</span>
-          )}
-        </button>
-        {isOpen("group", false) && (
-          <div className="mb-1 ml-9 mt-1 flex flex-wrap gap-1.5">
-            <GroupChip
-              label="brak"
-              color="#6c6c76"
-              active={!it.groupId}
-              onClick={() => update({ groupId: null })}
-            />
-            {groups.map((g) => (
-              <GroupChip
-                key={g.id}
-                label={g.name}
-                color={g.color}
-                active={it.groupId === g.id}
-                onClick={() => update({ groupId: g.id })}
-              />
-            ))}
+        {shareMode ? (
+          <div className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2">
+            <Icon>
+              <Tag size={15} />
+            </Icon>
+            <span className="text-sm text-ink-faint">SHARE</span>
           </div>
+        ) : (
+          <>
+            <button
+              onClick={() => toggle("group")}
+              className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-surface-raised"
+            >
+              <Icon>
+                <Tag size={15} />
+              </Icon>
+              {group ? (
+                <span className="flex items-center gap-2 text-sm text-ink">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: group.color }} />
+                  {group.name}
+                </span>
+              ) : (
+                <span className="text-sm text-ink-faint">Grupa</span>
+              )}
+            </button>
+            {isOpen("group", false) && (
+              <div className="mb-1 ml-9 mt-1 flex flex-wrap gap-1.5">
+                <GroupChip
+                  label="brak"
+                  color="#6c6c76"
+                  active={!it.groupId}
+                  onClick={() => update({ groupId: null })}
+                />
+                {groups.filter((g) => !isShareGroup(g) && g.system !== "archive").map((g) => (
+                  <GroupChip
+                    key={g.id}
+                    label={g.name}
+                    color={g.color}
+                    active={it.groupId === g.id}
+                    onClick={() => update({ groupId: g.id })}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         <Divider />
@@ -322,10 +390,15 @@ export function ItemEditorPanel() {
               : undefined
           }
         >
-          <ParticipantsEditor
-            participants={it.participants}
-            onChange={(participants) => update({ participants })}
-          />
+          {shareMode || teamMembers.length === 0 ? (
+            <ParticipantsReadOnly participants={it.participants} />
+          ) : (
+            <TeamParticipantsEditor
+              participants={it.participants}
+              teamMembers={teamMembers}
+              onChange={(participants) => update({ participants })}
+            />
+          )}
         </OptionalRow>
 
         {/* Reminders — tylko gdy jest termin */}
@@ -413,17 +486,23 @@ export function ItemEditorPanel() {
         <Divider />
 
         {/* Visibility — de-emphasised footer */}
-        <div className="overflow-hidden rounded-lg border border-line bg-surface-raised/50">
+        <div
+          className={`overflow-hidden rounded-lg border border-line bg-surface-raised/50 ${
+            shareMode ? "opacity-70" : ""
+          }`}
+        >
           <VisibilityRow
             label="Pokaż w kalendarzu"
             checked={it.showInCalendar}
             onChange={handleShowInCalendar}
+            disabled={shareMode}
           />
           <div className="border-t border-line" />
           <VisibilityRow
             label="Pokaż na liście ToDo"
             checked={it.showInTodo}
             onChange={(v) => update({ showInTodo: v })}
+            disabled={shareMode}
           />
         </div>
       </div>
@@ -497,32 +576,43 @@ function VisibilityRow({
   label,
   checked,
   onChange,
+  disabled,
 }: {
   label: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-center gap-3 px-3 py-2.5">
       <span className="min-w-0 flex-1 text-xs text-ink-light">{label}</span>
-      <Toggle checked={checked} onChange={onChange} />
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={(e) => {
         e.preventDefault();
-        onChange(!checked);
+        if (!disabled) onChange(!checked);
       }}
       className={`relative inline-flex h-[22px] w-[40px] shrink-0 items-center rounded-full p-0.5 transition-colors ${
         checked ? "bg-accent" : "bg-line-strong"
-      }`}
+      } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
     >
       <span
         className={`block h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform duration-200 ease-out ${
@@ -558,26 +648,57 @@ function GroupChip({
   );
 }
 
-function ParticipantsEditor({
+function ParticipantsReadOnly({ participants }: { participants: Participant[] }) {
+  if (participants.length === 0) {
+    return <span className="text-xs text-ink-faint">Brak uczestników</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {participants.map((p) => (
+        <span
+          key={p.id}
+          className="rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink"
+        >
+          {p.name || p.email}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TeamParticipantsEditor({
   participants,
+  teamMembers,
   onChange,
 }: {
   participants: Participant[];
+  teamMembers: TeamMember[];
   onChange: (p: Participant[]) => void;
 }) {
+  const selectedIds = new Set(participants.map((p) => p.teamMemberId).filter(Boolean));
+  const available = teamMembers.filter((m) => !selectedIds.has(m.id));
+
+  const addMember = (memberId: string) => {
+    const m = teamMembers.find((x) => x.id === memberId);
+    if (!m) return;
+    onChange([...participants, participantFromTeamMember(m)]);
+  };
+
   return (
-    <div>
+    <div className="space-y-2">
       {participants.length > 0 && (
-        <div className="mb-1.5 flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1">
           {participants.map((p) => (
             <span
               key={p.id}
               className="flex items-center gap-1 rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink"
             >
-              {p.name}
+              {p.name || p.email}
               <button
+                type="button"
                 onClick={() => onChange(participants.filter((x) => x.id !== p.id))}
                 className="text-ink-faint hover:text-ink"
+                aria-label="Usuń uczestnika"
               >
                 <X size={12} />
               </button>
@@ -585,16 +706,28 @@ function ParticipantsEditor({
           ))}
         </div>
       )}
-      <input
-        placeholder="Dodaj uczestnika i Enter…"
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && e.currentTarget.value.trim()) {
-            onChange([...participants, { id: uid(), name: e.currentTarget.value.trim() }]);
-            e.currentTarget.value = "";
-          }
-        }}
-        className="w-full border-0 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
-      />
+      {available.length > 0 ? (
+        <select
+          value=""
+          onChange={(e) => {
+            if (e.target.value) addMember(e.target.value);
+          }}
+          className="w-full rounded-lg border border-line bg-surface-raised px-2 py-1.5 text-sm text-ink outline-none"
+        >
+          <option value="">Dodaj z zespołu…</option>
+          {available.map((m) => (
+            <option key={m.id} value={m.id}>
+              {teamMemberLabel(m)}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="text-xs text-ink-faint">
+          {teamMembers.length === 0
+            ? "Dodaj osoby w ustawieniach → Zespół."
+            : "Wszyscy członkowie zespołu są już dodani."}
+        </p>
+      )}
     </div>
   );
 }

@@ -20,6 +20,7 @@ import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
 import { Logo } from "@/components/brand/Logo";
 import { ViewSettings } from "@/components/settings/ViewSettings";
+import { TeamSettings } from "@/components/settings/TeamSettings";
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "day", label: "Dzień" },
@@ -38,6 +39,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const setSettings = useStore((s) => s.setSettings);
   const startDraft = useStore((s) => s.startDraft);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"view" | "team">("view");
 
   const anchor = new Date(settings.anchorDate);
 
@@ -177,10 +179,31 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
 
       {settingsOpen && (
         <div className="absolute right-3 top-full z-40 mt-2 w-80 max-h-[min(70vh,520px)] overflow-y-auto thin-scrollbar rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-            Ustawienia widoku
+          <div className="mb-3 flex gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
+            <button
+              type="button"
+              onClick={() => setSettingsTab("view")}
+              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+                settingsTab === "view"
+                  ? "bg-accent text-white shadow-glow"
+                  : "text-ink-light hover:text-ink"
+              }`}
+            >
+              Widok
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettingsTab("team")}
+              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+                settingsTab === "team"
+                  ? "bg-accent text-white shadow-glow"
+                  : "text-ink-light hover:text-ink"
+              }`}
+            >
+              Zespół
+            </button>
           </div>
-          <ViewSettings />
+          {settingsTab === "view" ? <ViewSettings /> : <TeamSettings />}
         </div>
       )}
     </header>

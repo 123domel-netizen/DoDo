@@ -26,12 +26,15 @@ import { getViewLabel } from "@/lib/viewLabel";
 import {
   ARCHIVE_GROUP_NAME,
   findArchiveGroup,
+  findShareGroup,
   groupIdForNewItem,
   sortGroupsForRail,
 } from "@/lib/groups";
+import { SHARE_GROUP_COLOR } from "@/lib/share";
 import { enablePush, ensureLocalNotificationPermission, pushSupported } from "@/lib/push";
 import { cloudEnabled } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
+import { TeamSettings } from "@/components/settings/TeamSettings";
 
 type Tab = "calendar" | "tasks";
 type MobileCalendarMode = CalendarViewKind | "today";
@@ -68,6 +71,7 @@ export function MobileShell() {
   const [tab, setTab] = useState<Tab>("calendar");
   const [mobileView, setMobileView] = useState<MobileCalendarMode>("day");
   const [sheet, setSheet] = useState<boolean>(false);
+  const [settingsTab, setSettingsTab] = useState<"view" | "team">("view");
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
 
@@ -123,6 +127,7 @@ export function MobileShell() {
 
   const userGroups = sortGroupsForRail(groups);
   const archive = findArchiveGroup(groups);
+  const share = findShareGroup(groups);
 
   return (
     <div className="flex h-full flex-col bg-canvas">
@@ -241,6 +246,14 @@ export function MobileShell() {
             onClick={() => setActiveGroupFilter(g.id)}
           />
         ))}
+        {share && (
+          <GroupChip
+            label="SHARE"
+            color={SHARE_GROUP_COLOR}
+            active={activeGroupFilter === share.id}
+            onClick={() => setActiveGroupFilter(share.id)}
+          />
+        )}
         {archive && (
           <GroupChip
             label={ARCHIVE_GROUP_NAME}
@@ -303,7 +316,7 @@ export function MobileShell() {
           >
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-line-strong" />
             <div className="mb-3 flex items-center gap-2">
-              <div className="flex-1 text-sm font-semibold text-ink">Ustawienia widoku</div>
+              <div className="flex-1 text-sm font-semibold text-ink">Ustawienia</div>
               <button
                 type="button"
                 onClick={() => setSheet(false)}
@@ -314,7 +327,28 @@ export function MobileShell() {
               </button>
             </div>
 
-            <ViewSettings />
+            <div className="mb-3 flex gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
+              <button
+                type="button"
+                onClick={() => setSettingsTab("view")}
+                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  settingsTab === "view" ? "bg-accent text-white" : "text-ink-light hover:text-ink"
+                }`}
+              >
+                Widok
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsTab("team")}
+                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  settingsTab === "team" ? "bg-accent text-white" : "text-ink-light hover:text-ink"
+                }`}
+              >
+                Zespół
+              </button>
+            </div>
+
+            {settingsTab === "view" ? <ViewSettings /> : <TeamSettings />}
 
             {cloudEnabled && (
               <button

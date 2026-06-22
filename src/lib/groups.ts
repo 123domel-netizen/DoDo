@@ -1,6 +1,13 @@
 import type { Group, Item } from "@/types";
 import { uid } from "@/lib/factory";
 import { useStore } from "@/state/store";
+import {
+  SHARE_GROUP_NAME,
+  SHARE_GROUP_COLOR,
+  SHARE_GROUP_SORT_ORDER,
+  isShareGroup,
+  isSharedItem,
+} from "@/lib/share";
 
 export const ARCHIVE_GROUP_NAME = "ARCH";
 export const ARCHIVE_GROUP_COLOR = "#737881";
@@ -25,12 +32,12 @@ export function isGoogleGroup(group: Pick<Group, "name" | "system">): boolean {
 }
 
 export function isSystemGroup(group: Pick<Group, "name" | "system">): boolean {
-  return isArchiveGroup(group);
+  return isArchiveGroup(group) || isShareGroup(group);
 }
 
-/** Nazwa / kolejność / usuwanie zablokowane (ARCH). */
+/** Nazwa / kolejność / usuwanie zablokowane (ARCH + SHARE). */
 export function isGroupStructureLocked(group: Pick<Group, "name" | "system">): boolean {
-  return isArchiveGroup(group);
+  return isSystemGroup(group);
 }
 
 /** Kolor edytowalny tylko dla grup użytkownika (ARCH ma stały kolor). */
@@ -44,6 +51,24 @@ export function findArchiveGroup(groups: Group[]): Group | undefined {
 
 export function findGoogleGroup(groups: Group[]): Group | undefined {
   return groups.find(isGoogleGroup);
+}
+
+export function findShareGroup(groups: Group[]): Group | undefined {
+  return groups.find(isShareGroup);
+}
+
+export function ensureShareGroup(groups: Group[]): Group[] {
+  if (findShareGroup(groups)) return groups;
+  return [
+    ...groups,
+    {
+      id: uid(),
+      name: SHARE_GROUP_NAME,
+      color: SHARE_GROUP_COLOR,
+      sortOrder: SHARE_GROUP_SORT_ORDER,
+      system: "share",
+    },
+  ];
 }
 
 export function ensureArchiveGroup(groups: Group[]): Group[] {
@@ -74,7 +99,15 @@ export function itemMatchesGroupFilter(
   filterGroupId: string | null,
   scope: GroupFilterScope = "calendar",
 ): boolean {
-  const archiveId = findArchiveGroup(useStore.getState().groups)?.id ?? null;
+  const groups = useStore.getState().groups;
+  const archiveId = findArchiveGroup(groups)?.id ?? null;
+  const shareId = findShareGroup(groups)?.id ?? null;
+
+  if (shareId && filterGroupId === shareId) {
+    return isSharedItem(item);
+  }
+
+  if (isSharedItem(item)) return false;
 
   if (!filterGroupId) {
     if (scope === "todo" && archiveId && item.groupId === archiveId) return false;
@@ -88,7 +121,10 @@ export function groupIdForNewItem(explicit?: string | null): string | null {
   if (explicit !== undefined) return explicit;
   const { activeGroupFilter, groups } = useStore.getState();
   const archiveId = findArchiveGroup(groups)?.id ?? null;
-  if (activeGroupFilter && activeGroupFilter === archiveId) return null;
+  const shareId = findShareGroup(groups)?.id ?? null;
+  if (activeGroupFilter && (activeGroupFilter === archiveId || activeGroupFilter === shareId)) {
+    return null;
+  }
   return activeGroupFilter;
 }
 

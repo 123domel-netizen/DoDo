@@ -1,7 +1,7 @@
 import { Modal } from "@/components/ui/Modal";
 import { useStore } from "@/state/store";
 import { GROUP_COLORS } from "@/lib/factory";
-import { findArchiveGroup, isGroupColorLocked, isGroupStructureLocked, sortGroupsForRail } from "@/lib/groups";
+import { findArchiveGroup, findShareGroup, isGroupColorLocked, isGroupStructureLocked, sortGroupsForRail } from "@/lib/groups";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 
 export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -12,8 +12,13 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
   const addGroup = useStore((s) => s.addGroup);
 
   const userGroups = sortGroupsForRail(groups);
+  const share = findShareGroup(groups);
   const archive = findArchiveGroup(groups);
-  const displayGroups = [...userGroups, ...(archive ? [archive] : [])];
+  const displayGroups = [
+    ...userGroups,
+    ...(share ? [share] : []),
+    ...(archive ? [archive] : []),
+  ];
 
   return (
     <Modal open={open} onClose={onClose} width={460}>

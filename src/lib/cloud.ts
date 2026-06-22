@@ -2,13 +2,17 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { withNormalizedAllDay } from "@/lib/allDay";
 import {
   ensureArchiveGroup,
+  ensureShareGroup,
   isArchiveGroup,
   isGoogleGroup,
   stripGoogleGroups,
 } from "@/lib/groups";
+import { isShareGroup, updateSharedItemContent } from "@/lib/share";
+import { participantRowFromParticipant } from "@/lib/participants";
 import type { Group, Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
+import { fetchTeamMembers } from "@/lib/team";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
@@ -17,6 +21,7 @@ import { cloudEnabled, supabase } from "@/lib/supabase";
  */
 
 let userId: string | null = null;
+let userEmail: string | null = null;
 let previousUserId: string | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let lastPushedSnapshot = "";
@@ -56,6 +61,7 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
       googleRecurringSeriesId: item.googleRecurringSeriesId ?? null,
       googleRecurrenceExceptions: item.googleRecurrenceExceptions,
       googleCalendarEventId: item.googleCalendarEventId ?? null,
+      groupPromptDismissed: item.groupPromptDismissed ?? false,
       ...payloadExtras,
     },
     created_at: item.createdAt,
@@ -63,9 +69,10 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
   };
 }
 
-function rowToItem(row: Record<string, unknown>): Item {
+function rowToItem(row: Record<string, unknown>, shareRole: Item["shareRole"] = "owner"): Item {
   const payload = (row.payload ?? {}) as Record<string, unknown>;
   const groupId = (row.group_id as string | null) ?? null;
+  const ownerUserId = row.user_id as string;
   const item: Item = {
     id: row.id as string,
     type: row.type as Item["type"],
@@ -92,6 +99,9 @@ function rowToItem(row: Record<string, unknown>): Item {
       (payload.googleRecurrenceExceptions as Item["googleRecurrenceExceptions"]) ?? undefined,
     googleCalendarEventId: (payload.googleCalendarEventId as string | undefined) ?? undefined,
     syncSource: (payload.syncSource as Item["syncSource"]) ?? undefined,
+    ownerUserId,
+    shareRole,
+    groupPromptDismissed: (payload.groupPromptDismissed as boolean) ?? false,
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
@@ -114,7 +124,8 @@ function rowToGroup(row: Record<string, unknown>): Group {
   const name = (row.name as string) ?? "";
   const base = { name, system: (row.system as Group["system"]) ?? undefined };
   const system: Group["system"] =
-    base.system ?? (isArchiveGroup(base) ? "archive" : isGoogleGroup(base) ? "google" : undefined);
+    base.system ??
+    (isArchiveGroup(base) ? "archive" : isShareGroup(base) ? "share" : isGoogleGroup(base) ? "google" : undefined);
   return {
     id: row.id as string,
     name,
@@ -143,6 +154,7 @@ function reconcileGroups(remote: Group[]): {
   const remap = new Map<string, string>();
   const deleteIds: string[] = [];
   let archiveKept: Group | null = null;
+  // SHARE jest tylko wirtualny w aplikacji — usuń z bazy, jeśli kiedyś trafił.
   // Deduplikacja grup użytkownika po nazwie — naprawia duplikaty powstałe, gdy
   // dwa urządzenia zasiały tabelę zanim się nawzajem zobaczyły.
   const userByName = new Map<string, Group>();
@@ -157,6 +169,8 @@ function reconcileGroups(remote: Group[]): {
         archiveKept = g;
         result.push(g);
       }
+    } else if (isShareGroup(g)) {
+      deleteIds.push(g.id);
     } else if (isGoogleGroup(g)) {
       // Legacy — integracja Google usunięta.
       deleteIds.push(g.id);
@@ -211,7 +225,7 @@ function clearGoogleGroupRefs(
 
 async function pushGroupsFull() {
   if (!supabase || !userId || !groupsReady) return;
-  const groups = stripGoogleGroups(useStore.getState().groups);
+  const groups = stripGoogleGroups(useStore.getState().groups).filter((g) => !isShareGroup(g));
   const snap = groupsSnapshot(groups);
   const dels = [...pendingGroupDeletes];
   if (snap === lastGroupsSnapshot && dels.length === 0) return;
@@ -250,7 +264,7 @@ async function pullGroups() {
 
   const { groups, remap, deleteIds } = reconcileGroups(remote);
   const googleIds = new Set(remote.filter(isGoogleGroup).map((g) => g.id));
-  const ensured = ensureArchiveGroup(groups);
+  const ensured = ensureShareGroup(ensureArchiveGroup(groups));
 
   applyingRemote = true;
   try {
@@ -275,12 +289,72 @@ async function pullGroups() {
   }
 }
 
+async function pullSharedItems(): Promise<Record<string, Item>> {
+  if (!supabase || !userId) return {};
+  const email = userEmail?.toLowerCase() ?? "";
+  let query = supabase
+    .from("item_participants")
+    .select("status, items(*)")
+    .neq("status", "rejected");
+
+  if (email) {
+    query = query.or(`participant_user_id.eq.${userId},participant_email.eq.${email}`);
+  } else {
+    query = query.eq("participant_user_id", userId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.warn("[cloud] shared items pull failed:", error.message);
+    return {};
+  }
+
+  const out: Record<string, Item> = {};
+  for (const row of data ?? []) {
+    const itemRow = row.items as unknown as Record<string, unknown> | null;
+    if (!itemRow) continue;
+    const item = rowToItem(itemRow, "participant");
+    out[item.id] = item;
+  }
+  return out;
+}
+
+async function syncItemParticipants(item: Item) {
+  if (!supabase || !userId || item.shareRole === "participant") return;
+  const rows = item.participants
+    .map((p) => participantRowFromParticipant(item.id, userId!, p))
+    .filter((r): r is NonNullable<typeof r> => r !== null);
+
+  await supabase.from("item_participants").delete().eq("item_id", item.id);
+  if (rows.length) {
+    const { error } = await supabase.from("item_participants").upsert(rows, {
+      onConflict: "item_id,participant_email",
+    });
+    if (error) console.warn("[cloud] participants sync failed:", error.message);
+  }
+}
+
+async function pushParticipantPatches(items: Item[]) {
+  if (!supabase || !userId) return;
+  for (const item of items) {
+    if (item.shareRole !== "participant") continue;
+    const { error } = await updateSharedItemContent(item.id, {
+      description: item.description,
+      checklist: item.checklist,
+    });
+    if (error) console.warn("[cloud] participant patch failed:", error);
+  }
+}
+
 async function pullAll(replace = false) {
   if (!supabase || !userId) return;
   const { data, error } = await supabase.from("items").select("*");
-  if (error || !data) return;
-  const remoteItems: Record<string, Item> = {};
-  for (const row of data) remoteItems[row.id] = rowToItem(row);
+  if (error) return;
+  const owned: Record<string, Item> = {};
+  for (const row of data ?? []) owned[row.id] = rowToItem(row, "owner");
+
+  const shared = await pullSharedItems();
+  const remoteItems = { ...owned, ...shared };
 
   if (replace) {
     useStore.setState({ items: remoteItems });
@@ -317,7 +391,9 @@ function setupRealtime() {
           useStore.setState({ items: next });
         } else {
           const row = payload.new as Record<string, unknown>;
-          const item = rowToItem(row);
+          const ownerId = row.user_id as string;
+          const role = ownerId === userId ? "owner" : "participant";
+          const item = rowToItem(row, role);
           useStore.setState((s) => ({ items: { ...s.items, [item.id]: item } }));
         }
       } finally {
@@ -354,6 +430,8 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 
   if (!nextUserId) {
     teardownRealtime();
+    userEmail = null;
+    useStore.getState().setAuthUser(null, null);
     resetLocalUserState();
     await switchPersistUser(null);
     previousUserId = null;
@@ -373,7 +451,14 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 
   await switchPersistUser(nextUserId);
 
+  const { data: sessionData } = await supabase.auth.getUser();
+  userEmail = sessionData.user?.email?.toLowerCase() ?? null;
+  useStore.getState().setAuthUser(nextUserId, userEmail);
+
   if (isUserSwitch) resetLocalUserState();
+
+  const team = await fetchTeamMembers();
+  useStore.getState().setTeamMembers(team);
 
   // Grupy najpierw — items.group_id ma klucz obcy do groups(id).
   await pullGroups();
@@ -393,12 +478,15 @@ function schedulePush() {
     // Grupy przed itemami — items.group_id ma klucz obcy do groups(id).
     await pushGroupsFull();
 
-    const items = Object.values(useStore.getState().items);
-    const snapshot = JSON.stringify(items.map((i) => [i.id, i.updatedAt]));
+    const allItems = Object.values(useStore.getState().items);
+    const ownedItems = allItems.filter((i) => i.shareRole !== "participant");
+    const sharedItems = allItems.filter((i) => i.shareRole === "participant");
+
+    const snapshot = JSON.stringify(allItems.map((i) => [i.id, i.updatedAt]));
     if (snapshot === lastPushedSnapshot) return;
     lastPushedSnapshot = snapshot;
 
-    const ids = items.map((i) => i.id);
+    const ids = ownedItems.map((i) => i.id);
     const payloadExtrasById = new Map<string, Record<string, unknown>>();
     if (ids.length) {
       const { data: existingRows } = await supabase!
@@ -430,7 +518,7 @@ function schedulePush() {
     // (klucz obcy items.group_id → groups.id). Inaczej jeden „osierocony" wiersz
     // wywala cały batch i blokuje synchronizację wszystkich elementów.
     const localGroupIds = new Set(useStore.getState().groups.map((g) => g.id));
-    const rows = items.map((item) => {
+    const rows = ownedItems.map((item) => {
       const row = itemToRow(item, payloadExtrasById.get(item.id));
       if (row.group_id && !localGroupIds.has(row.group_id)) row.group_id = null;
       return row;
@@ -439,10 +527,14 @@ function schedulePush() {
       const { error } = await supabase!.from("items").upsert(rows);
       if (error) {
         console.warn("[cloud] item upsert failed:", error.message);
-        lastPushedSnapshot = ""; // ponów przy następnej zmianie
+        lastPushedSnapshot = "";
         return;
       }
+      for (const item of ownedItems) {
+        await syncItemParticipants(item);
+      }
     }
+    await pushParticipantPatches(sharedItems);
   }, 800);
 }
 

@@ -4,8 +4,10 @@ import { useStore } from "@/state/store";
 import {
   ARCHIVE_GROUP_NAME,
   findArchiveGroup,
+  findShareGroup,
   sortGroupsForRail,
 } from "@/lib/groups";
+import { SHARE_GROUP_COLOR, SHARE_GROUP_NAME } from "@/lib/share";
 import { GroupsModal } from "./GroupsModal";
 import { AddGroupDialog } from "./AddGroupDialog";
 
@@ -87,8 +89,10 @@ export function GroupRail() {
 
   const userGroups = sortGroupsForRail(groups);
   const archive = findArchiveGroup(groups);
+  const share = findShareGroup(groups);
   const allActive = activeGroupFilter === null;
   const archiveActive = archive ? activeGroupFilter === archive.id : false;
+  const shareActive = share ? activeGroupFilter === share.id : false;
 
   return (
     <div className="flex h-full w-16 min-h-0 flex-col border-l border-line bg-surface py-2">
@@ -132,6 +136,16 @@ export function GroupRail() {
           })}
 
         </div>
+
+        {share && (
+          <SystemRailButton
+            active={shareActive}
+            onClick={() => setActiveGroupFilter(share.id)}
+            title="Udostępnione Tobie"
+            label={SHARE_GROUP_NAME}
+            accent={SHARE_GROUP_COLOR}
+          />
+        )}
 
         {archive && (
           <SystemRailButton

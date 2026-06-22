@@ -1,9 +1,23 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { Group, Item, Settings } from "@/types";
+import type { Group, Item, Settings, TeamMember } from "@/types";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
-import { ensureArchiveGroup, findArchiveGroup, findGoogleGroup, GOOGLE_GROUP_SORT_ORDER, isArchiveGroup, isGoogleGroup, isGroupStructureLocked, patchForTaskDone, ARCHIVE_GROUP_NAME, sortGroupsForRail, stripGoogleGroups } from "@/lib/groups";
+import {
+  ensureArchiveGroup,
+  ensureShareGroup,
+  findArchiveGroup,
+  findGoogleGroup,
+  GOOGLE_GROUP_SORT_ORDER,
+  isArchiveGroup,
+  isGoogleGroup,
+  isGroupStructureLocked,
+  patchForTaskDone,
+  ARCHIVE_GROUP_NAME,
+  sortGroupsForRail,
+  stripGoogleGroups,
+} from "@/lib/groups";
+import { isSharedItem } from "@/lib/share";
 import { normalizeAllDayRange } from "@/lib/allDay";
 import { startOfDay } from "date-fns";
 
@@ -19,6 +33,11 @@ interface AppState {
   /** null = ALL; inaczej filtruj po id grupy. */
   activeGroupFilter: string | null;
   hydrated: boolean;
+  teamMembers: TeamMember[];
+  authUserId: string | null;
+  authUserEmail: string | null;
+  /** Id itemu z aktywnym promptem wyboru grupy (nie persystowane). */
+  groupPromptItemId: string | null;
 
   // actions
   upsertItem: (item: Item) => void;
@@ -48,6 +67,16 @@ interface AppState {
   setEditing: (id: string | null) => void;
   /** Close the editor; discards the item if it is still an untouched empty draft. */
   closeEditor: () => void;
+
+  setTeamMembers: (members: TeamMember[]) => void;
+  setAuthUser: (id: string | null, email: string | null) => void;
+  dismissGroupPrompt: (itemId: string) => void;
+  clearGroupPrompt: () => void;
+}
+
+function maybeQueueGroupPrompt(item: Item): string | null {
+  if (item.groupId || item.groupPromptDismissed || isSharedItem(item)) return null;
+  return item.id;
 }
 
 function isEmptyDraft(it: Item): boolean {
@@ -68,7 +97,7 @@ function defaultSettings(): Settings {
     anchorDate: startOfDay(new Date()).toISOString(),
     nineDayStartWeekday: 5,
     hourHeight: 52,
-    settingsVersion: 10,
+    settingsVersion: 11,
   };
 }
 
@@ -85,6 +114,7 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     settings.settingsVersion = 3;
   }
   groups = ensureArchiveGroup(groups);
+  groups = ensureShareGroup(groups);
   const archive = findArchiveGroup(groups)!;
   const googleGroup = findGoogleGroup(groups);
   if ((settings.settingsVersion ?? 0) < 4) {
@@ -177,11 +207,15 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     if (activeGroupFilter && googleIds.has(activeGroupFilter)) activeGroupFilter = null;
     settings.settingsVersion = 10;
   }
+  if ((settings.settingsVersion ?? 0) < 11) {
+    groups = ensureShareGroup(groups);
+    settings.settingsVersion = 11;
+  }
   return { settings, groups, items, activeGroupFilter };
 }
 
 export function resetLocalUserState() {
-  const groups = ensureArchiveGroup(defaultGroups());
+  const groups = ensureShareGroup(ensureArchiveGroup(defaultGroups()));
   useStore.setState({
     items: {},
     groups,
@@ -189,6 +223,8 @@ export function resetLocalUserState() {
     editingId: null,
     draft: null,
     activeGroupFilter: null,
+    teamMembers: [],
+    groupPromptItemId: null,
   });
 }
 
@@ -218,6 +254,10 @@ export const useStore = create<AppState>()(
       draft: null,
       activeGroupFilter: null,
       hydrated: false,
+      teamMembers: [],
+      authUserId: null,
+      authUserEmail: null,
+      groupPromptItemId: null,
 
       upsertItem: (item) =>
         set((s) => ({
@@ -247,12 +287,18 @@ export const useStore = create<AppState>()(
 
       addItem: (partial) => {
         const item = createItem(partial);
-        set((s) => ({ items: { ...s.items, [item.id]: item } }));
+        const promptId = maybeQueueGroupPrompt(item);
+        set((s) => ({
+          items: { ...s.items, [item.id]: item },
+          groupPromptItemId: promptId ?? s.groupPromptItemId,
+        }));
         return item;
       },
 
       deleteItem: (id) =>
         set((s) => {
+          const target = s.items[id];
+          if (target && isSharedItem(target)) return {};
           const next = { ...s.items };
           delete next[id];
           return { items: next, editingId: s.editingId === id ? null : s.editingId };
@@ -372,10 +418,12 @@ export const useStore = create<AppState>()(
         set((s) => {
           if (!s.draft) return { editingId: null };
           if (isEmptyDraft(s.draft)) return { draft: null, editingId: null };
+          const promptId = maybeQueueGroupPrompt(s.draft);
           return {
             items: { ...s.items, [s.draft.id]: s.draft },
             draft: null,
             editingId: null,
+            groupPromptItemId: promptId ?? s.groupPromptItemId,
           };
         }),
 
@@ -391,17 +439,33 @@ export const useStore = create<AppState>()(
 
       closeEditor: () =>
         set((s) => {
-          // Commit a non-empty draft; otherwise discard. Then return to the list.
           if (s.draft) {
             if (isEmptyDraft(s.draft)) return { draft: null, editingId: null };
+            const promptId = maybeQueueGroupPrompt(s.draft);
             return {
               items: { ...s.items, [s.draft.id]: s.draft },
               draft: null,
               editingId: null,
+              groupPromptItemId: promptId ?? s.groupPromptItemId,
             };
           }
           return { editingId: null };
         }),
+
+      setTeamMembers: (members) => set({ teamMembers: members }),
+      setAuthUser: (id, email) => set({ authUserId: id, authUserEmail: email }),
+      dismissGroupPrompt: (itemId) =>
+        set((s) => {
+          const it = s.items[itemId];
+          if (!it) return {};
+          return {
+            items: {
+              ...s.items,
+              [itemId]: { ...it, groupPromptDismissed: true, updatedAt: new Date().toISOString() },
+            },
+          };
+        }),
+      clearGroupPrompt: () => set({ groupPromptItemId: null }),
     }),
     {
       name: "kalendarz-todo-v1-local",

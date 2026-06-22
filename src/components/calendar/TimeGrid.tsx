@@ -18,12 +18,25 @@ import {
 } from "@/lib/time";
 import { fmt, fmtRange, fmtTime, tint } from "@/lib/format";
 import { allDayBarIndices } from "@/lib/allDay";
+import { isSharedItem, SHARE_CALENDAR_COLOR, SHARE_CALENDAR_OPACITY } from "@/lib/share";
 import { weekendColumnBg, dayColumnWeight, dayColumnLayout, dayIndexAtX, spanColumnLayout } from "@/lib/weekend";
 import { groupIdForNewItem } from "@/lib/groups";
 import type { ReminderMarker } from "@/lib/reminders";
 import { markerAsTimedSlice } from "@/lib/reminders";
 import { ReminderBell } from "@/components/calendar/ReminderBell";
 import { ReminderMarkers } from "@/components/calendar/ReminderMarkers";
+
+function itemVisual(item: Item, groups: Record<string, Group>) {
+  if (isSharedItem(item)) {
+    return { color: SHARE_CALENDAR_COLOR, opacity: SHARE_CALENDAR_OPACITY, shared: true };
+  }
+  const g = item.groupId ? groups[item.groupId] : undefined;
+  return {
+    color: g?.color ?? "#0b6e99",
+    opacity: item.done ? 0.5 : 1,
+    shared: false,
+  };
+}
 import { ContextMenu, type MenuAction } from "./ContextMenu";
 
 const GUTTER = 56;
@@ -428,8 +441,8 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
                 }));
               const laid = layoutTimed(dayItems);
               return laid.map(({ item, geom, col, cols }) => {
-                const g = item.groupId ? groups[item.groupId] : undefined;
-                const color = g?.color ?? "#0b6e99";
+                const vis = itemVisual(item, groups);
+                const color = vis.color;
                 const slot = columnLayout[dayIndex];
                 const widthPct = slot.widthPct * (1 / cols);
                 const leftPct = slot.leftPct + slot.widthPct * (col / cols);
@@ -440,7 +453,7 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
                     key={item.id}
                     className={`group absolute select-none overflow-hidden rounded-md border px-1.5 py-0.5 text-[11px] leading-tight text-ink shadow-card transition-shadow hover:shadow-pop ${
                       empty ? "border-dashed" : ""
-                    }`}
+                    } ${vis.shared ? "border-dashed" : ""}`}
                     style={{
                       top: geom.topPx,
                       height: geom.heightPx,
@@ -449,7 +462,7 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
                       background: `linear-gradient(180deg, ${tint(color, 0.26)}, ${tint(color, 0.16)})`,
                       borderColor: tint(color, 0.55),
                       boxShadow: `inset 3px 0 0 ${color}`,
-                      opacity: dim ? 0.5 : 1,
+                      opacity: vis.shared ? vis.opacity : dim ? 0.5 : 1,
                     }}
                     onPointerDown={(e) => beginDrag(e, "move", item)}
                     onContextMenu={(e) => openItemMenu(e, item)}
@@ -566,15 +579,15 @@ function OffHoursBand({
             }}
           >
             {chips.map((it) => {
-              const g = it.groupId ? groups[it.groupId] : undefined;
-              const color = g?.color ?? "#9b9a97";
+              const vis = itemVisual(it, groups);
+              const color = vis.color;
               return (
                 <button
                   key={it.id}
                   onClick={() => onOpen(it.id)}
                   title={`${it.title} · ${fmtTime(it.start)}`}
                   className="flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-ink"
-                  style={{ background: tint(color, 0.22) }}
+                  style={{ background: tint(color, 0.22), opacity: vis.shared ? vis.opacity : 1 }}
                 >
                   <span
                     className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
@@ -670,14 +683,14 @@ function AllDayBand({
           />
         ))}
         {placed.map(({ item, startIdx, endIdx, row }) => {
-          const g = item.groupId ? groups[item.groupId] : undefined;
-          const color = g?.color ?? "#0b6e99";
+          const vis = itemVisual(item, groups);
+          const color = vis.color;
           const span = spanColumnLayout(layout, startIdx, endIdx);
           return (
             <button
               key={item.id}
               onClick={() => onOpen(item.id)}
-              className="absolute flex items-center gap-0.5 overflow-hidden rounded-md text-left text-[11px] font-semibold text-ink"
+              className="absolute flex items-center gap-0.5 overflow-hidden rounded-md border border-dashed text-left text-[11px] font-semibold text-ink"
               style={{
                 left: `calc(${span.leftPct}% + 2px)`,
                 width: `calc(${span.widthPct}% - 4px)`,
@@ -688,6 +701,7 @@ function AllDayBand({
                 paddingRight: 8,
                 background: tint(color, 0.22),
                 boxShadow: `inset 3px 0 0 ${color}`,
+                opacity: vis.opacity,
               }}
             >
               <span className="min-w-0 truncate">{item.title || "(bez tytułu)"}</span>
