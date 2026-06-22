@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useStore } from "@/state/store";
 import { sortGroupsForRail } from "@/lib/groups";
+import { isItemDeleted } from "@/lib/items";
 import { tint } from "@/lib/format";
 
 const AUTO_HIDE_MS = 10_000;
@@ -36,7 +37,8 @@ export function GroupSelectPrompt() {
     if (!itemId) setPaused(false);
   }, [itemId]);
 
-  if (!itemId || !item || item.groupId || item.groupPromptDismissed) return null;
+  if (!itemId || !item || item.groupId || item.groupPromptDismissed || isItemDeleted(item))
+    return null;
 
   const pick = (groupId: string) => {
     patchItem(item.id, { groupId });

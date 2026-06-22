@@ -8,6 +8,7 @@ import {
   stripGoogleGroups,
 } from "@/lib/groups";
 import { isShareGroup, updateSharedItemContent } from "@/lib/share";
+import { mergeItemOnSync } from "@/lib/items";
 import { participantRowFromParticipant } from "@/lib/participants";
 import type { Group, Item } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
@@ -64,6 +65,8 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
       groupPromptDismissed: item.groupPromptDismissed ?? false,
       ...payloadExtras,
     },
+    deleted_at: item.deletedAt ?? null,
+    deleted_by: item.deletedBy ?? null,
     created_at: item.createdAt,
     updated_at: item.updatedAt,
   };
@@ -102,6 +105,8 @@ function rowToItem(row: Record<string, unknown>, shareRole: Item["shareRole"] = 
     ownerUserId,
     shareRole,
     groupPromptDismissed: (payload.groupPromptDismissed as boolean) ?? false,
+    deletedAt: (row.deleted_at as string | null) ?? null,
+    deletedBy: (row.deleted_by as string | null) ?? null,
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
@@ -320,7 +325,7 @@ async function pullSharedItems(): Promise<Record<string, Item>> {
 }
 
 async function syncItemParticipants(item: Item) {
-  if (!supabase || !userId || item.shareRole === "participant") return;
+  if (!supabase || !userId || item.shareRole === "participant" || item.deletedAt) return;
   const rows = item.participants
     .map((p) => participantRowFromParticipant(item.id, userId!, p))
     .filter((r): r is NonNullable<typeof r> => r !== null);
@@ -364,8 +369,7 @@ async function pullAll(replace = false) {
   const local = useStore.getState().items;
   const merged = { ...local };
   for (const [id, remote] of Object.entries(remoteItems)) {
-    const l = local[id];
-    if (!l || new Date(remote.updatedAt) >= new Date(l.updatedAt)) merged[id] = remote;
+    merged[id] = mergeItemOnSync(local[id], remote);
   }
   useStore.setState({ items: merged });
 }
@@ -393,8 +397,10 @@ function setupRealtime() {
           const row = payload.new as Record<string, unknown>;
           const ownerId = row.user_id as string;
           const role = ownerId === userId ? "owner" : "participant";
-          const item = rowToItem(row, role);
-          useStore.setState((s) => ({ items: { ...s.items, [item.id]: item } }));
+          const remote = rowToItem(row, role);
+          const local = useStore.getState().items[remote.id];
+          const merged = mergeItemOnSync(local, remote);
+          useStore.setState((s) => ({ items: { ...s.items, [remote.id]: merged } }));
         }
       } finally {
         applyingRemote = false;

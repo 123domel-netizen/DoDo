@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useStore } from "@/state/store";
+import { isItemDeleted } from "@/lib/items";
 import { showLocalNotification } from "@/lib/push";
 import { fmtTime } from "@/lib/format";
 
@@ -16,7 +17,7 @@ export function useReminderScheduler() {
       const now = Date.now();
       const items = Object.values(useStore.getState().items);
       for (const item of items) {
-        if (item.done || !item.hasDueDate) continue;
+        if (isItemDeleted(item) || item.done || !item.hasDueDate) continue;
         const start = new Date(item.start).getTime();
         for (const r of item.reminders) {
           if (r.firedAt) continue;

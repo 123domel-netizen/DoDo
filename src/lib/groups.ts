@@ -8,6 +8,7 @@ import {
   isShareGroup,
   isSharedItem,
 } from "@/lib/share";
+import { isItemDeleted } from "@/lib/items";
 
 export const ARCHIVE_GROUP_NAME = "ARCH";
 export const ARCHIVE_GROUP_COLOR = "#737881";
@@ -99,6 +100,8 @@ export function itemMatchesGroupFilter(
   filterGroupId: string | null,
   scope: GroupFilterScope = "calendar",
 ): boolean {
+  if (isItemDeleted(item)) return false;
+
   const groups = useStore.getState().groups;
   const archiveId = findArchiveGroup(groups)?.id ?? null;
   const shareId = findShareGroup(groups)?.id ?? null;

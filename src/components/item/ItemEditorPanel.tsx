@@ -14,6 +14,7 @@ import { parseChecklistPaste, shouldParseChecklistPaste } from "@/lib/checklistP
 import { participantFromTeamMember } from "@/lib/participants";
 import { fmt } from "@/lib/format";
 import { isShareGroup, isSharedItem, updateSharedItemContent } from "@/lib/share";
+import { isItemDeleted } from "@/lib/items";
 import { rejectItemParticipation, teamMemberLabel } from "@/lib/team";
 import { TimeEditor } from "@/components/item/TimeEditor";
 import {
@@ -62,6 +63,10 @@ export function ItemEditorPanel() {
   const item = isDraft ? draft : editingId ? items[editingId] : undefined;
 
   useEffect(() => {
+    if (!isDraft && item && isItemDeleted(item)) closeEditor();
+  }, [item, isDraft, closeEditor]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         const tag = (e.target as HTMLElement)?.tagName;
@@ -74,6 +79,7 @@ export function ItemEditorPanel() {
   }, [closeEditor]);
 
   if (!item) return null;
+  if (!isDraft && isItemDeleted(item)) return null;
   const it = item;
   const shareMode = isSharedItem(it);
   const group = !shareMode && it.groupId ? groups.find((g) => g.id === it.groupId) : undefined;

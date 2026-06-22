@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings, TeamMember } from "@/types";
+import { filterVisibleItems } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import {
@@ -18,6 +19,7 @@ import {
   stripGoogleGroups,
 } from "@/lib/groups";
 import { isSharedItem } from "@/lib/share";
+import { isItemDeleted, tombstoneItem } from "@/lib/items";
 import { normalizeAllDayRange } from "@/lib/allDay";
 import { startOfDay } from "date-fns";
 
@@ -75,7 +77,8 @@ interface AppState {
 }
 
 function maybeQueueGroupPrompt(item: Item): string | null {
-  if (item.groupId || item.groupPromptDismissed || isSharedItem(item)) return null;
+  if (item.groupId || item.groupPromptDismissed || isSharedItem(item) || isItemDeleted(item))
+    return null;
   return item.id;
 }
 
@@ -267,7 +270,7 @@ export const useStore = create<AppState>()(
       patchItem: (id, patch) =>
         set((s) => {
           const existing = s.items[id];
-          if (!existing) return {};
+          if (!existing || isItemDeleted(existing)) return {};
           return {
             items: {
               ...s.items,
@@ -279,7 +282,7 @@ export const useStore = create<AppState>()(
       toggleTaskDone: (id) => {
         const s = get();
         const item = s.items[id];
-        if (!item || item.type !== "task") return;
+        if (!item || item.type !== "task" || isItemDeleted(item)) return;
         const archive = findArchiveGroup(s.groups);
         if (!archive) return;
         get().patchItem(id, patchForTaskDone(item, !item.done, archive.id));
@@ -298,10 +301,14 @@ export const useStore = create<AppState>()(
       deleteItem: (id) =>
         set((s) => {
           const target = s.items[id];
-          if (target && isSharedItem(target)) return {};
-          const next = { ...s.items };
-          delete next[id];
-          return { items: next, editingId: s.editingId === id ? null : s.editingId };
+          if (!target || isSharedItem(target) || isItemDeleted(target)) return {};
+          return {
+            items: {
+              ...s.items,
+              [id]: tombstoneItem(target, s.authUserId),
+            },
+            editingId: s.editingId === id ? null : s.editingId,
+          };
         }),
 
       duplicateItem: (id) => {
@@ -491,5 +498,5 @@ export const useStore = create<AppState>()(
 );
 
 export function useItemsArray(): Item[] {
-  return useStore((s) => Object.values(s.items));
+  return useStore((s) => filterVisibleItems(Object.values(s.items)));
 }

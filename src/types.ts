@@ -93,6 +93,9 @@ export interface Item {
   shareRole?: "owner" | "participant";
   /** Ukryte: prompt wyboru grupy zamknięty przez użytkownika. */
   groupPromptDismissed?: boolean;
+  /** Tombstone — item usunięty (ukryty w UI, sync do deleted_at). */
+  deletedAt?: string | null;
+  deletedBy?: string | null;
   createdAt: string;
   updatedAt: string;
 }
