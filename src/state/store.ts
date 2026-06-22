@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { Group, Item, Settings, TeamMember } from "@/types";
+import type { Group, Item, Settings, TeamMember, UserTag } from "@/types";
 import { filterVisibleItems } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
@@ -20,6 +20,8 @@ import {
 } from "@/lib/groups";
 import { isSharedItem } from "@/lib/share";
 import { isItemDeleted, tombstoneItem } from "@/lib/items";
+import { defaultTagColor, scrubTagIdFromItems, scrubTagIdFromMap } from "@/lib/tags";
+import { baseItemId } from "@/lib/itemId";
 import { normalizeAllDayRange } from "@/lib/allDay";
 import { startOfDay } from "date-fns";
 
@@ -38,6 +40,10 @@ interface AppState {
   teamMembers: TeamMember[];
   authUserId: string | null;
   authUserEmail: string | null;
+  /** Słownik tagów bieżącego użytkownika. */
+  tags: Record<string, UserTag>;
+  /** Prywatne przypisania tagów do itemów (uczestnik SHARE + lokalny cache). */
+  myTagIdsByItem: Record<string, string[]>;
   /** Id itemu z aktywnym promptem wyboru grupy (nie persystowane). */
   groupPromptItemId: string | null;
 
@@ -76,6 +82,11 @@ interface AppState {
   setAuthUser: (id: string | null, email: string | null) => void;
   dismissGroupPrompt: (itemId: string) => void;
   clearGroupPrompt: () => void;
+
+  addTag: (name: string, color?: string) => UserTag;
+  patchTag: (id: string, patch: Partial<Pick<UserTag, "name" | "color">>) => void;
+  deleteTag: (id: string) => void;
+  setItemTagIds: (itemId: string, tagIds: string[]) => void;
 }
 
 function maybeQueueGroupPrompt(item: Item): string | null {
@@ -102,7 +113,7 @@ function defaultSettings(): Settings {
     anchorDate: startOfDay(new Date()).toISOString(),
     nineDayStartWeekday: 5,
     hourHeight: 52,
-    settingsVersion: 11,
+    settingsVersion: 12,
   };
 }
 
@@ -216,7 +227,18 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     groups = ensureShareGroup(groups);
     settings.settingsVersion = 11;
   }
-  return { settings, groups, items, activeGroupFilter };
+  let tags = state?.tags ?? {};
+  let myTagIdsByItem = state?.myTagIdsByItem ?? {};
+  if ((settings.settingsVersion ?? 0) < 12 && items) {
+    for (const [id, it] of Object.entries(items)) {
+      if (isSharedItem(it) || !it.tagIds?.length) continue;
+      if (!myTagIdsByItem[id]?.length) {
+        myTagIdsByItem = { ...myTagIdsByItem, [id]: [...it.tagIds] };
+      }
+    }
+    settings.settingsVersion = 12;
+  }
+  return { settings, groups, items, activeGroupFilter, tags, myTagIdsByItem };
 }
 
 export function resetLocalUserState() {
@@ -230,6 +252,8 @@ export function resetLocalUserState() {
     activeGroupFilter: null,
     teamMembers: [],
     groupPromptItemId: null,
+    tags: {},
+    myTagIdsByItem: {},
   });
 }
 
@@ -245,6 +269,8 @@ export async function switchPersistUser(userId: string | null) {
     settings: migrated.settings,
     activeGroupFilter: migrated.activeGroupFilter,
     items: migrated.items ?? {},
+    tags: migrated.tags ?? {},
+    myTagIdsByItem: migrated.myTagIdsByItem ?? {},
   });
 }
 
@@ -263,6 +289,8 @@ export const useStore = create<AppState>()(
       authUserId: null,
       authUserEmail: null,
       groupPromptItemId: null,
+      tags: {},
+      myTagIdsByItem: {},
 
       upsertItem: (item) =>
         set((s) => ({
@@ -271,23 +299,25 @@ export const useStore = create<AppState>()(
 
       patchItem: (id, patch) =>
         set((s) => {
-          const existing = s.items[id];
+          const baseId = baseItemId(id);
+          const existing = s.items[baseId];
           if (!existing || isItemDeleted(existing)) return {};
           return {
             items: {
               ...s.items,
-              [id]: { ...existing, ...patch, updatedAt: new Date().toISOString() },
+              [baseId]: { ...existing, ...patch, updatedAt: new Date().toISOString() },
             },
           };
         }),
 
       toggleTaskDone: (id) => {
         const s = get();
-        const item = s.items[id];
+        const baseId = baseItemId(id);
+        const item = s.items[baseId];
         if (!item || item.type !== "task" || isItemDeleted(item)) return;
         const archive = findArchiveGroup(s.groups);
         if (!archive) return;
-        get().patchItem(id, patchForTaskDone(item, !item.done, archive.id));
+        get().patchItem(baseId, patchForTaskDone(item, !item.done, archive.id));
       },
 
       addItem: (partial) => {
@@ -302,14 +332,15 @@ export const useStore = create<AppState>()(
 
       deleteItem: (id) =>
         set((s) => {
-          const target = s.items[id];
+          const baseId = baseItemId(id);
+          const target = s.items[baseId];
           if (!target || isSharedItem(target) || isItemDeleted(target)) return {};
           return {
             items: {
               ...s.items,
-              [id]: tombstoneItem(target, s.authUserId),
+              [baseId]: tombstoneItem(target, s.authUserId),
             },
-            editingId: s.editingId === id ? null : s.editingId,
+            editingId: s.editingId === baseId ? null : s.editingId,
           };
         }),
 
@@ -323,19 +354,26 @@ export const useStore = create<AppState>()(
         }),
 
       duplicateItem: (id) => {
-        const src = get().items[id];
+        const baseId = baseItemId(id);
+        const src = get().items[baseId];
         if (!src) return null;
         const copy = createItem({ ...src, id: uid(), title: src.title });
         copy.checklist = src.checklist.map((c) => ({ ...c, id: uid() }));
         copy.participants = src.participants.map((p) => ({ ...p, id: uid() }));
         copy.attachments = src.attachments.map((a) => ({ ...a, id: uid() }));
         copy.reminders = src.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
-        set((s) => ({ items: { ...s.items, [copy.id]: copy } }));
+        const srcTags = get().myTagIdsByItem[baseId] ?? src.tagIds ?? [];
+        set((s) => ({
+          items: { ...s.items, [copy.id]: copy },
+          ...(srcTags.length
+            ? { myTagIdsByItem: { ...s.myTagIdsByItem, [copy.id]: [...srcTags] } }
+            : {}),
+        }));
         return copy;
       },
 
       copyToClipboard: (id) => {
-        const src = get().items[id];
+        const src = get().items[baseItemId(id)];
         if (src) set({ clipboard: src });
       },
 
@@ -449,10 +487,10 @@ export const useStore = create<AppState>()(
 
       setEditing: (id) =>
         set((s) => {
-          // Switching away discards any uncommitted (empty) draft.
           const base = s.draft ? { draft: null } : {};
-          if (id === null) return { ...base, editingId: null };
-          return { ...base, editingId: id };
+          const normalized = id ? baseItemId(id) : null;
+          if (normalized === null) return { ...base, editingId: null };
+          return { ...base, editingId: normalized };
         }),
 
       closeEditor: () =>
@@ -484,6 +522,73 @@ export const useStore = create<AppState>()(
           };
         }),
       clearGroupPrompt: () => set({ groupPromptItemId: null }),
+
+      addTag: (name, color) => {
+        const trimmed = name.trim();
+        const now = new Date().toISOString();
+        const userId = get().authUserId ?? "local";
+        const tag: UserTag = {
+          id: uid(),
+          userId,
+          name: trimmed,
+          color: color ?? defaultTagColor(Object.keys(get().tags).length),
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((s) => ({ tags: { ...s.tags, [tag.id]: tag } }));
+        return tag;
+      },
+
+      patchTag: (id, patch) =>
+        set((s) => {
+          const existing = s.tags[id];
+          if (!existing) return {};
+          const name = patch.name !== undefined ? patch.name.trim() : existing.name;
+          if (!name) return {};
+          return {
+            tags: {
+              ...s.tags,
+              [id]: {
+                ...existing,
+                ...patch,
+                name,
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          };
+        }),
+
+      deleteTag: (id) =>
+        set((s) => {
+          if (!s.tags[id]) return {};
+          const tags = { ...s.tags };
+          delete tags[id];
+          return {
+            tags,
+            myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
+            items: scrubTagIdFromItems(s.items, id),
+          };
+        }),
+
+      setItemTagIds: (itemId, tagIds) =>
+        set((s) => {
+          const baseId = baseItemId(itemId);
+          const item = s.items[baseId];
+          const myTagIdsByItem = { ...s.myTagIdsByItem, [baseId]: tagIds };
+          if (!item) return { myTagIdsByItem };
+          if (isSharedItem(item)) return { myTagIdsByItem };
+          return {
+            myTagIdsByItem,
+            items: {
+              ...s.items,
+              [baseId]: {
+                ...item,
+                tagIds,
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          };
+        }),
     }),
     {
       name: "kalendarz-todo-v1-local",
@@ -493,6 +598,8 @@ export const useStore = create<AppState>()(
         groups: s.groups,
         settings: s.settings,
         activeGroupFilter: s.activeGroupFilter,
+        tags: s.tags,
+        myTagIdsByItem: s.myTagIdsByItem,
       }),
       onRehydrateStorage: () => (state) => {
         const migrated = migrateRehydratedState(state ?? undefined);
@@ -501,6 +608,8 @@ export const useStore = create<AppState>()(
           groups: migrated.groups,
           settings: migrated.settings,
           activeGroupFilter: migrated.activeGroupFilter,
+          tags: migrated.tags ?? {},
+          myTagIdsByItem: migrated.myTagIdsByItem ?? {},
           ...(migrated.items ? { items: migrated.items } : {}),
         });
       },

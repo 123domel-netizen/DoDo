@@ -4,6 +4,7 @@ import { useStore } from "@/state/store";
 import { getViewDays } from "@/lib/time";
 import { itemMatchesGroupFilter } from "@/lib/groups";
 import { collectReminderMarkers } from "@/lib/reminders";
+import { collectDeadlineMarkers } from "@/lib/deadlines";
 import { expandItemsForRange } from "@/lib/recurrence";
 import { withNormalizedAllDay } from "@/lib/allDay";
 import { TimeGrid } from "./TimeGrid";
@@ -51,12 +52,29 @@ export function CalendarView({ view: viewOverride }: { view?: CalendarViewKind }
     [filteredItems],
   );
 
+  const deadlineMarkers = useMemo(
+    () => collectDeadlineMarkers(filteredItems),
+    [filteredItems],
+  );
+
   return (
     <div className="flex h-full flex-col bg-surface">
       {view === "month" ? (
-        <MonthView days={days} items={items} reminderMarkers={reminderMarkers} groups={groups} />
+        <MonthView
+          days={days}
+          items={items}
+          reminderMarkers={reminderMarkers}
+          deadlineMarkers={deadlineMarkers}
+          groups={groups}
+        />
       ) : (
-        <TimeGrid days={days} items={items} reminderMarkers={reminderMarkers} groups={groups} />
+        <TimeGrid
+          days={days}
+          items={items}
+          reminderMarkers={reminderMarkers}
+          deadlineMarkers={deadlineMarkers}
+          groups={groups}
+        />
       )}
     </div>
   );

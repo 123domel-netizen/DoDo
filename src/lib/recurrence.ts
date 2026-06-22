@@ -1,10 +1,24 @@
 import { addDays, startOfDay } from "date-fns";
 import { rrulestr } from "rrule";
 import { allDayCalendarDate, normalizeAllDayRange, noonAnchorFromCalendarDate, withNormalizedAllDay } from "@/lib/allDay";
+import { baseItemId } from "@/lib/itemId";
+import { nativeRecurrenceToRruleLines } from "@/lib/recurrenceRules";
 import type { GoogleRecurrenceException, Item } from "@/types";
 
+export type ExpandScope = "calendar" | "todo";
+
+export interface ItemOccurrence {
+  occurrenceId: string;
+  baseItemId: string;
+  start: string;
+  end: string;
+  originalItem: Item;
+  occurrenceDate: string;
+  isRecurringOccurrence: boolean;
+}
+
 export function hasRecurrence(item: Item): boolean {
-  return Boolean(item.googleRecurrence?.length);
+  return Boolean(item.recurrence) || Boolean(item.googleRecurrence?.length);
 }
 
 export function isGoogleInstanceCopy(item: Item): boolean {
@@ -23,6 +37,12 @@ export function seriesKey(item: Item): string {
   return recurringSeriesId(item) ?? item.id;
 }
 
+function recurrenceLines(item: Item): string[] | null {
+  if (item.googleRecurrence?.length) return item.googleRecurrence;
+  if (item.recurrence) return nativeRecurrenceToRruleLines(item.recurrence, item);
+  return null;
+}
+
 function formatRruleDtstart(item: Item): string {
   if (item.allDay) {
     const d = allDayCalendarDate(item.start);
@@ -31,19 +51,21 @@ function formatRruleDtstart(item: Item): string {
     const day = String(d.getDate()).padStart(2, "0");
     return `DTSTART;VALUE=DATE:${y}${m}${day}`;
   }
-  const d = startOfDay(new Date(item.start));
+  const d = new Date(item.start);
   const p = (n: number) => String(n).padStart(2, "0");
   return `DTSTART:${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
 }
 
-function buildRuleSet(item: Item) {
-  const lines = item.googleRecurrence!.filter(
+function buildRuleSet(item: Item, lines: string[]) {
+  const filtered = lines.filter(
     (line) =>
       line.startsWith("RRULE:") ||
       line.startsWith("EXDATE") ||
       line.startsWith("RDATE"),
   );
-  return rrulestr(`${formatRruleDtstart(item)}\n${lines.join("\n")}`, { forceset: lines.length > 1 });
+  return rrulestr(`${formatRruleDtstart(item)}\n${filtered.join("\n")}`, {
+    forceset: filtered.length > 1,
+  });
 }
 
 function exceptionForOccurrence(
@@ -59,19 +81,33 @@ function occurrenceEnd(item: Item, start: Date): Date {
   return new Date(start.getTime() + (new Date(item.end).getTime() - new Date(item.start).getTime()));
 }
 
-export function expandItemOccurrences(item: Item, rangeStart: Date, rangeEnd: Date): Item[] {
+function matchesScope(item: Item, scope: ExpandScope): boolean {
+  if (scope === "calendar") return item.showInCalendar;
+  return item.showInTodo;
+}
+
+export function expandItemOccurrences(
+  item: Item,
+  rangeStart: Date,
+  rangeEnd: Date,
+  scope: ExpandScope = "calendar",
+): Item[] {
   const base = withNormalizedAllDay(item);
-  if (!base.hasDueDate || !base.showInCalendar) return [];
-  if (!hasRecurrence(base)) return [base];
+  if (!base.hasDueDate || !matchesScope(base, scope)) return [];
+
+  const lines = recurrenceLines(base);
+  if (!lines?.length) return [base];
 
   const exceptions = base.googleRecurrenceExceptions ?? [];
 
   let dates: Date[];
   try {
-    dates = buildRuleSet(base).between(rangeStart, rangeEnd, true);
+    dates = buildRuleSet(base, lines).between(rangeStart, rangeEnd, true);
   } catch {
     return [base];
   }
+
+  if (!dates.length) return [];
 
   const out: Item[] = [];
   for (const occStart of dates) {
@@ -109,25 +145,50 @@ export function expandItemOccurrences(item: Item, rangeStart: Date, rangeEnd: Da
   return out;
 }
 
-export function expandItemsForRange(items: Item[], rangeStart: Date, rangeEnd: Date): Item[] {
+export function expandItemsForRange(
+  items: Item[],
+  rangeStart: Date,
+  rangeEnd: Date,
+  scope: ExpandScope = "calendar",
+): Item[] {
   const out: Item[] = [];
   for (const item of items) {
-    out.push(...expandItemOccurrences(item, rangeStart, rangeEnd));
+    if (hasRecurrence(item)) {
+      out.push(...expandItemOccurrences(item, rangeStart, rangeEnd, scope));
+    } else if (item.hasDueDate && matchesScope(item, scope)) {
+      out.push(withNormalizedAllDay(item));
+    }
   }
   return out;
 }
 
-function isGoogleImported(item: Item): boolean {
-  return item.syncSource === "google" || Boolean(item.googleCalendarEventId) || hasRecurrence(item);
+export function getOccurrencesForRange(
+  item: Item,
+  rangeStart: Date,
+  rangeEnd: Date,
+  scope: ExpandScope = "calendar",
+): ItemOccurrence[] {
+  const expanded = hasRecurrence(item)
+    ? expandItemOccurrences(item, rangeStart, rangeEnd, scope)
+    : item.hasDueDate && matchesScope(item, scope)
+      ? [withNormalizedAllDay(item)]
+      : [];
+
+  return expanded.map((occ) => ({
+    occurrenceId: occ.id,
+    baseItemId: baseItemId(occ.id),
+    start: occ.start,
+    end: occ.end,
+    originalItem: item,
+    occurrenceDate: occ.start,
+    isRecurringOccurrence: hasRecurrence(item) && occ.id !== item.id,
+  }));
 }
 
-/**
- * Klucz grupowania wpisów Google na liście nadchodzących. Zwijamy WSZYSTKIE
- * importy z Google po znormalizowanym tytule — dzięki temu duplikaty (np. wpis
- * cykliczny z RRULE + osierocona kopia o tym samym tytule, albo wpis z lekko
- * przesuniętą datą) pokazujemy jako jedną pozycję. Urodziny/rocznice mają
- * unikalne tytuły, więc nie zlewają się ze sobą niepoprawnie.
- */
+function isGoogleImported(item: Item): boolean {
+  return item.syncSource === "google" || Boolean(item.googleCalendarEventId);
+}
+
 function groupKeyForGoogle(item: Item): string | null {
   if (isGoogleImported(item)) return `title:${(item.title || "").trim().toLowerCase()}`;
   return null;
@@ -142,9 +203,7 @@ export function itemsForUpcomingEventsList(items: Item[], from: Date, to: Date):
 
   const fromMs = from.getTime();
 
-  // 1) Wpisy bez grupowania (lokalne, jednorazowe) — pokazujemy wszystkie przyszłe.
   const standalone: Item[] = [];
-  // 2) Powtarzalne / cykliczne Google — zbieramy kandydatów per grupa.
   const grouped = new Map<string, Item[]>();
 
   for (const it of normalized) {
@@ -178,7 +237,6 @@ export function itemsForUpcomingEventsList(items: Item[], from: Date, to: Date):
       }
     }
 
-    // Jeśli wszystkie wystąpienia są w przeszłości, pokaż ostatnie znane (np. coroczne).
     if (!best) {
       let latest: Item | null = null;
       let latestStart = -Infinity;
@@ -190,7 +248,6 @@ export function itemsForUpcomingEventsList(items: Item[], from: Date, to: Date):
         }
       }
       if (latest && hasRecurrence(latest)) {
-        // dla cykli spróbuj policzyć kolejne wystąpienie w szerszym oknie
         const wide = expandItemOccurrences(latest, from, new Date(to.getTime() + 366 * 86_400_000));
         best = wide.find((o) => new Date(o.end).getTime() >= fromMs) ?? null;
       }

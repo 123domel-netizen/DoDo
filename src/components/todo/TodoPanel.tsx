@@ -17,8 +17,9 @@ import { groupIdForNewItem, findArchiveGroup, itemMatchesGroupFilter } from "@/l
 import { isSharedItem, SHARE_CALENDAR_COLOR } from "@/lib/share";
 import { effectiveReminders } from "@/lib/reminders";
 import { defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
-import { isToday, isPast, isTomorrow, addMonths } from "date-fns";
-import { itemsForUpcomingEventsList } from "@/lib/recurrence";
+import { isToday, isPast, isTomorrow, addMonths, subDays } from "date-fns";
+import { expandItemsForRange, hasRecurrence, itemsForUpcomingEventsList } from "@/lib/recurrence";
+import { baseItemId } from "@/lib/itemId";
 
 type SideTab = "tasks" | "events";
 
@@ -47,22 +48,38 @@ export function TodoPanel() {
 
   const inArchiveView = activeGroupFilter === archiveGroupId;
 
-  const todos = useMemo(
-    () =>
-      Object.values(itemsMap)
-        .filter((it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "todo"))
-        .sort((a, b) => {
-          if (archiveGroupId && a.groupId === archiveGroupId && b.groupId === archiveGroupId) {
-            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-          }
-          if (a.done !== b.done) return a.done ? 1 : -1;
-          if (!a.hasDueDate && !b.hasDueDate) return 0;
-          if (!a.hasDueDate) return 1;
-          if (!b.hasDueDate) return -1;
-          return new Date(a.end).getTime() - new Date(b.end).getTime();
-        }),
-    [itemsMap, activeGroupFilter, archiveGroupId],
-  );
+  const todos = useMemo(() => {
+    const base = Object.values(itemsMap).filter(
+      (it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "todo"),
+    );
+
+    if (inArchiveView) {
+      return base.sort((a, b) => {
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+    }
+
+    const now = new Date();
+    const from = subDays(now, 30);
+    const to = addMonths(now, 6);
+
+    const expanded: Item[] = [];
+    for (const it of base) {
+      if (hasRecurrence(it) && it.hasDueDate && !it.done) {
+        expanded.push(...expandItemsForRange([it], from, to, "todo"));
+      } else {
+        expanded.push(it);
+      }
+    }
+
+    return expanded.sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      if (!a.hasDueDate && !b.hasDueDate) return 0;
+      if (!a.hasDueDate) return 1;
+      if (!b.hasDueDate) return -1;
+      return new Date(a.end).getTime() - new Date(b.end).getTime();
+    });
+  }, [itemsMap, activeGroupFilter, inArchiveView]);
 
   const upcomingEvents = useMemo(() => {
     const now = new Date();
@@ -101,7 +118,18 @@ export function TodoPanel() {
     setDraftTitle("");
   };
 
-  const activeTasks = todos.filter((t) => !t.done).length;
+  const activeTasks = useMemo(() => {
+    const seen = new Set<string>();
+    let n = 0;
+    for (const t of todos) {
+      if (t.done) continue;
+      const bid = baseItemId(t.id);
+      if (seen.has(bid)) continue;
+      seen.add(bid);
+      n++;
+    }
+    return n;
+  }, [todos]);
   const counterLabel =
     tab === "events"
       ? `${upcomingEvents.length} nadchodzących`
@@ -172,7 +200,7 @@ export function TodoPanel() {
                   key={it.id}
                   item={it}
                   group={it.groupId ? groups[it.groupId] : undefined}
-                  onToggle={() => toggleTaskDone(it.id)}
+                  onToggle={() => toggleTaskDone(baseItemId(it.id))}
                   onOpen={() => setEditing(it.id)}
               onConvert={() => {
                 const patch: Partial<Item> = {
@@ -186,7 +214,7 @@ export function TodoPanel() {
                 } else if (itemDurationMinutes(it.start, it.end) < 60) {
                   Object.assign(patch, calendarBlockFromDeadline(it.end, 60));
                 }
-                patchItem(it.id, patch);
+                patchItem(baseItemId(it.id), patch);
               }}
                 />
               ))}

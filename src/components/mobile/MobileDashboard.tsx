@@ -163,15 +163,19 @@ function DashboardEventRow({
             </span>
           )}
         </div>
-        {item.allDay ? null : (
-          <div className="mt-0.5 text-[11px] text-ink-faint">{timeLabel}</div>
-        )}
-        {!shared && group ? (
-          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-faint">
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-            {group.name}
+        {(!item.allDay || shared || group) && (
+          <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-ink-faint">
+            {!item.allDay && <span className="shrink-0">{timeLabel}</span>}
+            {shared ? (
+              <span className="shrink-0">SHARE</span>
+            ) : group ? (
+              <span className="inline-flex min-w-0 items-center gap-1">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+                <span className="truncate">{group.name}</span>
+              </span>
+            ) : null}
           </div>
-        ) : null}
+        )}
       </div>
     </button>
   );

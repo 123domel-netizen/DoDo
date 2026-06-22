@@ -99,6 +99,9 @@ export function createItem(partial: Partial<Item>): Item {
     participants: partial.participants ?? [],
     attachments: partial.attachments ?? [],
     reminders: partial.reminders ?? [],
+    deadlineAt: partial.deadlineAt ?? null,
+    tagIds: partial.tagIds ?? [],
+    recurrence: partial.recurrence ?? null,
     createdAt: partial.createdAt ?? now,
     updatedAt: now,
   };

@@ -23,8 +23,13 @@ import { weekendColumnBg, dayColumnWeight, dayColumnLayout, dayIndexAtX, spanCol
 import { groupIdForNewItem } from "@/lib/groups";
 import type { ReminderMarker } from "@/lib/reminders";
 import { markerAsTimedSlice } from "@/lib/reminders";
+import type { DeadlineMarker } from "@/lib/deadlines";
+import { deadlineMarkerSlice } from "@/lib/deadlines";
+import { isOccurrenceId } from "@/lib/itemId";
 import { ReminderBell } from "@/components/calendar/ReminderBell";
 import { ReminderMarkers } from "@/components/calendar/ReminderMarkers";
+import { DeadlineClock } from "@/components/calendar/DeadlineClock";
+import { DeadlineMarkers } from "@/components/calendar/DeadlineMarkers";
 
 function itemVisual(item: Item, groups: Record<string, Group>) {
   if (isSharedItem(item)) {
@@ -45,6 +50,7 @@ interface TimeGridProps {
   days: Date[];
   items: Item[];
   reminderMarkers: ReminderMarker[];
+  deadlineMarkers: DeadlineMarker[];
   groups: Record<string, Group>;
 }
 
@@ -69,7 +75,7 @@ interface DragState {
   moved: boolean;
 }
 
-export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps) {
+export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups }: TimeGridProps) {
   const settings = useStore((s) => s.settings);
   const { dayStartHour, dayEndHour, hourHeight } = settings;
   const patchItem = useStore((s) => s.patchItem);
@@ -235,10 +241,14 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
 
     const ov = overrideRef.current;
     if (d?.itemId && ov && d.moved) {
-      patchItem(d.itemId, {
-        start: ov.start.toISOString(),
-        end: ov.end.toISOString(),
-      });
+      if (isOccurrenceId(d.itemId)) {
+        setEditing(d.itemId);
+      } else {
+        patchItem(d.itemId, {
+          start: ov.start.toISOString(),
+          end: ov.end.toISOString(),
+        });
+      }
     } else if (d?.itemId && !d.moved) {
       setEditing(d.itemId);
     }
@@ -354,6 +364,7 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
           days={days}
           items={flowItems}
           reminderMarkers={reminderMarkers}
+          deadlineMarkers={deadlineMarkers}
           groups={groups}
           kind="before"
           onOpen={(id) => setEditing(id)}
@@ -480,6 +491,7 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
                         {item.title || "Nowe wydarzenie"}
                       </span>
                       <ReminderBell item={item} size={9} />
+                      <DeadlineClock item={item} day={day} size={9} />
                     </div>
                     {geom.heightPx > 28 && (
                       <div className="pl-0.5 text-ink-light">{fmtRange(item.start, item.end)}</div>
@@ -507,6 +519,21 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
                 onOpen={(id) => setEditing(id)}
               />
             ))}
+            {days.map((day, dayIndex) => (
+              <DeadlineMarkers
+                key={`deadline-timed-${dayIndex}`}
+                markers={deadlineMarkers}
+                day={day}
+                dayIndex={dayIndex}
+                columnLayout={columnLayout}
+                dayStartHour={dayStartHour}
+                dayEndHour={dayEndHour}
+                hourHeight={hourHeight}
+                groups={groups}
+                placement="timed"
+                onOpen={(id) => setEditing(id)}
+              />
+            ))}
           </div>
         </div>
 
@@ -515,6 +542,7 @@ export function TimeGrid({ days, items, reminderMarkers, groups }: TimeGridProps
           days={days}
           items={flowItems}
           reminderMarkers={reminderMarkers}
+          deadlineMarkers={deadlineMarkers}
           groups={groups}
           kind="after"
           onOpen={(id) => setEditing(id)}
@@ -532,6 +560,7 @@ function OffHoursBand({
   days,
   items,
   reminderMarkers,
+  deadlineMarkers,
   groups,
   kind,
   onOpen,
@@ -539,6 +568,7 @@ function OffHoursBand({
   days: Date[];
   items: Item[];
   reminderMarkers: ReminderMarker[];
+  deadlineMarkers: DeadlineMarker[];
   groups: Record<string, Group>;
   kind: "before" | "after";
   onOpen: (id: string) => void;
@@ -554,6 +584,16 @@ function OffHoursBand({
       if (!day) return false;
       return placementForDay(
         { ...m.item, ...markerAsTimedSlice(m) },
+        day,
+        dayStartHour,
+        dayEndHour,
+      ) === kind;
+    }) ||
+    deadlineMarkers.some((m) => {
+      const day = days.find((d) => isSameDay(d, m.at));
+      if (!day) return false;
+      return placementForDay(
+        { ...m.item, ...deadlineMarkerSlice(m.item.deadlineAt!) },
         day,
         dayStartHour,
         dayEndHour,
@@ -595,11 +635,24 @@ function OffHoursBand({
                   />
                   <span className="truncate">{it.title || fmtTime(it.start)}</span>
                   <ReminderBell item={it} size={9} />
+                  <DeadlineClock item={it} day={day} size={9} />
                 </button>
               );
             })}
             <ReminderMarkers
               markers={reminderMarkers}
+              day={day}
+              dayIndex={i}
+              columnLayout={columnLayout}
+              dayStartHour={dayStartHour}
+              dayEndHour={dayEndHour}
+              hourHeight={0}
+              groups={groups}
+              placement={kind}
+              onOpen={onOpen}
+            />
+            <DeadlineMarkers
+              markers={deadlineMarkers}
               day={day}
               dayIndex={i}
               columnLayout={columnLayout}
@@ -686,6 +739,10 @@ function AllDayBand({
           const vis = itemVisual(item, groups);
           const color = vis.color;
           const span = spanColumnLayout(layout, startIdx, endIdx);
+          const showDeadline = item.deadlineAt && days.some((d, idx) => {
+            if (idx < startIdx || idx > endIdx) return false;
+            return isSameDay(d, new Date(item.deadlineAt!));
+          });
           return (
             <button
               key={item.id}
@@ -706,6 +763,7 @@ function AllDayBand({
             >
               <span className="min-w-0 truncate">{item.title || "(bez tytułu)"}</span>
               <ReminderBell item={item} size={9} />
+              {showDeadline && <DeadlineClock item={item} size={9} />}
             </button>
           );
         })}

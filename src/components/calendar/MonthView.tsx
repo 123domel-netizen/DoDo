@@ -1,5 +1,5 @@
 import { isSameDay, isSameMonth, startOfDay } from "date-fns";
-import { Bell } from "lucide-react";
+import { AlarmClock, Bell } from "lucide-react";
 import type { Group, Item } from "@/types";
 import { useStore } from "@/state/store";
 import { fmt, fmtTime, tint } from "@/lib/format";
@@ -8,16 +8,20 @@ import { weekendColumnBg } from "@/lib/weekend";
 import { groupIdForNewItem } from "@/lib/groups";
 import { isSharedItem, SHARE_CALENDAR_COLOR, SHARE_CALENDAR_OPACITY } from "@/lib/share";
 import type { ReminderMarker } from "@/lib/reminders";
+import type { DeadlineMarker } from "@/lib/deadlines";
+import { deadlineIconDimmed, deadlineTooltipTitle } from "@/lib/deadlines";
 import { ReminderBell } from "@/components/calendar/ReminderBell";
+import { DeadlineClock } from "@/components/calendar/DeadlineClock";
 
 interface MonthViewProps {
   days: Date[];
   items: Item[];
   reminderMarkers: ReminderMarker[];
+  deadlineMarkers: DeadlineMarker[];
   groups: Record<string, Group>;
 }
 
-export function MonthView({ days, items, reminderMarkers, groups }: MonthViewProps) {
+export function MonthView({ days, items, reminderMarkers, deadlineMarkers, groups }: MonthViewProps) {
   const anchor = new Date(useStore((s) => s.settings.anchorDate));
   const setEditing = useStore((s) => s.setEditing);
   const startDraft = useStore((s) => s.startDraft);
@@ -30,8 +34,13 @@ export function MonthView({ days, items, reminderMarkers, groups }: MonthViewPro
       .map((it) => ({ kind: "item" as const, at: new Date(it.start), item: it }));
     const dayMarkers = reminderMarkers
       .filter((m) => isSameDay(m.at, day))
-      .map((m) => ({ kind: "marker" as const, at: m.at, marker: m }));
-    return [...dayItems, ...dayMarkers].sort((a, b) => a.at.getTime() - b.at.getTime());
+      .map((m) => ({ kind: "reminder" as const, at: m.at, marker: m }));
+    const dayDeadlines = deadlineMarkers
+      .filter((m) => isSameDay(m.at, day))
+      .map((m) => ({ kind: "deadline" as const, at: m.at, marker: m }));
+    return [...dayItems, ...dayMarkers, ...dayDeadlines].sort(
+      (a, b) => a.at.getTime() - b.at.getTime(),
+    );
   }
 
   return (
@@ -91,7 +100,7 @@ export function MonthView({ days, items, reminderMarkers, groups }: MonthViewPro
               </div>
               <div className="space-y-0.5">
                 {dayEntries.slice(0, 4).map((entry) => {
-                  if (entry.kind === "marker") {
+                  if (entry.kind === "reminder") {
                     const { marker } = entry;
                     const g = marker.item.groupId ? groups[marker.item.groupId] : undefined;
                     const color = g?.color ?? "#9A8574";
@@ -104,6 +113,24 @@ export function MonthView({ days, items, reminderMarkers, groups }: MonthViewPro
                         style={{ background: tint(color, 0.18) }}
                       >
                         <Bell size={10} aria-hidden />
+                        <span className="text-ink-faint">{fmtTime(marker.at)}</span>
+                      </button>
+                    );
+                  }
+                  if (entry.kind === "deadline") {
+                    const { marker } = entry;
+                    const dim = deadlineIconDimmed(marker.item);
+                    return (
+                      <button
+                        key={marker.key}
+                        onClick={() => setEditing(marker.item.id)}
+                        title={deadlineTooltipTitle(marker.item)}
+                        className={`flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] text-red-400 ${
+                          dim ? "opacity-50" : ""
+                        }`}
+                        style={{ background: "rgba(239,68,68,0.12)" }}
+                      >
+                        <AlarmClock size={10} className="text-red-500" aria-hidden />
                         <span className="text-ink-faint">{fmtTime(marker.at)}</span>
                       </button>
                     );
@@ -130,6 +157,7 @@ export function MonthView({ days, items, reminderMarkers, groups }: MonthViewPro
                         {it.title || "Nowe wydarzenie"}
                       </span>
                       <ReminderBell item={it} size={9} />
+                      <DeadlineClock item={it} day={day} size={9} />
                     </button>
                   );
                 })}

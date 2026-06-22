@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -23,8 +24,23 @@ import { isItemDeleted } from "@/lib/items";
 import { rejectItemParticipation, teamMemberLabel } from "@/lib/team";
 import { ATTACHMENT_TOO_LARGE_MESSAGE, isAttachmentTooLarge } from "@/lib/attachments";
 import { effectiveReminders } from "@/lib/reminders";
+import {
+  DEADLINE_PRESET_DAYS,
+  deadlineAtNoonFromItem,
+} from "@/lib/deadlines";
+import {
+  checklistAssigneeLabel,
+  checklistAssigneesForItem,
+  type ChecklistAssignee,
+} from "@/lib/checklistAssignees";
+import { ItemTagsEditor } from "@/components/item/ItemTagsEditor";
+import { RecurrenceEditor } from "@/components/item/RecurrenceEditor";
+import { recurrenceSummary } from "@/lib/recurrenceRules";
+import { effectiveTagIds } from "@/lib/tags";
 import { TimeEditor } from "@/components/item/TimeEditor";
 import {
+  Repeat,
+  AlarmClock,
   CalendarClock,
   CheckSquare,
   ChevronDown,
@@ -38,6 +54,7 @@ import {
   AlignLeft,
   Check,
   Tag,
+  Tags,
 } from "lucide-react";
 
 const REMINDER_PRESETS: { label: string; minutes: number }[] = [
@@ -56,11 +73,15 @@ export function ItemEditorPanel() {
   const items = useStore((s) => s.items);
   const groups = useStore((s) => s.groups);
   const teamMembers = useStore((s) => s.teamMembers);
+  const authUserId = useStore((s) => s.authUserId);
+  const authUserEmail = useStore((s) => s.authUserEmail);
   const patchItem = useStore((s) => s.patchItem);
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const patchDraft = useStore((s) => s.patchDraft);
   const deleteItem = useStore((s) => s.deleteItem);
   const removeSharedItem = useStore((s) => s.removeSharedItem);
+  const setItemTagIds = useStore((s) => s.setItemTagIds);
+  const myTagIdsByItem = useStore((s) => s.myTagIdsByItem);
   const discardDraft = useStore((s) => s.discardDraft);
   const closeEditor = useStore((s) => s.closeEditor);
   const setEditing = useStore((s) => s.setEditing);
@@ -92,6 +113,16 @@ export function ItemEditorPanel() {
   const shareMode = isSharedItem(it);
   const group = !shareMode && it.groupId ? groups.find((g) => g.id === it.groupId) : undefined;
   const displayReminders = effectiveReminders(it);
+  const checklistAssignees = useMemo(
+    () => checklistAssigneesForItem(it, authUserId, authUserEmail),
+    [it, authUserId, authUserEmail],
+  );
+  const itemTagIds = effectiveTagIds(it, myTagIdsByItem);
+
+  const handleTagIds = (tagIds: string[]) => {
+    setItemTagIds(it.id, tagIds);
+    if (isDraft) patchDraft({ tagIds });
+  };
 
   const update = (patch: Partial<Item>) => {
     if (shareMode) {
@@ -352,6 +383,35 @@ export function ItemEditorPanel() {
           </div>
         </div>
 
+        {/* Recurrence */}
+        {showDueDate ? (
+          <OptionalRow
+            icon={<Repeat size={15} />}
+            label="Powtarzaj"
+            hasContent={Boolean(it.recurrence)}
+            openKey="recurrence"
+            open={open}
+            setOpen={setOpen}
+            summary={
+              it.recurrence ? recurrenceSummary(it.recurrence, it) : undefined
+            }
+          >
+            <RecurrenceEditor
+              item={it}
+              readOnly={shareMode || it.syncSource === "google"}
+              onChange={(recurrence) => update({ recurrence })}
+            />
+          </OptionalRow>
+        ) : (
+          <div className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 opacity-60">
+            <Icon>
+              <Repeat size={15} />
+            </Icon>
+            <span className="text-sm text-ink-faint">Powtarzaj</span>
+            <span className="ml-auto text-xs text-ink-faint">Ustaw termin</span>
+          </div>
+        )}
+
         {/* Group */}
         {shareMode ? (
           <div className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2">
@@ -455,6 +515,25 @@ export function ItemEditorPanel() {
           </div>
         )}
 
+        <DeadlineRow
+          deadlineAt={it.deadlineAt}
+          itemDate={{ hasDueDate: it.hasDueDate, start: it.start }}
+          readOnly={shareMode}
+          onChange={(deadlineAt) => update({ deadlineAt })}
+        />
+
+        <OptionalRow
+          icon={<Tags size={15} />}
+          label="Tagi"
+          hasContent={itemTagIds.length > 0}
+          openKey="tags"
+          open={open}
+          setOpen={setOpen}
+          summary={itemTagIds.length > 0 ? `${itemTagIds.length}` : undefined}
+        >
+          <ItemTagsEditor item={it} onChange={handleTagIds} />
+        </OptionalRow>
+
         {/* Links & attachments */}
         <OptionalRow
           icon={<LinkIcon size={15} />}
@@ -506,7 +585,11 @@ export function ItemEditorPanel() {
               : undefined
           }
         >
-          <ChecklistEditor checklist={it.checklist} onChange={(checklist) => update({ checklist })} />
+          <ChecklistEditor
+            checklist={it.checklist}
+            assignees={checklistAssignees}
+            onChange={(checklist) => update({ checklist })}
+          />
         </OptionalRow>
 
         <Divider />
@@ -780,9 +863,11 @@ function TeamParticipantsEditor({
 
 function ChecklistEditor({
   checklist,
+  assignees,
   onChange,
 }: {
   checklist: ChecklistItem[];
+  assignees: ChecklistAssignee[];
   onChange: (c: ChecklistItem[]) => void;
 }) {
   const applyPaste = (text: string, replaceIndex?: number) => {
@@ -841,9 +926,18 @@ function ChecklistEditor({
               onChange={(e) =>
                 onChange(checklist.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)))
               }
-              className={`flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-ink-faint ${
+              className={`min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-ink-faint ${
                 c.done ? "text-ink-faint line-through" : "text-ink"
               }`}
+            />
+            <ChecklistAssigneePicker
+              assignees={assignees}
+              assignedUserId={c.assignedUserId}
+              onChange={(assignedUserId) =>
+                onChange(
+                  checklist.map((x) => (x.id === c.id ? { ...x, assignedUserId } : x)),
+                )
+              }
             />
             <button
               onClick={() => onChange(checklist.filter((x) => x.id !== c.id))}
@@ -860,6 +954,88 @@ function ChecklistEditor({
       >
         <Plus size={14} /> Punkt
       </button>
+    </div>
+  );
+}
+
+function ChecklistAssigneePicker({
+  assignees,
+  assignedUserId,
+  onChange,
+}: {
+  assignees: ChecklistAssignee[];
+  assignedUserId?: string | null;
+  onChange: (assignedUserId: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  if (assignees.length === 0) return null;
+
+  const assigned = Boolean(assignedUserId);
+  const displayName = assigned
+    ? checklistAssigneeLabel(assignees, assignedUserId)
+    : "Nieprzypisane";
+
+  return (
+    <div className="relative shrink-0" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={displayName}
+        className={`max-w-[6rem] truncate rounded-full border px-2 py-0.5 text-[10px] font-medium transition ${
+          assigned
+            ? "border-accent/40 bg-accent/10 text-accent-soft"
+            : "border-line bg-surface-raised text-ink-faint"
+        }`}
+      >
+        {assigned ? displayName : "Nieprzyp."}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-40 mt-1 min-w-[10rem] max-w-[min(11rem,calc(100vw-2rem))] rounded-lg border border-line bg-surface-overlay py-1 shadow-pop">
+          <button
+            type="button"
+            onClick={() => {
+              onChange(null);
+              setOpen(false);
+            }}
+            className={`block w-full px-3 py-1.5 text-left text-xs transition hover:bg-surface-raised ${
+              !assignedUserId ? "text-accent-soft" : "text-ink-light"
+            }`}
+          >
+            Nieprzypisane
+          </button>
+          {assignees.map((a) => (
+            <button
+              key={a.userId}
+              type="button"
+              onClick={() => {
+                onChange(a.userId);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition hover:bg-surface-raised ${
+                assignedUserId === a.userId ? "text-accent-soft" : "text-ink"
+              }`}
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent-soft">
+                {a.initials}
+              </span>
+              <span className="truncate">{a.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -999,6 +1175,158 @@ function RemindersEditor({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function toLocalDatetimeValue(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${day}T${h}:${min}`;
+}
+
+function fromLocalDatetimeValue(value: string): string {
+  return new Date(value).toISOString();
+}
+
+function DeadlineRow({
+  deadlineAt,
+  itemDate,
+  readOnly,
+  onChange,
+}: {
+  deadlineAt?: string | null;
+  itemDate: Pick<Item, "hasDueDate" | "start">;
+  readOnly?: boolean;
+  onChange: (deadlineAt: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(false);
+  const [customValue, setCustomValue] = useState("");
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setCustom(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const summary = deadlineAt
+    ? fmt(new Date(deadlineAt), "EEE d MMM, HH:mm")
+    : "Brak";
+
+  return (
+    <div className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2">
+      <Icon>
+        <AlarmClock size={15} />
+      </Icon>
+      <span className="text-sm text-ink">Deadline</span>
+      <span className="min-w-0 truncate text-xs text-ink-faint">{summary}</span>
+      {!readOnly && (
+        <div className="relative ml-auto shrink-0" ref={wrapRef}>
+          {deadlineAt ? (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="rounded-md px-2 py-0.5 text-xs font-medium text-accent-soft hover:bg-surface-raised"
+              >
+                Zmień
+              </button>
+              <button
+                type="button"
+                onClick={() => onChange(null)}
+                className="rounded-md p-0.5 text-ink-faint hover:bg-surface-raised hover:text-ink"
+                aria-label="Usuń deadline"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="rounded-md px-2 py-0.5 text-xs font-medium text-accent-soft hover:bg-surface-raised"
+            >
+              Ustaw
+            </button>
+          )}
+          {open && (
+            <div className="absolute right-0 top-full z-40 mt-1 w-52 max-w-[calc(100vw-2rem)] rounded-lg border border-line bg-surface-overlay p-2 shadow-pop">
+              {!custom ? (
+                <>
+                  <div className="flex flex-wrap gap-1">
+                    {DEADLINE_PRESET_DAYS.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => {
+                          onChange(deadlineAtNoonFromItem(itemDate, d));
+                          setOpen(false);
+                        }}
+                        className="rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-ink hover:border-line-strong"
+                      >
+                        +{d} dni
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustom(true);
+                      setCustomValue(
+                        toLocalDatetimeValue(deadlineAt ?? deadlineAtNoonFromItem(itemDate, 7)),
+                      );
+                    }}
+                    className="mt-2 w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-left text-xs text-ink hover:border-line-strong"
+                  >
+                    Własna data i godzina
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="datetime-local"
+                    value={customValue}
+                    onChange={(e) => setCustomValue(e.target.value)}
+                    className="w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-ink outline-none"
+                  />
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (customValue) onChange(fromLocalDatetimeValue(customValue));
+                        setOpen(false);
+                        setCustom(false);
+                      }}
+                      className="flex-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-white"
+                    >
+                      Zapisz
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustom(false)}
+                      className="rounded-md border border-line px-2 py-1 text-xs text-ink-faint"
+                    >
+                      Wstecz
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

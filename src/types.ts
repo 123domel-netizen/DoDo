@@ -6,6 +6,18 @@ export interface ChecklistItem {
   id: string;
   text: string;
   done: boolean;
+  /** Opcjonalna osoba odpowiedzialna (user_id). */
+  assignedUserId?: string | null;
+}
+
+/** Tag użytkownika (prywatny słownik etykiet). */
+export interface UserTag {
+  id: string;
+  userId: string;
+  name: string;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Participant {
@@ -61,6 +73,28 @@ export interface GoogleRecurrenceException {
   title?: string;
 }
 
+export type RecurrenceFrequency = "daily" | "weekly" | "monthly" | "yearly";
+
+/** Lokalna reguła powtarzalności (nie Google). */
+export interface ItemRecurrence {
+  frequency: RecurrenceFrequency;
+  interval: number;
+  /** 0=niedziela … 6=sobota (Date.getDay()). */
+  byWeekday?: number[];
+  weekdaysOnly?: boolean;
+  until?: string | null;
+  count?: number | null;
+}
+
+export type RecurrencePresetId =
+  | "none"
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | "yearly"
+  | "weekdays"
+  | "custom";
+
 export interface Item {
   id: string;
   type: ItemType;
@@ -84,6 +118,8 @@ export interface Item {
   participants: Participant[];
   attachments: Attachment[];
   reminders: Reminder[];
+  /** Osobisty termin (ISO datetime), niezależny od start/end i przypomnień. */
+  deadlineAt?: string | null;
   /** Gdy tryb integracji = ask_per_item — nadpisanie per element. */
   googleSyncOverride?: DualVisibilityMode | null;
   googleLinkGroupId?: string | null;
@@ -92,6 +128,8 @@ export interface Item {
   googleRecurringSeriesId?: string;
   googleRecurrenceExceptions?: GoogleRecurrenceException[];
   googleCalendarEventId?: string;
+  /** Lokalna powtarzalność (generowanie wystąpień w locie). */
+  recurrence?: ItemRecurrence | null;
   /** "google" gdy element pochodzi z importu Google (tylko do odczytu). */
   syncSource?: "local" | "google";
   /** Właściciel rekordu w chmurze (user_id). */
@@ -105,6 +143,8 @@ export interface Item {
   deletedBy?: string | null;
   /** Osobiste przypomnienia uczestnika (SHARE). */
   personalReminders?: Reminder[];
+  /** Id tagów właściciela (payload); uczestnik używa myTagIdsByItem w store. */
+  tagIds?: string[];
   createdAt: string;
   updatedAt: string;
 }

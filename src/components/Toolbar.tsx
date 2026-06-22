@@ -20,6 +20,7 @@ import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
 import { Logo } from "@/components/brand/Logo";
 import { ViewSettings } from "@/components/settings/ViewSettings";
+import { TagsSettings } from "@/components/settings/TagsSettings";
 import { TeamSettings } from "@/components/settings/TeamSettings";
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
@@ -39,7 +40,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const setSettings = useStore((s) => s.setSettings);
   const startDraft = useStore((s) => s.startDraft);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"view" | "team">("view");
+  const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags">("view");
 
   const anchor = new Date(settings.anchorDate);
 
@@ -202,8 +203,25 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
             >
               Zespół
             </button>
+            <button
+              type="button"
+              onClick={() => setSettingsTab("tags")}
+              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+                settingsTab === "tags"
+                  ? "bg-accent text-white shadow-glow"
+                  : "text-ink-light hover:text-ink"
+              }`}
+            >
+              Tagi
+            </button>
           </div>
-          {settingsTab === "view" ? <ViewSettings /> : <TeamSettings />}
+          {settingsTab === "view" ? (
+            <ViewSettings />
+          ) : settingsTab === "team" ? (
+            <TeamSettings />
+          ) : (
+            <TagsSettings />
+          )}
         </div>
       )}
     </header>
