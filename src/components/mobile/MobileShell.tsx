@@ -5,6 +5,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  LayoutDashboard,
   ListChecks,
   LogOut,
   Plus,
@@ -15,6 +16,7 @@ import {
 import { useStore } from "@/state/store";
 import type { CalendarViewKind } from "@/types";
 import { CalendarView } from "@/components/calendar/CalendarView";
+import { MobileDashboard } from "@/components/mobile/MobileDashboard";
 import { MobileTodayPanel } from "@/components/mobile/MobileTodayPanel";
 import { TodoPanel } from "@/components/todo/TodoPanel";
 import { ItemEditorPanel } from "@/components/item/ItemEditorPanel";
@@ -36,7 +38,7 @@ import { cloudEnabled } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
 import { TeamSettings } from "@/components/settings/TeamSettings";
 
-type Tab = "calendar" | "tasks";
+type Tab = "dashboard" | "calendar" | "tasks";
 type MobileCalendarMode = CalendarViewKind | "today";
 
 const MOBILE_VIEWS: { key: MobileCalendarMode; label: string }[] = [
@@ -68,7 +70,7 @@ export function MobileShell() {
   const setActiveGroupFilter = useStore((s) => s.setActiveGroupFilter);
   const addGroup = useStore((s) => s.addGroup);
 
-  const [tab, setTab] = useState<Tab>("calendar");
+  const [tab, setTab] = useState<Tab>("dashboard");
   const [mobileView, setMobileView] = useState<MobileCalendarMode>("day");
   const [sheet, setSheet] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<"view" | "team">("view");
@@ -137,7 +139,6 @@ export function MobileShell() {
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
         <Logo size={24} />
-        <span className="text-sm font-semibold tracking-tight text-ink">DoDo</span>
 
         <div className="ml-auto flex items-center gap-1">
           <button
@@ -159,8 +160,14 @@ export function MobileShell() {
         </div>
       </header>
 
-      {/* Menu główne: Kalendarz [+]  Zadania [+] */}
-      <div className="flex items-stretch gap-2 border-b border-line px-3 py-2">
+      {/* Menu główne: Dziś · Kalendarz [+] · Zadania [+] */}
+      <div className="flex items-stretch gap-1.5 border-b border-line px-3 py-2">
+        <TabSegment
+          active={tab === "dashboard"}
+          onSelect={() => setTab("dashboard")}
+          icon={<LayoutDashboard size={16} />}
+          label="Dziś"
+        />
         <TabSegment
           active={tab === "calendar"}
           onSelect={() => setTab("calendar")}
@@ -280,7 +287,9 @@ export function MobileShell() {
 
       {/* Treść */}
       <main className="min-h-0 flex-1 overflow-hidden">
-        {tab === "calendar" ? (
+        {tab === "dashboard" ? (
+          <MobileDashboard />
+        ) : tab === "calendar" ? (
           mobileView === "today" ? (
             <MobileTodayPanel />
           ) : (
@@ -384,36 +393,38 @@ function TabSegment({
 }: {
   active: boolean;
   onSelect: () => void;
-  onAdd: () => void;
+  onAdd?: () => void;
   icon: ReactNode;
   label: string;
-  addLabel: string;
+  addLabel?: string;
 }) {
   return (
     <div
-      className={`flex flex-1 items-center rounded-xl border p-0.5 transition ${
+      className={`flex min-w-0 flex-1 items-center rounded-xl border p-0.5 transition ${
         active ? "border-accent/60 bg-accent/10" : "border-line bg-surface-raised"
       }`}
     >
       <button
         type="button"
         onClick={onSelect}
-        className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-semibold transition ${
+        className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-xs font-semibold transition sm:gap-1.5 sm:px-2 sm:text-sm ${
           active ? "text-ink" : "text-ink-light"
         }`}
       >
         {icon}
         <span className="truncate">{label}</span>
       </button>
-      <button
-        type="button"
-        onClick={onAdd}
-        aria-label={addLabel}
-        title={addLabel}
-        className="flex shrink-0 items-center justify-center rounded-lg bg-accent-grad p-2 text-white shadow-glow transition hover:brightness-110"
-      >
-        <Plus size={16} />
-      </button>
+      {onAdd && (
+        <button
+          type="button"
+          onClick={onAdd}
+          aria-label={addLabel}
+          title={addLabel}
+          className="flex shrink-0 items-center justify-center rounded-lg bg-accent-grad p-1.5 text-white shadow-glow transition hover:brightness-110 sm:p-2"
+        >
+          <Plus size={16} />
+        </button>
+      )}
     </div>
   );
 }
