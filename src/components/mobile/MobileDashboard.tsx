@@ -99,8 +99,11 @@ export function MobileDashboard() {
     [itemsMap, activeGroupFilter],
   );
 
-  const tagsForItem = (item: Item) =>
-    resolveItemTags(effectiveTagIds(item, myTagIdsByItem), tagsMap);
+  const tagsForItem = (item: Item) => {
+    const baseId = baseItemId(item.id);
+    const source = itemsMap[baseId] ?? item;
+    return resolveItemTags(effectiveTagIds(source, myTagIdsByItem), tagsMap);
+  };
 
   return (
     <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface">
@@ -268,18 +271,18 @@ function DashboardMetaTags({ tags }: { tags: UserTag[] }) {
       {tags.map((tag) => (
         <span
           key={tag.id}
-          className="inline-block max-w-[5.5rem] shrink-0 truncate text-[10px] font-medium"
-          style={{ color: tag.color }}
+          className="inline-flex max-w-[5.5rem] shrink-0 items-center truncate rounded-full px-1.5 py-px text-[10px] font-medium"
+          style={{
+            color: tag.color,
+            background: `${tag.color}22`,
+            border: `1px solid ${tag.color}44`,
+          }}
         >
           #{tag.name}
         </span>
       ))}
     </>
   );
-}
-
-function DashboardMetaEventDate({ item }: { item: Item }) {
-  return <span className="shrink-0">{fmt(item.start, "EEE d MMM")}</span>;
 }
 
 function DashboardEventRow({
@@ -300,7 +303,6 @@ function DashboardEventRow({
   const reminderCount = effectiveReminders(item).length;
   const hasChecklist = item.checklist.length > 0;
   const showMeta =
-    showEventDate ||
     Boolean(item.deadlineAt) ||
     shared ||
     Boolean(group) ||
@@ -343,7 +345,6 @@ function DashboardEventRow({
         </div>
         {showMeta && (
           <DashboardMetaRow>
-            {showEventDate && <DashboardMetaEventDate item={item} />}
             <DashboardMetaDeadline item={item} />
             <DashboardMetaGroup shared={shared} group={group} color={color} />
             <DashboardMetaReminders item={item} />
