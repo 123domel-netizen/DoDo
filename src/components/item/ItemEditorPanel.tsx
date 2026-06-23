@@ -57,12 +57,11 @@ import {
   Tags,
 } from "lucide-react";
 
-const REMINDER_PRESETS: { label: string; minutes: number }[] = [
-  { label: "W momencie", minutes: 0 },
-  { label: "5 min przed", minutes: 5 },
-  { label: "10 min przed", minutes: 10 },
-  { label: "15 min przed", minutes: 15 },
-  { label: "30 min przed", minutes: 30 },
+const REMINDER_MENU_PRESETS: { label: string; minutes: number }[] = [
+  { label: "5 minut przed", minutes: 5 },
+  { label: "10 minut przed", minutes: 10 },
+  { label: "15 minut przed", minutes: 15 },
+  { label: "30 minut przed", minutes: 30 },
   { label: "1 godz. przed", minutes: 60 },
   { label: "1 dzień przed", minutes: 1440 },
 ];
@@ -330,7 +329,9 @@ export function ItemEditorPanel() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto thin-scrollbar px-5 pb-5">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden thin-scrollbar px-5 pb-5">
+        <SectionHeader>Podstawowe</SectionHeader>
+
         <input
           value={it.title}
           readOnly={shareMode}
@@ -412,6 +413,22 @@ export function ItemEditorPanel() {
           </div>
         )}
 
+        <div className="mb-1 flex flex-col gap-2 sm:flex-row sm:gap-3">
+          <CompactReminderField
+            reminders={displayReminders}
+            onChange={updateReminders}
+            disabled={!showDueDate}
+          />
+          <CompactDeadlineField
+            deadlineAt={it.deadlineAt}
+            itemDate={{ hasDueDate: it.hasDueDate, start: it.start }}
+            readOnly={shareMode}
+            onChange={(deadlineAt) => update({ deadlineAt })}
+          />
+        </div>
+
+        <SectionHeader>Organizacja i współpraca</SectionHeader>
+
         {/* Group */}
         {shareMode ? (
           <div className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2">
@@ -437,6 +454,7 @@ export function ItemEditorPanel() {
               ) : (
                 <span className="text-sm text-ink-faint">Grupa</span>
               )}
+              {!group && <span className="ml-auto text-xs text-ink-faint">Brak</span>}
             </button>
             {isOpen("group", false) && (
               <div className="mb-1 ml-9 mt-1 flex flex-wrap gap-1.5">
@@ -459,99 +477,6 @@ export function ItemEditorPanel() {
             )}
           </>
         )}
-
-        <Divider />
-
-        {/* Participants */}
-        <OptionalRow
-          icon={<Users size={15} />}
-          label="Uczestnicy"
-          hasContent={it.participants.length > 0}
-          openKey="participants"
-          open={open}
-          setOpen={setOpen}
-          summary={
-            it.participants.length > 0
-              ? `${it.participants.length} ${it.participants.length === 1 ? "osoba" : "osób"}`
-              : undefined
-          }
-        >
-          {shareMode || teamMembers.length === 0 ? (
-            <ParticipantsReadOnly participants={it.participants} />
-          ) : (
-            <TeamParticipantsEditor
-              participants={it.participants}
-              teamMembers={teamMembers}
-              onChange={(participants) => update({ participants })}
-            />
-          )}
-        </OptionalRow>
-
-        {/* Reminders — tylko gdy jest termin */}
-        {showDueDate ? (
-          <OptionalRow
-            icon={<Bell size={15} />}
-            label="Przypomnienia"
-            hasContent={displayReminders.length > 0}
-            openKey="reminders"
-            open={open}
-            setOpen={setOpen}
-            summary={
-              displayReminders.length > 0 ? `${displayReminders.length}` : undefined
-            }
-          >
-            <RemindersEditor
-              reminders={displayReminders}
-              onChange={updateReminders}
-            />
-          </OptionalRow>
-        ) : (
-          <div className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 opacity-60">
-            <Icon>
-              <Bell size={15} />
-            </Icon>
-            <span className="text-sm text-ink-faint">Przypomnienia</span>
-            <span className="ml-auto text-xs text-ink-faint">Ustaw termin</span>
-          </div>
-        )}
-
-        <DeadlineRow
-          deadlineAt={it.deadlineAt}
-          itemDate={{ hasDueDate: it.hasDueDate, start: it.start }}
-          readOnly={shareMode}
-          onChange={(deadlineAt) => update({ deadlineAt })}
-        />
-
-        <OptionalRow
-          icon={<Tags size={15} />}
-          label="Tagi"
-          hasContent={itemTagIds.length > 0}
-          openKey="tags"
-          open={open}
-          setOpen={setOpen}
-          summary={itemTagIds.length > 0 ? `${itemTagIds.length}` : undefined}
-        >
-          <ItemTagsEditor item={it} onChange={handleTagIds} />
-        </OptionalRow>
-
-        {/* Links & attachments */}
-        <OptionalRow
-          icon={<LinkIcon size={15} />}
-          label="Linki i załączniki"
-          hasContent={it.attachments.length > 0}
-          openKey="links"
-          open={open}
-          setOpen={setOpen}
-          summary={it.attachments.length > 0 ? `${it.attachments.length}` : undefined}
-        >
-          <AttachmentsEditor
-            attachments={it.attachments}
-            onChange={(attachments) => update({ attachments })}
-            fileRef={fileRef}
-          />
-        </OptionalRow>
-
-        <Divider />
 
         {/* Description */}
         <OptionalRow
@@ -592,10 +517,65 @@ export function ItemEditorPanel() {
           />
         </OptionalRow>
 
-        <Divider />
+        {/* Links & attachments */}
+        <OptionalRow
+          icon={<LinkIcon size={15} />}
+          label="Linki i załączniki"
+          hasContent={it.attachments.length > 0}
+          openKey="links"
+          open={open}
+          setOpen={setOpen}
+          summary={it.attachments.length > 0 ? `${it.attachments.length}` : undefined}
+        >
+          <AttachmentsEditor
+            attachments={it.attachments}
+            onChange={(attachments) => update({ attachments })}
+            fileRef={fileRef}
+          />
+        </OptionalRow>
+
+        {/* Participants */}
+        <OptionalRow
+          icon={<Users size={15} />}
+          label="Uczestnicy"
+          hasContent={it.participants.length > 0}
+          openKey="participants"
+          open={open}
+          setOpen={setOpen}
+          summary={
+            it.participants.length > 0
+              ? `${it.participants.length} ${it.participants.length === 1 ? "osoba" : "osób"}`
+              : undefined
+          }
+        >
+          {shareMode || teamMembers.length === 0 ? (
+            <ParticipantsReadOnly participants={it.participants} />
+          ) : (
+            <TeamParticipantsEditor
+              participants={it.participants}
+              teamMembers={teamMembers}
+              onChange={(participants) => update({ participants })}
+            />
+          )}
+        </OptionalRow>
+
+        {/* Tags */}
+        <OptionalRow
+          icon={<Tags size={15} />}
+          label="Tagi"
+          hasContent={itemTagIds.length > 0}
+          openKey="tags"
+          open={open}
+          setOpen={setOpen}
+          summary={itemTagIds.length > 0 ? `${itemTagIds.length}` : undefined}
+        >
+          <ItemTagsEditor item={it} onChange={handleTagIds} />
+        </OptionalRow>
 
         {!shareMode && (
-          <div className="overflow-hidden rounded-lg border border-line bg-surface-raised/50">
+          <>
+            <SectionHeader>Widoczność</SectionHeader>
+            <div className="overflow-hidden rounded-lg border border-line bg-surface-raised/50">
             <VisibilityRow
               label="Pokaż w kalendarzu"
               checked={it.showInCalendar}
@@ -607,7 +587,8 @@ export function ItemEditorPanel() {
               checked={it.showInTodo}
               onChange={(v) => update({ showInTodo: v })}
             />
-          </div>
+            </div>
+          </>
         )}
       </div>
 
@@ -634,8 +615,12 @@ function Icon({ children }: { children: ReactNode }) {
   return <span className="flex w-5 shrink-0 justify-center text-ink-faint">{children}</span>;
 }
 
-function Divider() {
-  return <div className="my-2 border-t border-line" />;
+function SectionHeader({ children }: { children: string }) {
+  return (
+    <div className="mb-2 mt-5 first:mt-0 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+      {children}
+    </div>
+  );
 }
 
 /** A clean single-line row that reveals its editor on click (or when it has content). */
@@ -1126,74 +1111,201 @@ function AttachmentsEditor({
   );
 }
 
-function RemindersEditor({
+function reminderOffsetLabel(m: number): string {
+  const preset = REMINDER_MENU_PRESETS.find((p) => p.minutes === m);
+  if (preset) return preset.label;
+  if (m === 0) return "W momencie";
+  if (m % 1440 === 0) return `${m / 1440} dni przed`;
+  if (m % 60 === 0) return `${m / 60} godz. przed`;
+  return `${m} min przed`;
+}
+
+function CompactFieldButton({
+  icon,
+  label,
+  value,
+  onClick,
+  disabled,
+  readOnly,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  readOnly?: boolean;
+}) {
+  if (disabled) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-line/60 bg-surface-raised/30 px-2.5 py-2 opacity-60">
+        <span className="shrink-0">{icon}</span>
+        <span className="text-xs text-ink-faint">{label}</span>
+        <span className="ml-auto truncate text-[11px] text-ink-faint">Ustaw termin</span>
+      </div>
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-line/60 bg-surface-raised/30 px-2.5 py-2">
+        <span className="shrink-0">{icon}</span>
+        <span className="text-xs text-ink-light">{label}</span>
+        <span className="ml-auto min-w-0 truncate text-[11px] text-ink-faint">{value}</span>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2.5 py-2 text-left transition hover:border-line hover:bg-surface-raised"
+    >
+      <span className="shrink-0">{icon}</span>
+      <span className="text-xs text-ink-light">{label}</span>
+      <span className="ml-auto min-w-0 truncate text-[11px] text-ink-faint">{value}</span>
+      <ChevronDown size={12} className="shrink-0 text-ink-faint" />
+    </button>
+  );
+}
+
+function CompactReminderField({
   reminders,
   onChange,
+  disabled,
 }: {
   reminders: Reminder[];
   onChange: (r: Reminder[]) => void;
+  disabled?: boolean;
 }) {
-  const label = (m: number) =>
-    REMINDER_PRESETS.find((p) => p.minutes === m)?.label ??
-    (m % 1440 === 0
-      ? `${m / 1440} dni przed`
-      : m % 60 === 0
-        ? `${m / 60} godz. przed`
-        : `${m} min przed`);
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(false);
+  const [customMinutes, setCustomMinutes] = useState("60");
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setCustom(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const summary =
+    reminders.length === 0
+      ? "Brak"
+      : reminders.length === 1
+        ? "1"
+        : `${reminders.length} przyp.`;
+
+  const addReminder = (minutes: number) => {
+    if (reminders.some((r) => r.offsetMinutes === minutes)) return;
+    onChange([...reminders, { id: uid(), offsetMinutes: minutes, firedAt: null }]);
+  };
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {reminders.map((r) => (
-        <span
-          key={r.id}
-          className="flex items-center gap-1 rounded-full bg-amber-400/[0.14] px-2 py-0.5 text-xs text-amber-300"
-        >
-          <Bell size={11} />
-          {label(r.offsetMinutes)}
-          <button
-            onClick={() => onChange(reminders.filter((x) => x.id !== r.id))}
-            className="opacity-70 hover:opacity-100"
-          >
-            <X size={12} />
-          </button>
-        </span>
-      ))}
-      <select
-        value=""
-        onChange={(e) => {
-          if (!e.target.value) return;
-          const minutes = Number(e.target.value);
-          if (reminders.some((r) => r.offsetMinutes === minutes)) return;
-          onChange([...reminders, { id: uid(), offsetMinutes: minutes, firedAt: null }]);
-        }}
-        className="rounded-full bg-surface-raised px-2 py-1 text-xs text-ink-light outline-none ring-1 ring-line hover:text-ink"
-      >
-        <option value="">+ przypomnienie</option>
-        {REMINDER_PRESETS.map((p) => (
-          <option key={p.minutes} value={p.minutes}>
-            {p.label}
-          </option>
-        ))}
-      </select>
+    <div className="relative min-w-0 flex-1" ref={wrapRef}>
+      <CompactFieldButton
+        icon={<Bell size={14} className="text-amber-400/80" />}
+        label="Przypomnienia"
+        value={summary}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      />
+      {open && !disabled && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-1 max-w-[calc(100vw-2.5rem)] rounded-lg border border-line bg-surface-overlay p-2 shadow-pop">
+          {reminders.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1">
+              {reminders.map((r) => (
+                <span
+                  key={r.id}
+                  className="flex items-center gap-1 rounded-full bg-amber-400/[0.14] px-2 py-0.5 text-[11px] text-amber-300"
+                >
+                  {reminderOffsetLabel(r.offsetMinutes)}
+                  <button
+                    type="button"
+                    onClick={() => onChange(reminders.filter((x) => x.id !== r.id))}
+                    className="opacity-70 hover:opacity-100"
+                    aria-label="Usuń przypomnienie"
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {!custom ? (
+            <>
+              <div className="flex flex-col gap-0.5">
+                {REMINDER_MENU_PRESETS.map((p) => (
+                  <button
+                    key={p.minutes}
+                    type="button"
+                    onClick={() => {
+                      addReminder(p.minutes);
+                      setOpen(false);
+                    }}
+                    disabled={reminders.some((r) => r.offsetMinutes === p.minutes)}
+                    className="rounded-md px-2 py-1.5 text-left text-xs text-ink transition hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustom(true)}
+                className="mt-1 w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-left text-xs text-ink hover:border-line-strong"
+              >
+                Własne
+              </button>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <label className="block text-[10px] uppercase tracking-wide text-ink-faint">
+                Minut przed terminem
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={customMinutes}
+                onChange={(e) => setCustomMinutes(e.target.value)}
+                className="w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-ink outline-none"
+              />
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const m = Number(customMinutes);
+                    if (Number.isFinite(m) && m >= 0) addReminder(m);
+                    setOpen(false);
+                    setCustom(false);
+                  }}
+                  className="flex-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-white"
+                >
+                  Dodaj
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCustom(false)}
+                  className="rounded-md border border-line px-2 py-1 text-xs text-ink-faint"
+                >
+                  Wstecz
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function toLocalDatetimeValue(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const h = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${y}-${m}-${day}T${h}:${min}`;
-}
-
-function fromLocalDatetimeValue(value: string): string {
-  return new Date(value).toISOString();
-}
-
-function DeadlineRow({
+function CompactDeadlineField({
   deadlineAt,
   itemDate,
   readOnly,
@@ -1222,111 +1334,108 @@ function DeadlineRow({
   }, [open]);
 
   const summary = deadlineAt
-    ? fmt(new Date(deadlineAt), "EEE d MMM, HH:mm")
+    ? fmt(new Date(deadlineAt), "d MMM, HH:mm")
     : "Brak";
 
   return (
-    <div className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2">
-      <Icon>
-        <AlarmClock size={15} />
-      </Icon>
-      <span className="text-sm text-ink">Deadline</span>
-      <span className="min-w-0 truncate text-xs text-ink-faint">{summary}</span>
-      {!readOnly && (
-        <div className="relative ml-auto shrink-0" ref={wrapRef}>
-          {deadlineAt ? (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                className="rounded-md px-2 py-0.5 text-xs font-medium text-accent-soft hover:bg-surface-raised"
-              >
-                Zmień
-              </button>
-              <button
-                type="button"
-                onClick={() => onChange(null)}
-                className="rounded-md p-0.5 text-ink-faint hover:bg-surface-raised hover:text-ink"
-                aria-label="Usuń deadline"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ) : (
+    <div className="relative min-w-0 flex-1" ref={wrapRef}>
+      <CompactFieldButton
+        icon={<AlarmClock size={14} className="text-red-400/80" />}
+        label="Deadline"
+        value={summary}
+        readOnly={readOnly}
+        onClick={() => !readOnly && setOpen((v) => !v)}
+      />
+      {open && !readOnly && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-1 max-w-[calc(100vw-2.5rem)] rounded-lg border border-line bg-surface-overlay p-2 shadow-pop">
+          {deadlineAt && (
             <button
               type="button"
-              onClick={() => setOpen((v) => !v)}
-              className="rounded-md px-2 py-0.5 text-xs font-medium text-accent-soft hover:bg-surface-raised"
+              onClick={() => {
+                onChange(null);
+                setOpen(false);
+              }}
+              className="mb-2 w-full rounded-md border border-line px-2 py-1 text-left text-xs text-red-400 hover:bg-surface-raised"
             >
-              Ustaw
+              Usuń deadline
             </button>
           )}
-          {open && (
-            <div className="absolute right-0 top-full z-40 mt-1 w-52 max-w-[calc(100vw-2rem)] rounded-lg border border-line bg-surface-overlay p-2 shadow-pop">
-              {!custom ? (
-                <>
-                  <div className="flex flex-wrap gap-1">
-                    {DEADLINE_PRESET_DAYS.map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => {
-                          onChange(deadlineAtNoonFromItem(itemDate, d));
-                          setOpen(false);
-                        }}
-                        className="rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-ink hover:border-line-strong"
-                      >
-                        +{d} dni
-                      </button>
-                    ))}
-                  </div>
+          {!custom ? (
+            <>
+              <div className="flex flex-wrap gap-1">
+                {DEADLINE_PRESET_DAYS.map((d) => (
                   <button
+                    key={d}
                     type="button"
                     onClick={() => {
-                      setCustom(true);
-                      setCustomValue(
-                        toLocalDatetimeValue(deadlineAt ?? deadlineAtNoonFromItem(itemDate, 7)),
-                      );
+                      onChange(deadlineAtNoonFromItem(itemDate, d));
+                      setOpen(false);
                     }}
-                    className="mt-2 w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-left text-xs text-ink hover:border-line-strong"
+                    className="rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-ink hover:border-line-strong"
                   >
-                    Własna data i godzina
+                    +{d} dni
                   </button>
-                </>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="datetime-local"
-                    value={customValue}
-                    onChange={(e) => setCustomValue(e.target.value)}
-                    className="w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-ink outline-none"
-                  />
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (customValue) onChange(fromLocalDatetimeValue(customValue));
-                        setOpen(false);
-                        setCustom(false);
-                      }}
-                      className="flex-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-white"
-                    >
-                      Zapisz
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCustom(false)}
-                      className="rounded-md border border-line px-2 py-1 text-xs text-ink-faint"
-                    >
-                      Wstecz
-                    </button>
-                  </div>
-                </div>
-              )}
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustom(true);
+                  setCustomValue(
+                    toLocalDatetimeValue(deadlineAt ?? deadlineAtNoonFromItem(itemDate, 7)),
+                  );
+                }}
+                className="mt-2 w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-left text-xs text-ink hover:border-line-strong"
+              >
+                Własne
+              </button>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <input
+                type="datetime-local"
+                value={customValue}
+                onChange={(e) => setCustomValue(e.target.value)}
+                className="w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-ink outline-none"
+              />
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customValue) onChange(fromLocalDatetimeValue(customValue));
+                    setOpen(false);
+                    setCustom(false);
+                  }}
+                  className="flex-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-white"
+                >
+                  Zapisz
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCustom(false)}
+                  className="rounded-md border border-line px-2 py-1 text-xs text-ink-faint"
+                >
+                  Wstecz
+                </button>
+              </div>
             </div>
           )}
         </div>
       )}
     </div>
   );
+}
+
+function toLocalDatetimeValue(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${day}T${h}:${min}`;
+}
+
+function fromLocalDatetimeValue(value: string): string {
+  return new Date(value).toISOString();
 }
