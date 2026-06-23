@@ -109,16 +109,19 @@ export function MobileDashboard() {
     <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface">
       <section className="border-b border-line p-3">
         <div
-          className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+          className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
             todayEvents.length === 0 ? "mb-1" : "mb-2"
           }`}
         >
-          <CalendarClock size={14} />
-          Wydarzenia dzisiaj
+          <CalendarClock size={14} className="shrink-0" />
+          <span className="shrink-0">Wydarzenia dzisiaj</span>
+          {todayEvents.length === 0 && (
+            <span className="text-xs font-normal normal-case text-ink-faint">
+              Brak wydarzeń na dziś
+            </span>
+          )}
         </div>
-        {todayEvents.length === 0 ? (
-          <p className="text-sm text-ink-faint">Brak wydarzeń na dziś</p>
-        ) : (
+        {todayEvents.length > 0 && (
           <div className="space-y-1">
             {todayEvents.map((it) => (
               <DashboardEventRow
