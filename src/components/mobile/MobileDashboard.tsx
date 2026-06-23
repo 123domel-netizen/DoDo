@@ -22,7 +22,7 @@ import { baseItemId } from "@/lib/itemId";
 import { DeadlineClock } from "@/components/calendar/DeadlineClock";
 
 /** Wspólna szerokość lewej kolumny — godziny wydarzenia / checkbox zadania. */
-const DASHBOARD_LEFT_COL = "flex w-16 shrink-0";
+const DASHBOARD_LEFT_COL = "flex w-12 shrink-0 justify-center";
 
 export function MobileDashboard() {
   const itemsMap = useStore((s) => s.items);
@@ -224,7 +224,7 @@ function DashboardEventRow({
       }`}
       style={{ borderLeft: `3px solid ${color}` }}
     >
-      <div className={`${DASHBOARD_LEFT_COL} flex-col items-end pt-0.5 text-right text-[11px] font-medium tabular-nums text-ink-light`}>
+      <div className={`${DASHBOARD_LEFT_COL} flex-col items-center pt-0.5 text-[11px] font-medium tabular-nums text-ink-light`}>
         {item.allDay ? (
           <span className="text-[10px] leading-tight text-ink-faint">Cały dzień</span>
         ) : (
@@ -284,7 +284,7 @@ function DashboardTodoRow({
       }`}
       style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
     >
-      <div className={`${DASHBOARD_LEFT_COL} items-start justify-center pt-0.5`}>
+      <div className={`${DASHBOARD_LEFT_COL} items-center pt-0.5`}>
         <input
           type="checkbox"
           checked={item.done}
