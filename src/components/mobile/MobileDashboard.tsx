@@ -110,7 +110,7 @@ export function MobileDashboard() {
           Wydarzenia dzisiaj
         </div>
         {todayEvents.length === 0 ? (
-          <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak wydarzeń na dziś</p>
+          <p className="px-1 py-1.5 text-sm text-ink-faint">Brak wydarzeń na dziś</p>
         ) : (
           <div className="space-y-1">
             {todayEvents.map((it) => (
@@ -126,7 +126,11 @@ export function MobileDashboard() {
         )}
         {upcomingEvents.length > 0 && (
           <>
-            <div className="mb-2 mt-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+            <div
+              className={`mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+                todayEvents.length === 0 ? "mt-2" : "mt-4"
+              }`}
+            >
               Nadchodzące
             </div>
             <div className="space-y-1">
