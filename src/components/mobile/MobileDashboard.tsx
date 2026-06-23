@@ -376,6 +376,16 @@ function DashboardTodoRow({
   const overdue = item.hasDueDate && !item.done && isPast(due) && !isToday(due);
   const shared = isSharedItem(item);
   const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#9b9a97");
+  const reminderCount = effectiveReminders(item).length;
+  const hasChecklist = item.checklist.length > 0;
+  const showMeta =
+    item.hasDueDate ||
+    Boolean(item.deadlineAt) ||
+    shared ||
+    Boolean(group) ||
+    reminderCount > 0 ||
+    hasChecklist ||
+    itemTags.length > 0;
 
   return (
     <div
@@ -405,20 +415,20 @@ function DashboardTodoRow({
             </span>
           )}
         </div>
-        <DashboardMetaRow>
-          {item.hasDueDate ? (
-            <span className={`shrink-0 ${overdue ? "font-medium text-red-400" : ""}`}>
-              {item.allDay ? fmt(due, "EEE d MMM") : fmt(due, "EEE d MMM, HH:mm")}
-            </span>
-          ) : (
-            <span className="shrink-0">Bez terminu</span>
-          )}
-          <DashboardMetaDeadline item={item} />
-          <DashboardMetaGroup shared={shared} group={group} color={color} />
-          <DashboardMetaReminders item={item} />
-          <DashboardMetaChecklist item={item} />
-          <DashboardMetaTags tags={itemTags} />
-        </DashboardMetaRow>
+        {showMeta && (
+          <DashboardMetaRow>
+            {item.hasDueDate && (
+              <span className={`shrink-0 ${overdue ? "font-medium text-red-400" : ""}`}>
+                {item.allDay ? fmt(due, "EEE d MMM") : fmt(due, "EEE d MMM, HH:mm")}
+              </span>
+            )}
+            <DashboardMetaDeadline item={item} />
+            <DashboardMetaGroup shared={shared} group={group} color={color} />
+            <DashboardMetaReminders item={item} />
+            <DashboardMetaChecklist item={item} />
+            <DashboardMetaTags tags={itemTags} />
+          </DashboardMetaRow>
+        )}
       </div>
       {!item.showInCalendar && (
         <button
