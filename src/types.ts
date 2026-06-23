@@ -59,8 +59,10 @@ export interface Attachment {
 
 export interface Reminder {
   id: string;
-  /** Minutes before start. */
+  /** Minutes before start (relative). Ignored when remindAt is set. */
   offsetMinutes: number;
+  /** Absolute fire time (ISO). When set, reminder fires at this time regardless of item due date. */
+  remindAt?: string | null;
   /** ISO timestamp when this reminder was last fired locally (dedupe). */
   firedAt?: string | null;
 }

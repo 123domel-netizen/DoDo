@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 import { useStore } from "@/state/store";
 import { isItemDeleted } from "@/lib/items";
-import { effectiveReminders } from "@/lib/reminders";
+import { effectiveReminders, reminderFireTimeMs } from "@/lib/reminders";
 import { isSharedItem, updateOwnParticipationReminders } from "@/lib/share";
 import { showLocalNotification } from "@/lib/push";
-import { fmtTime } from "@/lib/format";
+import { fmt, fmtTime } from "@/lib/format";
 
 /**
  * Local reminder scheduler. While the app (tab or installed PWA) is running it
@@ -19,16 +19,21 @@ export function useReminderScheduler() {
       const now = Date.now();
       const items = Object.values(useStore.getState().items);
       for (const item of items) {
-        if (isItemDeleted(item) || item.done || !item.hasDueDate) continue;
+        if (isItemDeleted(item) || item.done) continue;
         const reminders = effectiveReminders(item);
-        const start = new Date(item.start).getTime();
         for (const r of reminders) {
           if (r.firedAt) continue;
-          const fireAt = start - r.offsetMinutes * 60_000;
+          const fireAt = reminderFireTimeMs(item, r);
+          if (fireAt === null) continue;
           if (fireAt <= now && now - fireAt < 5 * 60_000) {
+            const when = r.remindAt
+              ? fmt(new Date(r.remindAt), "d MMM, HH:mm")
+              : fmtTime(item.start);
             showLocalNotification(
               item.title || "Wydarzenie",
-              `${item.type === "task" ? "Zadanie" : "Wydarzenie"} o ${fmtTime(item.start)}`,
+              r.remindAt
+                ? `Przypomnienie o ${when}`
+                : `${item.type === "task" ? "Zadanie" : "Wydarzenie"} o ${when}`,
             );
             if (isSharedItem(item)) {
               const next = reminders.map((x) =>

@@ -23,7 +23,7 @@ import {
 import { isItemDeleted } from "@/lib/items";
 import { rejectItemParticipation, teamMemberLabel } from "@/lib/team";
 import { ATTACHMENT_TOO_LARGE_MESSAGE, isAttachmentTooLarge } from "@/lib/attachments";
-import { effectiveReminders } from "@/lib/reminders";
+import { effectiveReminders, reminderDisplayLabel } from "@/lib/reminders";
 import {
   DEADLINE_PRESET_DAYS,
   deadlineAtNoonFromItem,
@@ -165,7 +165,8 @@ export function ItemEditorPanel() {
 
   const clearDueDate = () => {
     if (it.type !== "task") return;
-    update({ hasDueDate: false, reminders: [] });
+    const kept = displayReminders.filter((r) => r.remindAt);
+    update({ hasDueDate: false, reminders: kept });
   };
 
   const convertToEvent = () => {
@@ -417,7 +418,7 @@ export function ItemEditorPanel() {
           <CompactReminderField
             reminders={displayReminders}
             onChange={updateReminders}
-            disabled={!showDueDate}
+            hasDueDate={showDueDate}
           />
           <CompactDeadlineField
             deadlineAt={it.deadlineAt}
@@ -1111,15 +1112,6 @@ function AttachmentsEditor({
   );
 }
 
-function reminderOffsetLabel(m: number): string {
-  const preset = REMINDER_MENU_PRESETS.find((p) => p.minutes === m);
-  if (preset) return preset.label;
-  if (m === 0) return "W momencie";
-  if (m % 1440 === 0) return `${m / 1440} dni przed`;
-  if (m % 60 === 0) return `${m / 60} godz. przed`;
-  return `${m} min przed`;
-}
-
 function CompactFieldButton({
   icon,
   label,
@@ -1172,15 +1164,15 @@ function CompactFieldButton({
 function CompactReminderField({
   reminders,
   onChange,
-  disabled,
+  hasDueDate,
 }: {
   reminders: Reminder[];
   onChange: (r: Reminder[]) => void;
-  disabled?: boolean;
+  hasDueDate: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState(false);
-  const [customMinutes, setCustomMinutes] = useState("60");
+  const [customValue, setCustomValue] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1202,9 +1194,23 @@ function CompactReminderField({
         ? "1"
         : `${reminders.length} przyp.`;
 
-  const addReminder = (minutes: number) => {
-    if (reminders.some((r) => r.offsetMinutes === minutes)) return;
+  const addRelativeReminder = (minutes: number) => {
+    if (reminders.some((r) => !r.remindAt && r.offsetMinutes === minutes)) return;
     onChange([...reminders, { id: uid(), offsetMinutes: minutes, firedAt: null }]);
+  };
+
+  const addAbsoluteReminder = (iso: string) => {
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return;
+    if (reminders.some((r) => r.remindAt && new Date(r.remindAt!).getTime() === t)) return;
+    onChange([...reminders, { id: uid(), offsetMinutes: 0, remindAt: iso, firedAt: null }]);
+  };
+
+  const openCustom = () => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + 60 - (d.getMinutes() % 15), 0, 0);
+    setCustomValue(toLocalDatetimeValue(d.toISOString()));
+    setCustom(true);
   };
 
   return (
@@ -1213,10 +1219,9 @@ function CompactReminderField({
         icon={<Bell size={14} className="text-amber-400/80" />}
         label="Przypomnienia"
         value={summary}
-        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       />
-      {open && !disabled && (
+      {open && (
         <div className="absolute left-0 right-0 top-full z-40 mt-1 max-w-[calc(100vw-2.5rem)] rounded-lg border border-line bg-surface-overlay p-2 shadow-pop">
           {reminders.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1">
@@ -1225,7 +1230,7 @@ function CompactReminderField({
                   key={r.id}
                   className="flex items-center gap-1 rounded-full bg-amber-400/[0.14] px-2 py-0.5 text-[11px] text-amber-300"
                 >
-                  {reminderOffsetLabel(r.offsetMinutes)}
+                  {reminderDisplayLabel(r)}
                   <button
                     type="button"
                     onClick={() => onChange(reminders.filter((x) => x.id !== r.id))}
@@ -1240,48 +1245,51 @@ function CompactReminderField({
           )}
           {!custom ? (
             <>
-              <div className="flex flex-col gap-0.5">
-                {REMINDER_MENU_PRESETS.map((p) => (
-                  <button
-                    key={p.minutes}
-                    type="button"
-                    onClick={() => {
-                      addReminder(p.minutes);
-                      setOpen(false);
-                    }}
-                    disabled={reminders.some((r) => r.offsetMinutes === p.minutes)}
-                    className="rounded-md px-2 py-1.5 text-left text-xs text-ink transition hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
+              {hasDueDate ? (
+                <div className="flex flex-col gap-0.5">
+                  {REMINDER_MENU_PRESETS.map((p) => (
+                    <button
+                      key={p.minutes}
+                      type="button"
+                      onClick={() => {
+                        addRelativeReminder(p.minutes);
+                        setOpen(false);
+                      }}
+                      disabled={reminders.some((r) => !r.remindAt && r.offsetMinutes === p.minutes)}
+                      className="rounded-md px-2 py-1.5 text-left text-xs text-ink transition hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mb-1 px-2 text-[10px] text-ink-faint">
+                  Presety przed terminem wymagają ustawienia terminu.
+                </p>
+              )}
               <button
                 type="button"
-                onClick={() => setCustom(true)}
-                className="mt-1 w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-left text-xs text-ink hover:border-line-strong"
+                onClick={openCustom}
+                className={`w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-left text-xs text-ink hover:border-line-strong ${
+                  hasDueDate ? "mt-1" : ""
+                }`}
               >
-                Własne
+                Własna data i godzina
               </button>
             </>
           ) : (
             <div className="space-y-2">
-              <label className="block text-[10px] uppercase tracking-wide text-ink-faint">
-                Minut przed terminem
-              </label>
               <input
-                type="number"
-                min={0}
-                value={customMinutes}
-                onChange={(e) => setCustomMinutes(e.target.value)}
+                type="datetime-local"
+                value={customValue}
+                onChange={(e) => setCustomValue(e.target.value)}
                 className="w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-ink outline-none"
               />
               <div className="flex gap-1">
                 <button
                   type="button"
                   onClick={() => {
-                    const m = Number(customMinutes);
-                    if (Number.isFinite(m) && m >= 0) addReminder(m);
+                    if (customValue) addAbsoluteReminder(fromLocalDatetimeValue(customValue));
                     setOpen(false);
                     setCustom(false);
                   }}

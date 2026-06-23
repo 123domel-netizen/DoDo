@@ -24,6 +24,7 @@ webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
 interface Reminder {
   id: string;
   offsetMinutes: number;
+  remindAt?: string | null;
 }
 
 interface ItemRow {
@@ -33,7 +34,7 @@ interface ItemRow {
   type: string;
   start_at: string;
   done: boolean;
-  payload: { reminders?: Reminder[] };
+  payload: { reminders?: Reminder[]; hasDueDate?: boolean };
 }
 
 const WINDOW_MS = 90_000; // tolerancja: przypomnienia "należne" w ostatnich 90 s
@@ -57,10 +58,21 @@ Deno.serve(async () => {
   if (error) return json({ error: error.message }, 500);
 
   let sent = 0;
-  for (const item of (items ?? []) as ItemRow[]) {
+  const processed = new Set<string>();
+
+  const processItem = async (item: ItemRow) => {
+    if (processed.has(item.id)) return;
+    processed.add(item.id);
     const reminders = item.payload?.reminders ?? [];
     for (const r of reminders) {
-      const fireAt = new Date(item.start_at).getTime() - r.offsetMinutes * 60_000;
+      let fireAt: number;
+      if (r.remindAt) {
+        fireAt = new Date(r.remindAt).getTime();
+      } else {
+        if (item.payload?.hasDueDate === false) continue;
+        fireAt = new Date(item.start_at).getTime() - r.offsetMinutes * 60_000;
+      }
+      if (!Number.isFinite(fireAt)) continue;
       if (fireAt > now || now - fireAt > WINDOW_MS) continue;
 
       const fireAtIso = new Date(fireAt).toISOString();
@@ -78,9 +90,12 @@ Deno.serve(async () => {
         .select("endpoint,keys")
         .eq("user_id", item.user_id);
 
+      const whenLabel = r.remindAt
+        ? new Date(r.remindAt).toLocaleString("pl-PL")
+        : new Date(item.start_at).toLocaleString("pl-PL");
       const body = JSON.stringify({
         title: item.title || (item.type === "task" ? "Zadanie" : "Wydarzenie"),
-        body: `Zaczyna się ${new Date(item.start_at).toLocaleString("pl-PL")}`,
+        body: r.remindAt ? `Przypomnienie o ${whenLabel}` : `Zaczyna się ${whenLabel}`,
         url: "/",
       });
 
@@ -100,6 +115,21 @@ Deno.serve(async () => {
         }
       }
     }
+  };
+
+  for (const item of (items ?? []) as ItemRow[]) {
+    await processItem(item);
+  }
+
+  // Itemy bez terminu mogą mieć przypomnienia absolutne (remindAt).
+  const { data: undatedItems } = await admin
+    .from("items")
+    .select("id,user_id,title,type,start_at,done,payload")
+    .eq("done", false)
+    .eq("payload->>hasDueDate", "false");
+
+  for (const item of (undatedItems ?? []) as ItemRow[]) {
+    await processItem(item);
   }
 
   return json({ ok: true, sent });
