@@ -345,7 +345,7 @@ export function ItemEditorPanel() {
           readOnly={shareMode}
           onChange={(e) => update({ title: e.target.value })}
           placeholder="Bez tytułu"
-          autoFocus={!shareMode}
+          autoFocus={!shareMode && !isMobile}
           className={`mb-3 w-full border-0 bg-transparent text-2xl font-semibold text-ink outline-none placeholder:font-normal placeholder:text-ink-faint ${
             shareMode ? "cursor-default opacity-90" : ""
           }`}
