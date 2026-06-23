@@ -29,7 +29,7 @@ function sortEventsByStart(a: Item, b: Item): number {
 }
 
 /** Wspólna szerokość lewej kolumny — godziny wydarzenia / checkbox zadania. */
-const DASHBOARD_LEFT_COL = "flex w-12 shrink-0 justify-center";
+const DASHBOARD_LEFT_COL = "flex w-14 shrink-0 justify-center";
 
 export function MobileDashboard() {
   const itemsMap = useStore((s) => s.items);
@@ -105,12 +105,16 @@ export function MobileDashboard() {
   return (
     <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface">
       <section className="border-b border-line p-3">
-        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+        <div
+          className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+            todayEvents.length === 0 ? "mb-1" : "mb-2"
+          }`}
+        >
           <CalendarClock size={14} />
           Wydarzenia dzisiaj
         </div>
         {todayEvents.length === 0 ? (
-          <p className="px-1 py-1.5 text-sm text-ink-faint">Brak wydarzeń na dziś</p>
+          <p className="text-sm text-ink-faint">Brak wydarzeń na dziś</p>
         ) : (
           <div className="space-y-1">
             {todayEvents.map((it) => (
@@ -128,7 +132,7 @@ export function MobileDashboard() {
           <>
             <div
               className={`mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
-                todayEvents.length === 0 ? "mt-2" : "mt-4"
+                todayEvents.length === 0 ? "mt-1.5" : "mt-4"
               }`}
             >
               Nadchodzące
@@ -315,7 +319,7 @@ function DashboardEventRow({
     >
       <div className={`${DASHBOARD_LEFT_COL} flex-col items-center pt-0.5 text-[11px] font-medium tabular-nums text-ink-light`}>
         {showEventDate && (
-          <div className="mb-0.5 text-center text-[10px] leading-tight text-ink-faint">
+          <div className="mb-0.5 whitespace-nowrap text-center text-[10px] leading-tight text-ink-faint">
             {fmt(item.start, "EEE d MMM")}
           </div>
         )}
