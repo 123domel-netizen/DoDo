@@ -38,9 +38,11 @@ import { RecurrenceEditor } from "@/components/item/RecurrenceEditor";
 import { recurrenceSummary } from "@/lib/recurrenceRules";
 import { effectiveTagIds } from "@/lib/tags";
 import { TimeEditor } from "@/components/item/TimeEditor";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import {
   Repeat,
   AlarmClock,
+  ArrowLeft,
   CalendarClock,
   CheckSquare,
   ChevronDown,
@@ -86,6 +88,7 @@ export function ItemEditorPanel() {
   const setEditing = useStore((s) => s.setEditing);
   const fileRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const isMobile = useIsMobile();
 
   const isDraft = !!draft && editingId === draft.id;
   const item = isDraft ? draft : editingId ? items[editingId] : undefined;
@@ -255,7 +258,7 @@ export function ItemEditorPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-surface">
+    <div className="relative flex h-full flex-col bg-surface">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5">
         {shareMode ? (
@@ -330,7 +333,11 @@ export function ItemEditorPanel() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden thin-scrollbar px-5 pb-5">
+      <div
+        className={`flex-1 overflow-y-auto overflow-x-hidden thin-scrollbar px-5 ${
+          isMobile ? "pb-24" : "pb-5"
+        }`}
+      >
         <SectionHeader>Podstawowe</SectionHeader>
 
         <input
@@ -607,6 +614,23 @@ export function ItemEditorPanel() {
               : "Wpisz tytuł, aby dodać"}
           </button>
         </div>
+      )}
+
+      {isMobile && (
+        <button
+          type="button"
+          onClick={closeEditor}
+          className="fixed right-4 z-[60] inline-flex items-center gap-2 rounded-full border border-line bg-surface-overlay/95 px-4 py-2.5 text-sm font-medium text-ink shadow-pop backdrop-blur-sm transition hover:bg-surface-raised"
+          style={{
+            bottom: isDraft
+              ? "max(calc(4.5rem + env(safe-area-inset-bottom, 0px)), 4.5rem)"
+              : "max(1rem, env(safe-area-inset-bottom, 0px))",
+          }}
+          aria-label="Wróć"
+        >
+          <ArrowLeft size={18} aria-hidden />
+          Wróć
+        </button>
       )}
     </div>
   );
