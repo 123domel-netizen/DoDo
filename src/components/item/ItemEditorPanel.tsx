@@ -84,6 +84,7 @@ export function ItemEditorPanel() {
   const setItemTagIds = useStore((s) => s.setItemTagIds);
   const myTagIdsByItem = useStore((s) => s.myTagIdsByItem);
   const discardDraft = useStore((s) => s.discardDraft);
+  const commitDraft = useStore((s) => s.commitDraft);
   const closeEditor = useStore((s) => s.closeEditor);
   const setEditing = useStore((s) => s.setEditing);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -293,7 +294,7 @@ export function ItemEditorPanel() {
             </button>
           ) : (
             <>
-              {it.type === "task" && (
+              {it.type === "task" && !isDraft && (
                 <button
                   onClick={() =>
                     isDraft ? update({ done: !it.done }) : toggleTaskDone(it.id)
@@ -335,7 +336,7 @@ export function ItemEditorPanel() {
 
       <div
         className={`flex-1 overflow-y-auto overflow-x-hidden thin-scrollbar px-5 ${
-          isMobile ? "pb-24" : "pb-5"
+          isMobile && isDraft ? "pb-28" : isMobile ? "pb-24" : "pb-5"
         }`}
       >
         <SectionHeader>Podstawowe</SectionHeader>
@@ -600,12 +601,24 @@ export function ItemEditorPanel() {
         )}
       </div>
 
-      {isDraft && (
-        <div className="border-t border-line p-3">
+      {isDraft && isMobile && (
+        <div
+          className="flex shrink-0 gap-2 border-t border-line bg-surface px-3 pt-3"
+          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        >
           <button
-            onClick={closeEditor}
+            type="button"
+            onClick={discardDraft}
+            className="inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line bg-surface-overlay px-4 text-sm font-medium text-ink shadow-pop transition hover:bg-surface-raised"
+          >
+            <ArrowLeft size={18} aria-hidden />
+            Wróć
+          </button>
+          <button
+            type="button"
+            onClick={commitDraft}
             disabled={!canAdd}
-            className="w-full rounded-lg bg-accent-grad px-3 py-2 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+            className="inline-flex min-h-12 min-w-0 flex-1 items-center justify-center rounded-full bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {canAdd
               ? it.type === "task"
@@ -616,16 +629,28 @@ export function ItemEditorPanel() {
         </div>
       )}
 
-      {isMobile && (
+      {isDraft && !isMobile && (
+        <div className="border-t border-line p-3">
+          <button
+            onClick={commitDraft}
+            disabled={!canAdd}
+            className="w-full min-h-11 rounded-lg bg-accent-grad px-3 py-2.5 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          >
+            {canAdd
+              ? it.type === "task"
+                ? "Dodaj zadanie"
+                : "Dodaj wydarzenie"
+              : "Wpisz tytuł, aby dodać"}
+          </button>
+        </div>
+      )}
+
+      {isMobile && !isDraft && (
         <button
           type="button"
           onClick={closeEditor}
-          className="fixed right-4 z-[60] inline-flex items-center gap-2 rounded-full border border-line bg-surface-overlay/95 px-4 py-2.5 text-sm font-medium text-ink shadow-pop backdrop-blur-sm transition hover:bg-surface-raised"
-          style={{
-            bottom: isDraft
-              ? "max(calc(4.5rem + env(safe-area-inset-bottom, 0px)), 4.5rem)"
-              : "max(1rem, env(safe-area-inset-bottom, 0px))",
-          }}
+          className="fixed right-4 z-[60] inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface-overlay/95 px-4 text-sm font-medium text-ink shadow-pop backdrop-blur-sm transition hover:bg-surface-raised"
+          style={{ bottom: "max(1rem, env(safe-area-inset-bottom, 0px))" }}
           aria-label="Wróć"
         >
           <ArrowLeft size={18} aria-hidden />

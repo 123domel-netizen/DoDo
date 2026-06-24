@@ -75,7 +75,7 @@ interface AppState {
 
   setSettings: (patch: Partial<Settings>) => void;
   setEditing: (id: string | null) => void;
-  /** Close the editor; discards the item if it is still an untouched empty draft. */
+  /** Close the editor; discards uncommitted draft without saving. */
   closeEditor: () => void;
 
   setTeamMembers: (members: TeamMember[]) => void;
@@ -495,16 +495,7 @@ export const useStore = create<AppState>()(
 
       closeEditor: () =>
         set((s) => {
-          if (s.draft) {
-            if (isEmptyDraft(s.draft)) return { draft: null, editingId: null };
-            const promptId = maybeQueueGroupPrompt(s.draft);
-            return {
-              items: { ...s.items, [s.draft.id]: s.draft },
-              draft: null,
-              editingId: null,
-              groupPromptItemId: promptId ?? s.groupPromptItemId,
-            };
-          }
+          if (s.draft) return { draft: null, editingId: null };
           return { editingId: null };
         }),
 
