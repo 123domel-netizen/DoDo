@@ -83,6 +83,8 @@ export function SyncSettings() {
         <DiagRow label="applyingRemote" value={diag.applyingRemote} />
         <DiagRow label="pushBlocked" value={diag.pushBlocked} />
         <DiagRow label="lastPullAt" value={diag.lastPullAt} />
+        <DiagRow label="lastAutoPullAt" value={diag.lastAutoPullAt} />
+        <DiagRow label="autoPullEnabled" value={diag.autoPullEnabled} />
         <DiagRow label="lastPushAt" value={diag.lastPushAt} />
         <DiagRow label="localItemsCount" value={diag.localItemsCount} />
         <DiagRow label="visibleItemsCount" value={diag.visibleItemsCount} />

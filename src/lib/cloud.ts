@@ -664,7 +664,67 @@ function setupRealtime() {
 }
 
 export function getSyncDiagnosticsSnapshot() {
-  return getSyncDiagnostics();
+  return {
+    ...getSyncDiagnostics(),
+    autoPullEnabled: cloudEnabled,
+    lastAutoPullAt,
+  };
+}
+
+const AUTO_PULL_MIN_INTERVAL_MS = 60_000;
+let autoPullInProgress = false;
+let lastAutoPullAt: string | null = null;
+
+function isUserActivelyEditing(): boolean {
+  if (typeof document === "undefined") return false;
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el instanceof HTMLElement && el.isContentEditable) return true;
+  return false;
+}
+
+function msSinceLastPull(): number | null {
+  if (!syncState.lastPullAt) return null;
+  const t = new Date(syncState.lastPullAt).getTime();
+  return Number.isNaN(t) ? null : Date.now() - t;
+}
+
+/** Czy bezpieczny auto-pull może się wykonać (bez side effects). */
+export function canAutoCloudRefresh(): boolean {
+  if (!cloudEnabled || !supabase || !userId) return false;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return false;
+
+  const diag = getSyncDiagnostics();
+  if (!diag.syncReady || diag.syncBooting || diag.applyingRemote || diag.pushBlocked) {
+    return false;
+  }
+  if (diag.dirtyItemsCount > 0 || diag.dirtyParticipantCount > 0 || diag.tagAssignmentsDirty) {
+    return false;
+  }
+  if (autoPullInProgress) return false;
+  if (useStore.getState().draft) return false;
+  if (isUserActivelyEditing()) return false;
+
+  const sincePull = msSinceLastPull();
+  if (sincePull !== null && sincePull < AUTO_PULL_MIN_INTERVAL_MS) return false;
+
+  return true;
+}
+
+/** Bezpieczny auto-pull — używa tej samej ścieżki co manualny refresh. */
+export async function tryAutoCloudRefresh(): Promise<boolean> {
+  if (!canAutoCloudRefresh()) return false;
+
+  autoPullInProgress = true;
+  try {
+    const result = await forceCloudRefresh();
+    if (result.ok) lastAutoPullAt = new Date().toISOString();
+    return result.ok;
+  } finally {
+    autoPullInProgress = false;
+  }
 }
 
 /** Pełny pull z chmury — zastępuje lokalny cache itemów (Sync v2). */

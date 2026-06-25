@@ -8,6 +8,7 @@ import { MobileShell } from "@/components/mobile/MobileShell";
 import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
+import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
   const isMobile = useIsMobile();
   const [todoOpen, setTodoOpen] = useState(true);
   useReminderScheduler();
+  useAutoCloudRefresh();
 
   useEffect(() => {
     document.title = "DoDo";
