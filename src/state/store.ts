@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings, TeamMember, UserTag } from "@/types";
-import { filterVisibleItems } from "@/lib/items";
+import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import {
@@ -19,7 +19,6 @@ import {
   stripGoogleGroups,
 } from "@/lib/groups";
 import { isSharedItem } from "@/lib/share";
-import { isItemDeleted, tombstoneItem } from "@/lib/items";
 import { defaultTagColor, scrubTagIdFromItems, scrubTagIdFromMap } from "@/lib/tags";
 import { baseItemId } from "@/lib/itemId";
 import { normalizeAllDayRange } from "@/lib/allDay";
@@ -314,7 +313,7 @@ export const useStore = create<AppState>()(
         const s = get();
         const baseId = baseItemId(id);
         const item = s.items[baseId];
-        if (!item || item.type !== "task" || isItemDeleted(item)) return;
+        if (!item || isItemDeleted(item) || !itemSupportsTodoDone(item)) return;
         const archive = findArchiveGroup(s.groups);
         if (!archive) return;
         get().patchItem(baseId, patchForTaskDone(item, !item.done, archive.id));

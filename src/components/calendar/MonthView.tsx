@@ -183,7 +183,7 @@ export function MonthView({
                       style={{
                         background: tint(color, 0.18),
                         boxShadow: `inset 2px 0 0 ${color}`,
-                        opacity: shared ? SHARE_CALENDAR_OPACITY : 1,
+                        opacity: shared ? SHARE_CALENDAR_OPACITY : it.done ? 0.5 : 1,
                       }}
                     >
                       {!it.allDay && <span className="text-ink-faint">{fmtTime(it.start)}</span>}

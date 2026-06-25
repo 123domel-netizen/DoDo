@@ -8,6 +8,11 @@ export function filterVisibleItems(items: Iterable<Item>): Item[] {
   return [...items].filter((it) => !isItemDeleted(it));
 }
 
+/** Zadania oraz wydarzenia widoczne na liście ToDo można oznaczać jako wykonane. */
+export function itemSupportsTodoDone(item: Pick<Item, "type" | "showInTodo">): boolean {
+  return item.type === "task" || (item.type === "event" && item.showInTodo);
+}
+
 /** Merge przy pull/realtime — last-write-wins z poprawnym rozstrzyganiem tombstone. */
 export function mergeItemOnSync(local: Item | undefined, remote: Item): Item {
   if (!local) return remote;

@@ -20,7 +20,7 @@ import {
   updateSharedItemContent,
   updateOwnParticipationReminders,
 } from "@/lib/share";
-import { isItemDeleted } from "@/lib/items";
+import { isItemDeleted, itemSupportsTodoDone } from "@/lib/items";
 import { rejectItemParticipation, teamMemberLabel, updateOwnParticipationStatus } from "@/lib/team";
 import { ATTACHMENT_TOO_LARGE_MESSAGE, isAttachmentTooLarge } from "@/lib/attachments";
 import { effectiveReminders, reminderDisplayLabel } from "@/lib/reminders";
@@ -281,7 +281,7 @@ export function ItemEditorPanel() {
         <div className="ml-auto flex items-center gap-1.5">
           {!shareMode && (
             <>
-              {it.type === "task" && !isDraft && (
+              {itemSupportsTodoDone(it) && !isDraft && (
                 <button
                   onClick={() =>
                     isDraft ? update({ done: !it.done }) : toggleTaskDone(it.id)

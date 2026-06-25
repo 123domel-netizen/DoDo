@@ -20,6 +20,7 @@ import { defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } f
 import { isToday, isPast, isTomorrow, addMonths, subDays } from "date-fns";
 import { expandItemsForRange, hasRecurrence, itemsForUpcomingEventsList } from "@/lib/recurrence";
 import { baseItemId } from "@/lib/itemId";
+import { itemSupportsTodoDone } from "@/lib/items";
 import { TodayDashboardPanel } from "@/components/dashboard/TodayDashboardPanel";
 
 type SideTab = "tasks" | "events" | "today";
@@ -414,13 +415,17 @@ export function TodoRow({
       }`}
       style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
     >
-      <input
-        type="checkbox"
-        checked={item.done}
-        onChange={onToggle}
-        disabled={shared}
-        className={`mt-0.5 h-4 w-4 shrink-0 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
-      />
+      {itemSupportsTodoDone(item) ? (
+        <input
+          type="checkbox"
+          checked={item.done}
+          onChange={onToggle}
+          disabled={shared}
+          className={`mt-0.5 h-4 w-4 shrink-0 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
+        />
+      ) : (
+        <span className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      )}
       <div className="min-w-0 flex-1 cursor-pointer" onClick={onOpen}>
         <div className={`text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"}`}>
           {item.title || "(bez tytułu)"}
