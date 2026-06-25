@@ -3,7 +3,6 @@ import { addDays, addMonths, startOfDay } from "date-fns";
 import {
   ChevronLeft,
   ChevronRight,
-  Plus,
   Settings2,
   Bell,
   LogOut,
@@ -14,7 +13,6 @@ import { useStore } from "@/state/store";
 import type { CalendarViewKind } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
-import { groupIdForNewItem } from "@/lib/groups";
 import { enablePush, ensureLocalNotificationPermission, pushSupported } from "@/lib/push";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
@@ -39,7 +37,6 @@ interface ToolbarProps {
 export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
-  const startDraft = useStore((s) => s.startDraft);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags" | "sync">("view");
 
@@ -64,17 +61,6 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   };
 
   const goToday = () => setSettings({ anchorDate: startOfDay(new Date()).toISOString() });
-
-  const quickAdd = () => {
-    const start = new Date();
-    start.setMinutes(Math.round(start.getMinutes() / 30) * 30, 0, 0);
-    startDraft({
-      type: "event",
-      start: start.toISOString(),
-      end: new Date(start.getTime() + 3600000).toISOString(),
-      groupId: groupIdForNewItem(),
-    });
-  };
 
   const enableNotifications = async () => {
     if (cloudEnabled && pushSupported()) {
@@ -169,13 +155,6 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
           title="Panel zadań"
         >
           {todoOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-        </button>
-
-        <button
-          onClick={quickAdd}
-          className="flex items-center gap-1 rounded-lg bg-accent-grad px-3 py-1.5 text-sm font-semibold text-white shadow-glow transition hover:brightness-110"
-        >
-          <Plus size={16} /> Dodaj
         </button>
       </div>
 

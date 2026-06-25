@@ -7,6 +7,7 @@ import {
   Paperclip,
   Plus,
   SlidersHorizontal,
+  Sun,
   Users,
 } from "lucide-react";
 import { useStore } from "@/state/store";
@@ -20,8 +21,9 @@ import { defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } f
 import { isToday, isPast, isTomorrow, addMonths, subDays } from "date-fns";
 import { expandItemsForRange, hasRecurrence, itemsForUpcomingEventsList } from "@/lib/recurrence";
 import { baseItemId } from "@/lib/itemId";
+import { TodayDashboardPanel } from "@/components/dashboard/TodayDashboardPanel";
 
-type SideTab = "tasks" | "events";
+type SideTab = "tasks" | "events" | "today";
 
 export function TodoPanel() {
   const itemsMap = useStore((s) => s.items);
@@ -118,6 +120,21 @@ export function TodoPanel() {
     setDraftTitle("");
   };
 
+  const openTaskDraft = () => {
+    startDraft(newTaskBase());
+  };
+
+  const openEventDraft = () => {
+    const start = new Date();
+    start.setMinutes(Math.round(start.getMinutes() / 30) * 30, 0, 0);
+    startDraft({
+      type: "event",
+      start: start.toISOString(),
+      end: new Date(start.getTime() + 3600000).toISOString(),
+      groupId: groupIdForNewItem(),
+    });
+  };
+
   const activeTasks = useMemo(() => {
     const seen = new Set<string>();
     let n = 0;
@@ -133,29 +150,43 @@ export function TodoPanel() {
   const counterLabel =
     tab === "events"
       ? `${upcomingEvents.length} nadchodzących`
-      : inArchiveView
-        ? `${todos.length} zakończonych`
-        : `${activeTasks} aktywnych`;
+      : tab === "tasks"
+        ? inArchiveView
+          ? `${todos.length} zakończonych`
+          : `${activeTasks} aktywnych`
+        : null;
 
   return (
     <div className="flex h-full flex-col bg-surface/95">
       <div className="pointer-events-none h-0.5 shrink-0 bg-gradient-to-r from-accent/30 via-accent/10 to-transparent" />
       <div className="flex items-center gap-2 border-b border-line/80 bg-surface-raised/40 px-3 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-lg border border-line bg-surface-raised p-0.5">
-          <TabButton
+        <div className="flex min-w-0 flex-1 items-stretch gap-1 rounded-xl border border-line bg-surface-raised p-1">
+          <PanelTab
             active={tab === "tasks"}
             onClick={() => setTab("tasks")}
-            icon={<ListChecks size={14} />}
+            icon={<ListChecks size={16} />}
             label="Zadania"
+            onAdd={openTaskDraft}
+            addLabel="Dodaj zadanie"
           />
-          <TabButton
+          <PanelTab
             active={tab === "events"}
             onClick={() => setTab("events")}
-            icon={<CalendarClock size={14} />}
+            icon={<CalendarClock size={16} />}
             label="Wydarzenia"
+            onAdd={openEventDraft}
+            addLabel="Dodaj wydarzenie"
+          />
+          <PanelTab
+            active={tab === "today"}
+            onClick={() => setTab("today")}
+            icon={<Sun size={16} />}
+            label="Dziś"
           />
         </div>
-        <span className="shrink-0 text-xs text-ink-faint">{counterLabel}</span>
+        {counterLabel && (
+          <span className="hidden shrink-0 text-xs text-ink-faint sm:inline">{counterLabel}</span>
+        )}
       </div>
 
       {tab === "tasks" && !inArchiveView && (
@@ -184,8 +215,13 @@ export function TodoPanel() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto thin-scrollbar p-2">
-        {tab === "tasks" ? (
+      {tab === "today" ? (
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <TodayDashboardPanel />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 overflow-y-auto overflow-x-hidden thin-scrollbar p-2">
+          {tab === "tasks" ? (
           <>
             {todos.length === 0 && (
               <div className="px-2 py-6 text-center text-sm text-ink-faint">
@@ -239,33 +275,62 @@ export function TodoPanel() {
             </div>
           </>
         )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function TabButton({
+function PanelTab({
   active,
   onClick,
   icon,
   label,
+  onAdd,
+  addLabel,
 }: {
   active: boolean;
   onClick: () => void;
   icon: ReactNode;
   label: string;
+  onAdd?: () => void;
+  addLabel?: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
-        active ? "bg-accent text-white shadow-glow" : "text-ink-light hover:text-ink"
+    <div
+      className={`flex min-w-0 flex-1 items-stretch overflow-hidden rounded-lg transition ${
+        active ? "bg-accent shadow-glow" : "bg-transparent"
       }`}
     >
-      {icon}
-      <span className="truncate">{label}</span>
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        className={`flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-2 text-sm font-medium transition ${
+          active ? "text-white" : "text-ink-light hover:bg-surface-overlay hover:text-ink"
+        }`}
+      >
+        {icon}
+        <span className="truncate">{label}</span>
+      </button>
+      {onAdd && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAdd();
+          }}
+          className={`flex min-h-11 w-10 shrink-0 items-center justify-center border-l transition ${
+            active
+              ? "border-white/25 text-white hover:bg-white/15"
+              : "border-line text-ink-light hover:bg-surface-overlay hover:text-ink"
+          }`}
+          aria-label={addLabel ?? `Dodaj: ${label}`}
+          title={addLabel ?? `Dodaj: ${label}`}
+        >
+          <Plus size={16} strokeWidth={2.25} />
+        </button>
+      )}
+    </div>
   );
 }
 
