@@ -9,7 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useStore } from "@/state/store";
-import type { Attachment, ChecklistItem, Item, Participant, Reminder, TeamMember } from "@/types";
+import type { Attachment, ChecklistItem, Item, Participant, ParticipantStatus, Reminder, TeamMember } from "@/types";
 import { uid, defaultTaskDueRange, calendarBlockFromDeadline, itemDurationMinutes } from "@/lib/factory";
 import { parseChecklistPaste, shouldParseChecklistPaste } from "@/lib/checklistPaste";
 import { participantFromTeamMember, PARTICIPANT_STATUS_LABELS } from "@/lib/participants";
@@ -21,7 +21,7 @@ import {
   updateOwnParticipationReminders,
 } from "@/lib/share";
 import { isItemDeleted } from "@/lib/items";
-import { rejectItemParticipation, teamMemberLabel } from "@/lib/team";
+import { rejectItemParticipation, teamMemberLabel, updateOwnParticipationStatus } from "@/lib/team";
 import { ATTACHMENT_TOO_LARGE_MESSAGE, isAttachmentTooLarge } from "@/lib/attachments";
 import { effectiveReminders, reminderDisplayLabel } from "@/lib/reminders";
 import {
@@ -279,20 +279,7 @@ export function ItemEditorPanel() {
         )}
 
         <div className="ml-auto flex items-center gap-1.5">
-          {shareMode ? (
-            <button
-              type="button"
-              onClick={() => {
-                void rejectItemParticipation(it.id).then(() => {
-                  removeSharedItem(it.id);
-                  setEditing(null);
-                });
-              }}
-              className="flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-light transition hover:bg-red-500/10 hover:text-red-400"
-            >
-              Odrzuć udział
-            </button>
-          ) : (
+          {!shareMode && (
             <>
               {it.type === "task" && !isDraft && (
                 <button
@@ -345,6 +332,12 @@ export function ItemEditorPanel() {
           value={it.title}
           readOnly={shareMode}
           onChange={(e) => update({ title: e.target.value })}
+          onKeyDown={(e) => {
+            if (isDraft && e.key === "Enter") {
+              e.preventDefault();
+              if (canAdd) commitDraft();
+            }
+          }}
           placeholder="Bez tytułu"
           autoFocus={!shareMode && !isMobile}
           className={`mb-3 w-full border-0 bg-transparent text-2xl font-semibold text-ink outline-none placeholder:font-normal placeholder:text-ink-faint ${
@@ -557,7 +550,19 @@ export function ItemEditorPanel() {
               : undefined
           }
         >
-          {shareMode || teamMembers.length === 0 ? (
+          {shareMode ? (
+            <ShareParticipantsList
+              participants={it.participants}
+              itemId={it.id}
+              authUserId={authUserId}
+              authUserEmail={authUserEmail}
+              onRejected={() => {
+                removeSharedItem(it.id);
+                setEditing(null);
+              }}
+              onParticipantsChange={(participants) => patchItem(it.id, { participants })}
+            />
+          ) : teamMembers.length === 0 ? (
             <ParticipantsReadOnly participants={it.participants} />
           ) : (
             <TeamParticipantsEditor
@@ -800,6 +805,125 @@ function ParticipantsReadOnly({ participants }: { participants: Participant[] })
   );
 }
 
+function isOwnParticipant(
+  p: Participant,
+  authUserId: string | null,
+  authUserEmail: string | null,
+): boolean {
+  if (authUserId && p.userId === authUserId) return true;
+  if (authUserEmail && p.email?.toLowerCase() === authUserEmail.toLowerCase()) return true;
+  return false;
+}
+
+function participationMenuOptions(
+  status: ParticipantStatus,
+): { label: string; next: ParticipantStatus; danger?: boolean }[] {
+  if (status === "rejected") return [];
+  if (status === "invited" || status === "accepted") {
+    return [
+      { label: "W realizacji", next: "active" },
+      { label: "Odrzuć udział", next: "rejected", danger: true },
+    ];
+  }
+  return [{ label: "Odrzuć udział", next: "rejected", danger: true }];
+}
+
+function ShareParticipantsList({
+  participants,
+  itemId,
+  authUserId,
+  authUserEmail,
+  onRejected,
+  onParticipantsChange,
+}: {
+  participants: Participant[];
+  itemId: string;
+  authUserId: string | null;
+  authUserEmail: string | null;
+  onRejected: () => void;
+  onParticipantsChange: (participants: Participant[]) => void;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  if (participants.length === 0) {
+    return <span className="text-xs text-ink-faint">Brak uczestników</span>;
+  }
+
+  const applyStatus = async (status: ParticipantStatus) => {
+    if (status === "rejected") {
+      const res = await rejectItemParticipation(itemId);
+      if (!res.error) onRejected();
+      return;
+    }
+    const res = await updateOwnParticipationStatus(itemId, status);
+    if (!res.error) {
+      onParticipantsChange(
+        participants.map((p) =>
+          isOwnParticipant(p, authUserId, authUserEmail) ? { ...p, status } : p,
+        ),
+      );
+    }
+    setOpenId(null);
+  };
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {participants.map((p) => {
+        const status = p.status ?? "invited";
+        const own = isOwnParticipant(p, authUserId, authUserEmail);
+        const menu = own ? participationMenuOptions(status) : [];
+        const rejected = status === "rejected";
+
+        if (!own || menu.length === 0) {
+          return <ParticipantChip key={p.id} participant={p} />;
+        }
+
+        return (
+          <div key={p.id} className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenId((id) => (id === p.id ? null : p.id))}
+              className={`inline-flex items-center gap-0.5 rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink transition hover:bg-surface-raised ${
+                rejected ? "opacity-60" : ""
+              }`}
+            >
+              {p.name || p.email}
+              <span className="text-[10px] text-ink-faint">
+                · {PARTICIPANT_STATUS_LABELS[status]}
+              </span>
+              <ChevronDown size={12} className="text-ink-faint" />
+            </button>
+            {openId === p.id && (
+              <>
+                <button
+                  type="button"
+                  className="fixed inset-0 z-40 cursor-default"
+                  aria-label="Zamknij menu"
+                  onClick={() => setOpenId(null)}
+                />
+                <div className="absolute left-0 top-full z-50 mt-1 min-w-[10rem] overflow-hidden rounded-lg border border-line bg-surface-overlay py-1 shadow-pop">
+                  {menu.map((opt) => (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      onClick={() => void applyStatus(opt.next)}
+                      className={`block w-full px-3 py-2 text-left text-sm transition hover:bg-surface-raised ${
+                        opt.danger ? "text-red-400" : "text-ink"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ParticipantChip({ participant: p }: { participant: Participant }) {
   const status = p.status ?? "invited";
   const rejected = status === "rejected";
@@ -905,6 +1029,38 @@ function ChecklistEditor({
   assignees: ChecklistAssignee[];
   onChange: (c: ChecklistItem[]) => void;
 }) {
+  const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const [focusItemId, setFocusItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!focusItemId) return;
+    const el = inputRefs.current.get(focusItemId);
+    if (el) {
+      el.focus();
+      setFocusItemId(null);
+    }
+  }, [checklist, focusItemId]);
+
+  const newChecklistItem = (): ChecklistItem => ({
+    id: uid(),
+    text: "",
+    done: false,
+  });
+
+  const addPointAtEnd = () => {
+    const item = newChecklistItem();
+    onChange([...checklist, item]);
+    setFocusItemId(item.id);
+  };
+
+  const insertPointAfter = (index: number) => {
+    const item = newChecklistItem();
+    const next = [...checklist];
+    next.splice(index + 1, 0, item);
+    onChange(next);
+    setFocusItemId(item.id);
+  };
+
   const applyPaste = (text: string, replaceIndex?: number) => {
     const parsed = parseChecklistPaste(text);
     if (parsed.length === 0) return;
@@ -952,9 +1108,19 @@ function ChecklistEditor({
                 className="h-3.5 w-3.5 accent-accent"
               />
               <input
+                ref={(el) => {
+                  if (el) inputRefs.current.set(c.id, el);
+                  else inputRefs.current.delete(c.id);
+                }}
                 value={c.text}
                 placeholder="Punkt…"
                 onPaste={(e) => onPaste(e, index)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.shiftKey) return;
+                  e.preventDefault();
+                  if (!c.text.trim()) return;
+                  insertPointAfter(index);
+                }}
                 onChange={(e) =>
                   onChange(checklist.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)))
                 }
@@ -983,7 +1149,7 @@ function ChecklistEditor({
       )}
       <button
         type="button"
-        onClick={() => onChange([...checklist, { id: uid(), text: "", done: false }])}
+        onClick={addPointAtEnd}
         className="flex items-center gap-1 text-sm text-ink-light transition hover:text-ink"
       >
         <Plus size={14} /> Punkt
