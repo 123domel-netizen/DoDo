@@ -925,7 +925,8 @@ function ChecklistEditor({
     }
 
     const base = [...checklist];
-    if (base.length > 0 && !base[base.length - 1].text.trim()) base.pop();
+    const trimmedLast = base.length > 0 && !base[base.length - 1].text.trim();
+    if (trimmedLast) base.pop();
     onChange([...base, ...newItems]);
   };
 
@@ -937,58 +938,63 @@ function ChecklistEditor({
   };
 
   return (
-    <div onPaste={(e) => onPaste(e)}>
-      {checklist.length === 0 && (
-        <div className="mb-2 rounded-lg border border-dashed border-line px-3 py-2 text-xs text-ink-faint">
-          Wklej listę (Ctrl+V) — myślniki, przecinki, linie z godzinami
+    <div className="space-y-2">
+      {checklist.length > 0 && (
+        <div className="space-y-1">
+          {checklist.map((c, index) => (
+            <div key={c.id} className="group flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={c.done}
+                onChange={(e) =>
+                  onChange(checklist.map((x) => (x.id === c.id ? { ...x, done: e.target.checked } : x)))
+                }
+                className="h-3.5 w-3.5 accent-accent"
+              />
+              <input
+                value={c.text}
+                placeholder="Punkt…"
+                onPaste={(e) => onPaste(e, index)}
+                onChange={(e) =>
+                  onChange(checklist.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)))
+                }
+                className={`min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-ink-faint ${
+                  c.done ? "text-ink-faint line-through" : "text-ink"
+                }`}
+              />
+              <ChecklistAssigneePicker
+                assignees={assignees}
+                assignedUserId={c.assignedUserId}
+                onChange={(assignedUserId) =>
+                  onChange(
+                    checklist.map((x) => (x.id === c.id ? { ...x, assignedUserId } : x)),
+                  )
+                }
+              />
+              <button
+                onClick={() => onChange(checklist.filter((x) => x.id !== c.id))}
+                className="text-ink-faint opacity-0 transition group-hover:opacity-100 hover:text-ink"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
-      <div className="space-y-1">
-        {checklist.map((c, index) => (
-          <div key={c.id} className="group flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={c.done}
-              onChange={(e) =>
-                onChange(checklist.map((x) => (x.id === c.id ? { ...x, done: e.target.checked } : x)))
-              }
-              className="h-3.5 w-3.5 accent-accent"
-            />
-            <input
-              value={c.text}
-              placeholder="Punkt…"
-              onPaste={(e) => onPaste(e, index)}
-              onChange={(e) =>
-                onChange(checklist.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)))
-              }
-              className={`min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-ink-faint ${
-                c.done ? "text-ink-faint line-through" : "text-ink"
-              }`}
-            />
-            <ChecklistAssigneePicker
-              assignees={assignees}
-              assignedUserId={c.assignedUserId}
-              onChange={(assignedUserId) =>
-                onChange(
-                  checklist.map((x) => (x.id === c.id ? { ...x, assignedUserId } : x)),
-                )
-              }
-            />
-            <button
-              onClick={() => onChange(checklist.filter((x) => x.id !== c.id))}
-              className="text-ink-faint opacity-0 transition group-hover:opacity-100 hover:text-ink"
-            >
-              <X size={13} />
-            </button>
-          </div>
-        ))}
-      </div>
       <button
+        type="button"
         onClick={() => onChange([...checklist, { id: uid(), text: "", done: false }])}
-        className="mt-1 flex items-center gap-1 text-sm text-ink-light transition hover:text-ink"
+        className="flex items-center gap-1 text-sm text-ink-light transition hover:text-ink"
       >
         <Plus size={14} /> Punkt
       </button>
+      <div
+        tabIndex={0}
+        onPaste={(e) => onPaste(e)}
+        className="rounded-lg border border-dashed border-line px-3 py-2 text-xs text-ink-faint outline-none transition focus:border-line-strong focus:bg-surface-raised/50"
+      >
+        Wklej listę (Ctrl+V) — myślniki, przecinki, linie z godzinami
+      </div>
     </div>
   );
 }

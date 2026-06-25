@@ -398,6 +398,14 @@ export function TodoRow({
   const shared = isSharedItem(item);
   const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#9b9a97");
   const reminderCount = effectiveReminders(item).length;
+  const showMeta =
+    item.hasDueDate ||
+    shared ||
+    Boolean(group) ||
+    item.checklist.length > 0 ||
+    reminderCount > 0 ||
+    item.participants.length > 0 ||
+    item.attachments.length > 0;
 
   return (
     <div
@@ -422,43 +430,43 @@ export function TodoRow({
             </span>
           )}
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-faint">
-          {item.hasDueDate ? (
-            <span className={overdue ? "font-medium text-red-400" : ""}>
-              {item.allDay ? fmt(due, "EEE d MMM") : fmt(due, "EEE d MMM, HH:mm")}
-            </span>
-          ) : (
-            <span>Bez terminu</span>
-          )}
-          {shared ? (
-            <span className="inline-flex items-center gap-1 text-ink-faint">SHARE</span>
-          ) : group ? (
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-              {group.name}
-            </span>
-          ) : null}
-          {item.checklist.length > 0 && (
-            <span className="inline-flex items-center gap-0.5">
-              <CheckSquare size={11} /> {checklistDone}/{item.checklist.length}
-            </span>
-          )}
-          {reminderCount > 0 && (
-            <span className="inline-flex items-center gap-0.5">
-              <Bell size={11} /> {reminderCount}
-            </span>
-          )}
-          {item.participants.length > 0 && (
-            <span className="inline-flex items-center gap-0.5">
-              <Users size={11} /> {item.participants.length}
-            </span>
-          )}
-          {item.attachments.length > 0 && (
-            <span className="inline-flex items-center gap-0.5">
-              <Paperclip size={11} /> {item.attachments.length}
-            </span>
-          )}
-        </div>
+        {showMeta && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-faint">
+            {item.hasDueDate && (
+              <span className={overdue ? "font-medium text-red-400" : ""}>
+                {item.allDay ? fmt(due, "EEE d MMM") : fmt(due, "EEE d MMM, HH:mm")}
+              </span>
+            )}
+            {shared ? (
+              <span className="inline-flex items-center gap-1 text-ink-faint">SHARE</span>
+            ) : group ? (
+              <span className="inline-flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                {group.name}
+              </span>
+            ) : null}
+            {item.checklist.length > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <CheckSquare size={11} /> {checklistDone}/{item.checklist.length}
+              </span>
+            )}
+            {reminderCount > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <Bell size={11} /> {reminderCount}
+              </span>
+            )}
+            {item.participants.length > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <Users size={11} /> {item.participants.length}
+              </span>
+            )}
+            {item.attachments.length > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <Paperclip size={11} /> {item.attachments.length}
+              </span>
+            )}
+          </div>
+        )}
       </div>
       {!item.showInCalendar && (
         <button
