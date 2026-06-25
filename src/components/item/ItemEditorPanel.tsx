@@ -654,11 +654,11 @@ export function ItemEditorPanel() {
         <button
           type="button"
           onClick={closeEditor}
-          className="fixed right-4 z-[60] inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface-overlay/95 px-4 text-sm font-medium text-ink shadow-pop backdrop-blur-sm transition hover:bg-surface-raised"
+          className="fixed right-4 z-[60] inline-flex min-h-[3.25rem] items-center gap-2 rounded-full bg-accent-grad px-5 py-3 text-sm font-semibold text-white shadow-glow transition hover:brightness-110"
           style={{ bottom: "max(1rem, env(safe-area-inset-bottom, 0px))" }}
           aria-label="Wróć"
         >
-          <ArrowLeft size={18} aria-hidden />
+          <ArrowLeft size={20} aria-hidden />
           Wróć
         </button>
       )}
