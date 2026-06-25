@@ -1,21 +1,35 @@
-import { useMemo } from "react";
-import { addDays } from "date-fns";
+import { useMemo, useState, useCallback } from "react";
+import { addDays, addMonths, startOfDay } from "date-fns";
 import { useStore } from "@/state/store";
 import { getViewDays } from "@/lib/time";
-import { itemMatchesGroupFilter } from "@/lib/groups";
+import { itemMatchesGroupFilter, groupIdForNewItem } from "@/lib/groups";
 import { collectReminderMarkers } from "@/lib/reminders";
 import { collectDeadlineMarkers } from "@/lib/deadlines";
 import { expandItemsForRange } from "@/lib/recurrence";
 import { withNormalizedAllDay } from "@/lib/allDay";
+import { defaultEventDraftRange } from "@/lib/eventDraft";
+import { useIsMobile } from "@/hooks/useMediaQuery";
+import { useHorizontalSwipe } from "@/hooks/useHorizontalSwipe";
+import { CalendarDaySheet } from "@/components/mobile/CalendarDaySheet";
 import { TimeGrid } from "./TimeGrid";
 import { MonthView } from "./MonthView";
 import type { CalendarViewKind, Group } from "@/types";
 
-export function CalendarView({ view: viewOverride }: { view?: CalendarViewKind } = {}) {
+export function CalendarView({
+  view: viewOverride,
+  onViewDay,
+}: {
+  view?: CalendarViewKind;
+  onViewDay?: (day: Date) => void;
+} = {}) {
   const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const startDraft = useStore((s) => s.startDraft);
   const itemsMap = useStore((s) => s.items);
   const groupsArr = useStore((s) => s.groups);
   const activeGroupFilter = useStore((s) => s.activeGroupFilter);
+  const isMobile = useIsMobile();
+  const [daySheetDate, setDaySheetDate] = useState<Date | null>(null);
 
   const view = viewOverride ?? settings.view;
 
@@ -57,8 +71,76 @@ export function CalendarView({ view: viewOverride }: { view?: CalendarViewKind }
     [filteredItems],
   );
 
+  const shiftCalendar = useCallback(
+    (dir: number) => {
+      const anchor = new Date(settings.anchorDate);
+      if (view === "month") {
+        setSettings({ anchorDate: startOfDay(addMonths(anchor, dir)).toISOString() });
+      } else if (view === "week" || view === "eleven") {
+        setSettings({ anchorDate: startOfDay(addDays(anchor, dir * 7)).toISOString() });
+      } else {
+        setSettings({ anchorDate: startOfDay(addDays(anchor, dir)).toISOString() });
+      }
+    },
+    [view, settings.anchorDate, setSettings],
+  );
+
+  const swipeHandlers = useHorizontalSwipe({
+    enabled: isMobile && viewOverride !== undefined,
+    onSwipeLeft: () => shiftCalendar(1),
+    onSwipeRight: () => shiftCalendar(-1),
+  });
+
+  const openDaySheet = useCallback((day: Date) => {
+    setDaySheetDate(startOfDay(day));
+  }, []);
+
+  const closeDaySheet = useCallback(() => setDaySheetDate(null), []);
+
+  const handleViewDay = useCallback(
+    (day: Date) => {
+      const d = startOfDay(day);
+      if (onViewDay) onViewDay(d);
+      else setSettings({ view: "day", anchorDate: d.toISOString() });
+      setDaySheetDate(null);
+    },
+    [onViewDay, setSettings],
+  );
+
+  const handleAddEventFromDay = useCallback(
+    (day: Date) => {
+      const { start, end } = defaultEventDraftRange(day);
+      startDraft({
+        type: "event",
+        start,
+        end,
+        groupId: groupIdForNewItem(),
+      });
+      setDaySheetDate(null);
+    },
+    [startDraft],
+  );
+
+  const handleSlotTap = useCallback(
+    (day: Date, minutes: number) => {
+      const { start, end } = defaultEventDraftRange(day, minutes);
+      startDraft({
+        type: "event",
+        start,
+        end,
+        groupId: groupIdForNewItem(),
+      });
+    },
+    [startDraft],
+  );
+
+  const mobileCalendar = isMobile && viewOverride !== undefined;
+
   return (
-    <div className="flex h-full flex-col bg-surface">
+    <div
+      className="flex h-full flex-col bg-surface touch-pan-y"
+      {...(mobileCalendar ? swipeHandlers : {})}
+    >
       {view === "month" ? (
         <MonthView
           days={days}
@@ -66,6 +148,8 @@ export function CalendarView({ view: viewOverride }: { view?: CalendarViewKind }
           reminderMarkers={reminderMarkers}
           deadlineMarkers={deadlineMarkers}
           groups={groups}
+          isMobile={mobileCalendar}
+          onDayTap={mobileCalendar ? openDaySheet : undefined}
         />
       ) : (
         <TimeGrid
@@ -74,6 +158,17 @@ export function CalendarView({ view: viewOverride }: { view?: CalendarViewKind }
           reminderMarkers={reminderMarkers}
           deadlineMarkers={deadlineMarkers}
           groups={groups}
+          isMobile={mobileCalendar}
+          onDayHeaderTap={mobileCalendar ? openDaySheet : undefined}
+          onSlotTap={mobileCalendar ? handleSlotTap : undefined}
+        />
+      )}
+      {daySheetDate && (
+        <CalendarDaySheet
+          day={daySheetDate}
+          onClose={closeDaySheet}
+          onViewDay={() => handleViewDay(daySheetDate)}
+          onAddEvent={() => handleAddEventFromDay(daySheetDate)}
         />
       )}
     </div>

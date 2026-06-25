@@ -34,9 +34,9 @@ export type ParticipantStatus = "invited" | "accepted" | "rejected" | "active";
 
 export const PARTICIPANT_STATUS_LABELS: Record<ParticipantStatus, string> = {
   invited: "Zaproszony",
-  accepted: "Akceptował",
-  rejected: "Odrzucił",
-  active: "Działam",
+  accepted: "W realizacji",
+  rejected: "Odrzucony",
+  active: "W realizacji",
 };
 
 export interface TeamMember {

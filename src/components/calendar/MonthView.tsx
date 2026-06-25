@@ -19,9 +19,19 @@ interface MonthViewProps {
   reminderMarkers: ReminderMarker[];
   deadlineMarkers: DeadlineMarker[];
   groups: Record<string, Group>;
+  isMobile?: boolean;
+  onDayTap?: (day: Date) => void;
 }
 
-export function MonthView({ days, items, reminderMarkers, deadlineMarkers, groups }: MonthViewProps) {
+export function MonthView({
+  days,
+  items,
+  reminderMarkers,
+  deadlineMarkers,
+  groups,
+  isMobile,
+  onDayTap,
+}: MonthViewProps) {
   const anchor = new Date(useStore((s) => s.settings.anchorDate));
   const setEditing = useStore((s) => s.setEditing);
   const startDraft = useStore((s) => s.startDraft);
@@ -72,18 +82,30 @@ export function MonthView({ days, items, reminderMarkers, deadlineMarkers, group
               key={i}
               className={`group min-h-[96px] border-b border-r border-line p-1 transition-colors hover:bg-surface-raised ${
                 weekendBg ? "" : inMonth ? "bg-surface" : "bg-canvas"
-              }`}
+              } ${isMobile && onDayTap ? "cursor-pointer" : ""}`}
               style={weekendBg ? { backgroundColor: weekendBg } : undefined}
-              onDoubleClick={() => {
-                const start = new Date(startOfDay(day));
-                start.setHours(9, 0, 0, 0);
-                startDraft({
-                  type: "event",
-                  start: start.toISOString(),
-                  end: new Date(start.getTime() + 3600000).toISOString(),
-                  groupId: groupIdForNewItem(),
-                });
-              }}
+              onClick={
+                isMobile && onDayTap
+                  ? (e) => {
+                      if ((e.target as HTMLElement).closest("button")) return;
+                      onDayTap(day);
+                    }
+                  : undefined
+              }
+              onDoubleClick={
+                !isMobile
+                  ? () => {
+                      const start = new Date(startOfDay(day));
+                      start.setHours(9, 0, 0, 0);
+                      startDraft({
+                        type: "event",
+                        start: start.toISOString(),
+                        end: new Date(start.getTime() + 3600000).toISOString(),
+                        groupId: groupIdForNewItem(),
+                      });
+                    }
+                  : undefined
+              }
             >
               <div className="mb-1 flex items-center justify-between">
                 <span
@@ -107,7 +129,11 @@ export function MonthView({ days, items, reminderMarkers, deadlineMarkers, group
                     return (
                       <button
                         key={marker.key}
-                        onClick={() => setEditing(marker.item.id)}
+                        data-no-swipe
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditing(marker.item.id);
+                        }}
                         title={`${marker.item.title || "Zadanie"} · przypomnienie ${fmtTime(marker.at)}`}
                         className="flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] text-amber-200"
                         style={{ background: tint(color, 0.18) }}
@@ -123,7 +149,11 @@ export function MonthView({ days, items, reminderMarkers, deadlineMarkers, group
                     return (
                       <button
                         key={marker.key}
-                        onClick={() => setEditing(marker.item.id)}
+                        data-no-swipe
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditing(marker.item.id);
+                        }}
                         title={deadlineTooltipTitle(marker.item)}
                         className={`flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] text-red-400 ${
                           dim ? "opacity-50" : ""
@@ -142,7 +172,11 @@ export function MonthView({ days, items, reminderMarkers, deadlineMarkers, group
                   return (
                     <button
                       key={it.id}
-                      onClick={() => setEditing(it.id)}
+                      data-no-swipe
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditing(it.id);
+                      }}
                       className={`flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] text-ink ${
                         shared ? "border border-dashed border-line" : ""
                       }`}

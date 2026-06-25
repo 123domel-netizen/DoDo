@@ -52,6 +52,9 @@ interface TimeGridProps {
   reminderMarkers: ReminderMarker[];
   deadlineMarkers: DeadlineMarker[];
   groups: Record<string, Group>;
+  isMobile?: boolean;
+  onDayHeaderTap?: (day: Date) => void;
+  onSlotTap?: (day: Date, minutes: number) => void;
 }
 
 interface Override {
@@ -75,7 +78,16 @@ interface DragState {
   moved: boolean;
 }
 
-export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups }: TimeGridProps) {
+export function TimeGrid({
+  days,
+  items,
+  reminderMarkers,
+  deadlineMarkers,
+  groups,
+  isMobile,
+  onDayHeaderTap,
+  onSlotTap,
+}: TimeGridProps) {
   const settings = useStore((s) => s.settings);
   const { dayStartHour, dayEndHour, hourHeight } = settings;
   const patchItem = useStore((s) => s.patchItem);
@@ -97,6 +109,15 @@ export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups
   const overrideRef = useRef<Override | null>(null);
   const draftRef = useRef<{ dayIndex: number; fromMin: number; toMin: number } | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const mobileTapRef = useRef<{
+    x: number;
+    y: number;
+    dayIndex: number;
+    minutes: number;
+    active: boolean;
+  } | null>(null);
+
+  const TAP_MOVE_CANCEL = 12;
 
   const setOverride = (v: Override | null) => {
     overrideRef.current = v;
@@ -322,6 +343,35 @@ export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups
     return item;
   }
 
+  function onGridPointerDown(e: RPointerEvent) {
+    if (e.button !== 0) return;
+
+    if (isMobile && onSlotTap) {
+      const { dayIndex, minutes } = pointerInfo(e.clientX, e.clientY);
+      mobileTapRef.current = { x: e.clientX, y: e.clientY, dayIndex, minutes, active: true };
+      const onMove = (ev: PointerEvent) => {
+        const t = mobileTapRef.current;
+        if (!t?.active) return;
+        const dx = Math.abs(ev.clientX - t.x);
+        const dy = Math.abs(ev.clientY - t.y);
+        if (dx > TAP_MOVE_CANCEL || dy > TAP_MOVE_CANCEL) t.active = false;
+      };
+      const onUp = () => {
+        const t = mobileTapRef.current;
+        mobileTapRef.current = null;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (!t?.active) return;
+        onSlotTap(days[t.dayIndex], t.minutes);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      return;
+    }
+
+    beginDrag(e, "create");
+  }
+
   const hours = range(dayEndHour - dayStartHour + 1).map((i) => dayStartHour + i);
 
   return (
@@ -331,15 +381,8 @@ export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups
         {days.map((day, i) => {
           const today = isSameDay(day, new Date());
           const weekendBg = weekendColumnBg(day);
-          return (
-            <div
-              key={i}
-              className="min-w-0 px-1 py-2 text-center"
-              style={{
-                flex: dayColumnWeight(day),
-                backgroundColor: weekendBg,
-              }}
-            >
+          const headerContent = (
+            <>
               <div className="text-[11px] uppercase tracking-wide text-ink-faint">
                 {fmt(day, "EEEEEE")}
               </div>
@@ -350,6 +393,33 @@ export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups
               >
                 {fmt(day, "d")}
               </div>
+            </>
+          );
+          const headerStyle = {
+            flex: dayColumnWeight(day),
+            backgroundColor: weekendBg,
+          };
+          if (isMobile && onDayHeaderTap && days.length > 1) {
+            return (
+              <button
+                key={i}
+                type="button"
+                data-no-swipe
+                onClick={() => onDayHeaderTap(day)}
+                className="min-w-0 px-1 py-2 text-center transition hover:bg-surface-overlay"
+                style={headerStyle}
+              >
+                {headerContent}
+              </button>
+            );
+          }
+          return (
+            <div
+              key={i}
+              className="min-w-0 px-1 py-2 text-center"
+              style={headerStyle}
+            >
+              {headerContent}
             </div>
           );
         })}
@@ -387,10 +457,7 @@ export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups
           <div
             ref={gridRef}
             className="relative flex-1"
-            onPointerDown={(e) => {
-              if (e.button !== 0) return;
-              beginDrag(e, "create");
-            }}
+            onPointerDown={onGridPointerDown}
             onContextMenu={openGridMenu}
           >
             {/* hour lines */}
@@ -462,6 +529,7 @@ export function TimeGrid({ days, items, reminderMarkers, deadlineMarkers, groups
                 return (
                   <div
                     key={item.id}
+                    data-no-swipe
                     className={`group absolute select-none overflow-hidden rounded-md border px-1.5 py-0.5 text-[11px] leading-tight text-ink shadow-card transition-shadow hover:shadow-pop ${
                       empty ? "border-dashed" : ""
                     } ${vis.shared ? "border-dashed" : ""}`}
@@ -746,6 +814,7 @@ function AllDayBand({
           return (
             <button
               key={item.id}
+              data-no-swipe
               onClick={() => onOpen(item.id)}
               className="absolute flex items-center gap-0.5 overflow-hidden rounded-md border border-dashed text-left text-[11px] font-semibold text-ink"
               style={{

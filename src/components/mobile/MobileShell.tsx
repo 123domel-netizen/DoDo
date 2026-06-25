@@ -295,7 +295,13 @@ export function MobileShell() {
           mobileView === "today" ? (
             <MobileTodayPanel />
           ) : (
-            <CalendarView view={mobileView} />
+            <CalendarView
+              view={mobileView}
+              onViewDay={(day) => {
+                setSettings({ anchorDate: startOfDay(day).toISOString() });
+                setMobileView("day");
+              }}
+            />
           )
         ) : (
           <TodoPanel />
