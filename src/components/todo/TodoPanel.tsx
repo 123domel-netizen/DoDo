@@ -6,7 +6,6 @@ import {
   ListChecks,
   Paperclip,
   Plus,
-  SlidersHorizontal,
   Sun,
   Users,
 } from "lucide-react";
@@ -29,12 +28,10 @@ export function TodoPanel() {
   const itemsMap = useStore((s) => s.items);
   const groupsArr = useStore((s) => s.groups);
   const activeGroupFilter = useStore((s) => s.activeGroupFilter);
-  const addItem = useStore((s) => s.addItem);
   const startDraft = useStore((s) => s.startDraft);
   const patchItem = useStore((s) => s.patchItem);
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
-  const [draftTitle, setDraftTitle] = useState("");
   const [tab, setTab] = useState<SideTab>("tasks");
 
   const groups = useMemo(() => {
@@ -105,21 +102,6 @@ export function TodoPanel() {
     groupId: groupIdForNewItem(),
   });
 
-  const addQuickTask = () => {
-    const title = draftTitle.trim();
-    if (!title) return;
-    addItem({ ...newTaskBase(), title });
-    setDraftTitle("");
-  };
-
-  const openDetailsDraft = () => {
-    startDraft({
-      ...newTaskBase(),
-      title: draftTitle.trim(),
-    });
-    setDraftTitle("");
-  };
-
   const openTaskDraft = () => {
     startDraft(newTaskBase());
   };
@@ -159,23 +141,19 @@ export function TodoPanel() {
   return (
     <div className="flex h-full flex-col bg-surface/95">
       <div className="pointer-events-none h-0.5 shrink-0 bg-gradient-to-r from-accent/30 via-accent/10 to-transparent" />
-      <div className="flex items-center gap-2 border-b border-line/80 bg-surface-raised/40 px-3 py-2">
-        <div className="flex min-w-0 flex-1 items-stretch gap-1 rounded-xl border border-line bg-surface-raised p-1">
+      <div className="border-b border-line/80 bg-surface-raised/40 px-3 py-2">
+        <div className="flex min-w-0 items-stretch gap-1 rounded-xl border border-line bg-surface-raised p-1">
           <PanelTab
             active={tab === "tasks"}
             onClick={() => setTab("tasks")}
             icon={<ListChecks size={16} />}
             label="Zadania"
-            onAdd={openTaskDraft}
-            addLabel="Dodaj zadanie"
           />
           <PanelTab
             active={tab === "events"}
             onClick={() => setTab("events")}
             icon={<CalendarClock size={16} />}
             label="Wydarzenia"
-            onAdd={openEventDraft}
-            addLabel="Dodaj wydarzenie"
           />
           <PanelTab
             active={tab === "today"}
@@ -184,35 +162,22 @@ export function TodoPanel() {
             label="Dziś"
           />
         </div>
-        {counterLabel && (
-          <span className="hidden shrink-0 text-xs text-ink-faint sm:inline">{counterLabel}</span>
-        )}
       </div>
 
-      {tab === "tasks" && !inArchiveView && (
-        <div className="border-b border-line p-2">
-          <div className="flex items-center gap-1.5">
-            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 transition focus-within:border-line-strong">
-              <Plus size={15} className="shrink-0 text-ink-faint" />
-              <input
-                value={draftTitle}
-                onChange={(e) => setDraftTitle(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addQuickTask()}
-                placeholder="Nowe zadanie…"
-                className="w-full border-0 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={openDetailsDraft}
-              title="Dodaj zadanie ze szczegółami"
-              className="flex shrink-0 items-center gap-1 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-xs font-medium text-ink-light transition hover:border-line-strong hover:text-ink"
-            >
-              <SlidersHorizontal size={14} />
-              Szczegóły
-            </button>
-          </div>
-        </div>
+      {tab === "tasks" && (
+        <PanelActionBar
+          addLabel="Dodaj zadanie"
+          onAdd={inArchiveView ? undefined : openTaskDraft}
+          counterLabel={counterLabel ?? ""}
+        />
+      )}
+
+      {tab === "events" && (
+        <PanelActionBar
+          addLabel="Dodaj wydarzenie"
+          onAdd={openEventDraft}
+          counterLabel={counterLabel ?? ""}
+        />
       )}
 
       {tab === "today" ? (
@@ -227,7 +192,7 @@ export function TodoPanel() {
               <div className="px-2 py-6 text-center text-sm text-ink-faint">
                 {inArchiveView
                   ? "Brak zarchiwizowanych zadań."
-                  : "Brak zadań. Dodaj pierwsze powyżej."}
+                  : "Brak zadań. Użyj „Dodaj zadanie” powyżej."}
               </div>
             )}
             <div className="space-y-1">
@@ -286,50 +251,52 @@ function PanelTab({
   onClick,
   icon,
   label,
-  onAdd,
-  addLabel,
 }: {
   active: boolean;
   onClick: () => void;
   icon: ReactNode;
   label: string;
-  onAdd?: () => void;
-  addLabel?: string;
 }) {
   return (
-    <div
-      className={`flex min-w-0 flex-1 items-stretch overflow-hidden rounded-lg transition ${
-        active ? "bg-accent shadow-glow" : "bg-transparent"
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-2 text-sm font-medium transition ${
+        active
+          ? "bg-accent text-white shadow-glow"
+          : "text-ink-light hover:bg-surface-overlay hover:text-ink"
       }`}
     >
-      <button
-        type="button"
-        onClick={onClick}
-        className={`flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-2 text-sm font-medium transition ${
-          active ? "text-white" : "text-ink-light hover:bg-surface-overlay hover:text-ink"
-        }`}
-      >
-        {icon}
-        <span className="truncate">{label}</span>
-      </button>
-      {onAdd && (
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function PanelActionBar({
+  addLabel,
+  onAdd,
+  counterLabel,
+}: {
+  addLabel: string;
+  onAdd?: () => void;
+  counterLabel: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 border-b border-line px-3 py-2">
+      {onAdd ? (
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onAdd();
-          }}
-          className={`flex min-h-11 w-10 shrink-0 items-center justify-center border-l transition ${
-            active
-              ? "border-white/25 text-white hover:bg-white/15"
-              : "border-line text-ink-light hover:bg-surface-overlay hover:text-ink"
-          }`}
-          aria-label={addLabel ?? `Dodaj: ${label}`}
-          title={addLabel ?? `Dodaj: ${label}`}
+          onClick={onAdd}
+          className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent-grad px-3 py-1.5 text-sm font-semibold text-white shadow-glow transition hover:brightness-110"
         >
           <Plus size={16} strokeWidth={2.25} />
+          {addLabel}
         </button>
+      ) : (
+        <span className="min-h-9" />
       )}
+      <span className="ml-auto shrink-0 text-xs text-ink-faint">{counterLabel}</span>
     </div>
   );
 }
