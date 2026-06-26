@@ -323,7 +323,7 @@ export function ItemEditorPanel() {
 
       <div
         className={`flex-1 overflow-y-auto overflow-x-hidden thin-scrollbar px-5 ${
-          isMobile && isDraft ? "pb-28" : isMobile ? "pb-24" : "pb-5"
+          isMobile ? "pb-28" : "pb-20"
         }`}
       >
         <SectionHeader>Podstawowe</SectionHeader>
@@ -606,62 +606,93 @@ export function ItemEditorPanel() {
         )}
       </div>
 
-      {isDraft && isMobile && (
-        <div
-          className="flex shrink-0 gap-2 border-t border-line bg-surface px-3 pt-3"
-          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
-        >
-          <button
-            type="button"
-            onClick={discardDraft}
-            className="inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line bg-surface-overlay px-4 text-sm font-medium text-ink shadow-pop transition hover:bg-surface-raised"
-          >
-            <ArrowLeft size={18} aria-hidden />
-            Wróć
-          </button>
-          <button
-            type="button"
-            onClick={commitDraft}
-            disabled={!canAdd}
-            className="inline-flex min-h-12 min-w-0 flex-1 items-center justify-center rounded-full bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-          >
-            {canAdd
-              ? it.type === "task"
-                ? "Dodaj zadanie"
-                : "Dodaj wydarzenie"
-              : "Wpisz tytuł, aby dodać"}
-          </button>
-        </div>
-      )}
+      <EditorBottomBar
+        isMobile={isMobile}
+        isDraft={isDraft}
+        item={it}
+        canAdd={canAdd}
+        shareMode={shareMode}
+        onCancel={isDraft ? discardDraft : closeEditor}
+        onCommit={commitDraft}
+        onMarkDone={() => toggleTaskDone(it.id)}
+      />
+    </div>
+  );
+}
 
-      {isDraft && !isMobile && (
-        <div className="border-t border-line p-3">
-          <button
-            onClick={commitDraft}
-            disabled={!canAdd}
-            className="w-full min-h-11 rounded-lg bg-accent-grad px-3 py-2.5 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-          >
-            {canAdd
-              ? it.type === "task"
-                ? "Dodaj zadanie"
-                : "Dodaj wydarzenie"
-              : "Wpisz tytuł, aby dodać"}
-          </button>
-        </div>
-      )}
+function EditorBottomBar({
+  isMobile,
+  isDraft,
+  item,
+  canAdd,
+  shareMode,
+  onCancel,
+  onCommit,
+  onMarkDone,
+}: {
+  isMobile: boolean;
+  isDraft: boolean;
+  item: Item;
+  canAdd: boolean;
+  shareMode: boolean;
+  onCancel: () => void;
+  onCommit: () => void;
+  onMarkDone: () => void;
+}) {
+  const showMarkDoneBtn = !isDraft && !shareMode && itemSupportsTodoDone(item);
+  const addLabel = canAdd
+    ? item.type === "task"
+      ? "Dodaj zadanie"
+      : "Dodaj wydarzenie"
+    : "Wpisz tytuł, aby dodać";
 
-      {isMobile && !isDraft && (
-        <button
-          type="button"
-          onClick={closeEditor}
-          className="fixed right-4 z-[60] inline-flex min-h-[3.25rem] items-center gap-2 rounded-full bg-accent-grad px-5 py-3 text-sm font-semibold text-white shadow-glow transition hover:brightness-110"
-          style={{ bottom: "max(1rem, env(safe-area-inset-bottom, 0px))" }}
-          aria-label="Wróć"
-        >
-          <ArrowLeft size={20} aria-hidden />
-          Wróć
+  const barClass = "flex shrink-0 gap-2 border-t border-line bg-surface px-3 pt-3";
+  const safeAreaStyle = isMobile
+    ? { paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }
+    : { paddingBottom: "0.75rem" };
+
+  const backSecondaryClass = isMobile
+    ? "inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line bg-surface-overlay px-4 text-sm font-medium text-ink shadow-pop transition hover:bg-surface-raised"
+    : "inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-line bg-surface-overlay px-4 text-sm font-medium text-ink transition hover:bg-surface-raised";
+
+  const primaryClass = isMobile
+    ? "inline-flex min-h-12 min-w-0 flex-1 items-center justify-center rounded-full bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+    : "inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-lg bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none";
+
+  const markDoneActiveClass = primaryClass;
+
+  const markDoneDoneClass = isMobile
+    ? "inline-flex min-h-12 min-w-0 flex-1 items-center justify-center rounded-full border border-line bg-surface-overlay px-4 text-sm font-medium text-ink-faint opacity-60 shadow-pop transition hover:bg-surface-raised hover:opacity-80"
+    : "inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-surface-overlay px-4 text-sm font-medium text-ink-faint opacity-60 transition hover:bg-surface-raised hover:opacity-80";
+
+  const backOnly = !isDraft && !showMarkDoneBtn;
+
+  return (
+    <div className={barClass} style={safeAreaStyle}>
+      {isDraft && (
+        <button type="button" onClick={onCommit} disabled={!canAdd} className={primaryClass}>
+          {addLabel}
         </button>
       )}
+      {!isDraft && showMarkDoneBtn && (
+        <button
+          type="button"
+          onClick={onMarkDone}
+          className={item.done ? markDoneDoneClass : markDoneActiveClass}
+          aria-pressed={item.done}
+        >
+          {item.done ? "☑ Wykonane" : "☐ Oznacz"}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onCancel}
+        className={`${backSecondaryClass}${backOnly ? " ml-auto" : ""}`}
+        aria-label="Wróć"
+      >
+        <ArrowLeft size={18} aria-hidden />
+        Wróć
+      </button>
     </div>
   );
 }
