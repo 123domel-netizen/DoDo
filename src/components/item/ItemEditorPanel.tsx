@@ -55,6 +55,7 @@ import {
   X,
   AlignLeft,
   Check,
+  ClipboardPaste,
   Tag,
   Tags,
 } from "lucide-react";
@@ -1062,6 +1063,7 @@ function ChecklistEditor({
 }) {
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
+  const [pasteHint, setPasteHint] = useState<string | null>(null);
 
   useEffect(() => {
     if (!focusItemId) return;
@@ -1121,7 +1123,30 @@ function ChecklistEditor({
     const text = e.clipboardData.getData("text/plain");
     if (!shouldParseChecklistPaste(text)) return;
     e.preventDefault();
+    setPasteHint(null);
     applyPaste(text, replaceIndex);
+  };
+
+  const pasteFromClipboard = async () => {
+    setPasteHint(null);
+    try {
+      if (!navigator.clipboard?.readText) {
+        setPasteHint("Schowek niedostępny w tej przeglądarce.");
+        return;
+      }
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) {
+        setPasteHint("Schowek jest pusty.");
+        return;
+      }
+      if (!shouldParseChecklistPaste(text)) {
+        setPasteHint("Nie rozpoznano listy — użyj myślników, przecinków lub wielu linii.");
+        return;
+      }
+      applyPaste(text);
+    } catch {
+      setPasteHint("Brak dostępu do schowka.");
+    }
   };
 
   return (
@@ -1188,10 +1213,21 @@ function ChecklistEditor({
       <div
         tabIndex={0}
         onPaste={(e) => onPaste(e)}
-        className="rounded-lg border border-dashed border-line px-3 py-2 text-xs text-ink-faint outline-none transition focus:border-line-strong focus:bg-surface-raised/50"
+        className="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2 outline-none transition focus:border-line-strong focus:bg-surface-raised/50"
       >
-        Wklej listę (Ctrl+V) — myślniki, przecinki, linie z godzinami
+        <span className="min-w-0 flex-1 text-xs text-ink-faint">
+          Wklej listę (Ctrl+V) — myślniki, przecinki, linie z godzinami
+        </span>
+        <button
+          type="button"
+          onClick={() => void pasteFromClipboard()}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line bg-surface-overlay px-2 py-1 text-xs font-medium text-ink-light transition hover:border-line-strong hover:bg-surface-raised hover:text-ink"
+        >
+          <ClipboardPaste size={12} aria-hidden />
+          Wklej
+        </button>
       </div>
+      {pasteHint && <p className="text-xs text-ink-faint">{pasteHint}</p>}
     </div>
   );
 }
