@@ -5,7 +5,8 @@ import { baseItemId } from "@/lib/itemId";
 import { nativeRecurrenceToRruleLines } from "@/lib/recurrenceRules";
 import type { GoogleRecurrenceException, Item } from "@/types";
 
-export type ExpandScope = "calendar" | "todo";
+/** "any" — bez filtra widoczności (np. przypomnienia, które mają działać zawsze). */
+export type ExpandScope = "calendar" | "todo" | "any";
 
 export interface ItemOccurrence {
   occurrenceId: string;
@@ -82,6 +83,7 @@ function occurrenceEnd(item: Item, start: Date): Date {
 }
 
 function matchesScope(item: Item, scope: ExpandScope): boolean {
+  if (scope === "any") return true;
   if (scope === "calendar") return item.showInCalendar;
   return item.showInTodo;
 }

@@ -61,7 +61,9 @@ komputerze oraz dostawać powiadomienia, podłącz darmowy projekt Supabase.
 
 1. Utwórz projekt na https://supabase.com (darmowy tier wystarcza dla ~10 osób).
 2. W SQL Editor uruchom migracje po kolei: `0001_init.sql`, `0005_allowed_users.sql`
-   (oraz późniejsze wg potrzeb: `0002`–`0004`).
+   i dalsze (`0006`–`0012`); `0002_cron.sql` przy konfiguracji push.
+   Migracje `0003`/`0004` (Google) są nieaktualne — pomiń; `0007`/`0008` czyszczą
+   pozostałości integracji Google, jeśli kiedyś była włączona.
 3. Skopiuj `.env.example` do `.env` i uzupełnij:
 
    ```env
@@ -75,9 +77,9 @@ komputerze oraz dostawać powiadomienia, podłącz darmowy projekt Supabase.
 
 ### Logowanie Google (whitelist ~10 osób)
 
-**To nie to samo co integracja kalendarza** (ikonka łańcucha w pasku). Logowanie
-otwiera dostęp do aplikacji; integracja kalendarza synchronizuje wydarzenia/zadania
-z Google Calendar/Tasks po zalogowaniu.
+Logowanie kontem Google otwiera dostęp do aplikacji (Supabase Auth). Dawna
+integracja synchronizacji z Google Calendar/Tasks została **usunięta**
+(migracje `0007`/`0008`) — dane nie trafiają do kalendarza ani zadań Google.
 
 1. **Supabase Dashboard** → Authentication → Providers → **Google** → włącz,
    wklej Client ID i Secret z Google Cloud Console.
@@ -170,57 +172,28 @@ z Google Calendar/Tasks po zalogowaniu.
 4. W aplikacji kliknij ikonę dzwonka, aby zezwolić na powiadomienia i
    zarejestrować urządzenie.
 
-> Gdy aplikacja jest otwarta, przypomnienia pokazują się też lokalnie (bez
-> backendu). Push z serwera działa również gdy aplikacja jest zamknięta.
+> Gdy aplikacja jest otwarta i urządzenie **nie ma** aktywnej subskrypcji push,
+> przypomnienia pokazują się lokalnie (bez backendu). Push z serwera działa
+> również gdy aplikacja jest zamknięta; urządzenie z aktywnym pushem nie duperuje
+> powiadomień lokalnie.
 
-## Integracja Google Calendar + Google Tasks
+Zakres powiadomień (lokalnych i push):
 
-Wymaga zalogowania w aplikacji (Google + whitelist). Tokeny syncu kalendarza są
-przechowywane zaszyfrowane po stronie serwera (Edge Functions). Po zalogowaniu
-kliknij **ikonę łańcucha** w pasku → **Połącz Google**.
+- przypomnienia względne („10 min przed") i absolutne (konkretna data/godzina),
+- wydarzenia **cykliczne** — przypomnienie dla każdego wystąpienia (RRULE),
+- **deadline** — powiadomienie 24 h przed terminem i w chwili terminu,
+- przypomnienia **osobiste uczestników** współdzielonych wpisów (SHARE).
 
-### 1. Google Cloud Console
+> **Uwaga (integracja z Google):** dawna synchronizacja z Google Calendar/Tasks
+> została usunięta. Powiadomienia na telefonie NIE wymagają Google — Web Push
+> na Androidzie/Chrome i tak jest dostarczany przez infrastrukturę Google (FCM),
+> ale bez żadnych wpisów w kalendarzu ani zadaniach Google.
 
-1. Utwórz projekt → **APIs & Services** → włącz **Google Calendar API** i
-   **Google Tasks API**.
-2. **OAuth consent screen** (External) → dodaj scope: `calendar.events`, `tasks`.
-3. **Credentials** → OAuth 2.0 Client ID (Web) — możesz użyć **tego samego**
-   klienta co logowanie Supabase; dodaj oba redirect URI:
-   - Logowanie: `https://<ref>.supabase.co/auth/v1/callback`
-   - Sync kalendarza: `https://<PROJECT_REF>.supabase.co/functions/v1/google-oauth?action=callback`
-
-### 2. Migracje bazy
-
-W SQL Editor uruchom po kolei:
-
-- `supabase/migrations/0003_google_sync.sql`
-- `supabase/migrations/0004_google_cron.sql` (podmień `<PROJECT_REF>` i
-  `<SERVICE_ROLE_KEY>`)
-
-### 3. Edge Functions
+## Testy
 
 ```bash
-supabase functions deploy google-oauth --no-verify-jwt
-supabase functions deploy google-sync --no-verify-jwt
-supabase functions deploy google-webhook --no-verify-jwt
-
-supabase secrets set \
-  GOOGLE_CLIENT_ID=... \
-  GOOGLE_CLIENT_SECRET=... \
-  GOOGLE_TOKEN_ENCRYPTION_KEY=<64 znaki hex, np. openssl rand -hex 32> \
-  GOOGLE_OAUTH_REDIRECT_URI=https://<PROJECT_REF>.supabase.co/functions/v1/google-oauth?action=callback \
-  GOOGLE_OAUTH_SUCCESS_URL=/?google=connected \
-  GOOGLE_OAUTH_APP_ORIGIN=https://twoja-domena.pl \
-  GOOGLE_WEBHOOK_URL=https://<PROJECT_REF>.supabase.co/functions/v1/google-webhook
+npm test        # vitest — logika merge/sync, cykle, scheduler przypomnień
 ```
-
-### 4. W aplikacji
-
-Ikona ustawień (zębatka) → sekcja **Integracja Google** → **Połącz Google**.
-
-Synchronizacja jest dwukierunkowa: zmiany w appce trafiają do Google, zmiany w
-Google wracają przez cron (co 5 min) i webhook Kalendarza. Zadania z checklistą
-→ subtaski w Google Tasks.
 
 ## Instalacja jako aplikacja (PWA)
 
@@ -251,13 +224,13 @@ src/
     item/       ItemEditor (formularz wydarzenia/zadania)
     ui/         Modal
     Toolbar.tsx AuthGate.tsx
-  lib/          time, format, factory, store-storage, supabase, cloud, push, googleSync
+  lib/          time, format, factory, supabase, cloud, push, reminders, reminderScheduler
   state/        store.ts (Zustand + persist)
   hooks/        useReminderScheduler
   sw.ts         service worker (offline cache + push)
 supabase/
-  migrations/   0001_init.sql … 0005_allowed_users.sql
-  functions/    send-reminders, auth-allowlist, google-oauth, google-sync, google-webhook
+  migrations/   0001_init.sql … 0012_user_tags.sql
+  functions/    send-reminders, auth-allowlist
 ```
 
 ## Uwaga o widoku „9 dni”

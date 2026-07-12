@@ -33,7 +33,7 @@ import {
   sortGroupsForRail,
 } from "@/lib/groups";
 import { SHARE_GROUP_COLOR } from "@/lib/share";
-import { enablePush, ensureLocalNotificationPermission, pushSupported } from "@/lib/push";
+import { enableNotificationsFlow } from "@/lib/push";
 import { cloudEnabled } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
 import { TeamSettings } from "@/components/settings/TeamSettings";
@@ -117,16 +117,8 @@ export function MobileShell() {
   };
 
   const enableNotifications = async () => {
-    if (cloudEnabled && pushSupported()) {
-      const res = await enablePush();
-      if (!res.ok) {
-        const local = await ensureLocalNotificationPermission();
-        if (!local) alert(res.reason ?? "Nie udało się włączyć powiadomień.");
-      }
-    } else {
-      const ok = await ensureLocalNotificationPermission();
-      if (!ok) alert("Brak zgody na powiadomienia w przeglądarce.");
-    }
+    const res = await enableNotificationsFlow();
+    alert(res.message);
   };
 
   const userGroups = sortGroupsForRail(groups);

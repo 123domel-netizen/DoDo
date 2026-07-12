@@ -13,3 +13,6 @@ yarn-debug.log*
 yarn-error.log*
 
 tsconfig.tsbuildinfo
+tsconfig.node.tsbuildinfo
+dev-dist
+supabase/.temp

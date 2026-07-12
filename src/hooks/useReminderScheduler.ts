@@ -1,59 +1,66 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useStore } from "@/state/store";
-import { isItemDeleted } from "@/lib/items";
-import { effectiveReminders, reminderFireTimeMs } from "@/lib/reminders";
 import { isSharedItem, updateOwnParticipationReminders } from "@/lib/share";
-import { showLocalNotification } from "@/lib/push";
-import { fmt, fmtTime } from "@/lib/format";
+import { hasActivePushSubscription, showLocalNotification } from "@/lib/push";
+import {
+  collectDueNotifications,
+  loadFiredLog,
+  saveFiredLog,
+} from "@/lib/reminderScheduler";
 
 /**
  * Local reminder scheduler. While the app (tab or installed PWA) is running it
- * checks reminders every 30s and fires a local notification when due. The
- * server-side Edge Function handles delivery when the app is closed.
+ * checks reminders every 30s and fires a local notification when due.
+ *
+ * Gdy urządzenie ma aktywną subskrypcję Web Push, lokalne odpalanie jest
+ * pomijane — powiadomienie dosyła serwer (send-reminders) i uniknie się
+ * duplikatów. Scheduler lokalny zostaje jako fallback bez pusha.
  */
 export function useReminderScheduler() {
   const patchItem = useStore((s) => s.patchItem);
+  const firedLogRef = useRef<Map<string, number> | null>(null);
 
   useEffect(() => {
-    const tick = () => {
+    const storage = typeof localStorage !== "undefined" ? localStorage : null;
+    if (!firedLogRef.current) firedLogRef.current = loadFiredLog(storage);
+    const firedLog = firedLogRef.current;
+
+    const tick = async () => {
+      // Push aktywny → serwer wysyła na to urządzenie; nie dublujemy lokalnie.
+      if (await hasActivePushSubscription()) return;
+
       const now = Date.now();
       const items = Object.values(useStore.getState().items);
-      for (const item of items) {
-        if (isItemDeleted(item) || item.done) continue;
-        const reminders = effectiveReminders(item);
-        for (const r of reminders) {
-          if (r.firedAt) continue;
-          const fireAt = reminderFireTimeMs(item, r);
-          if (fireAt === null) continue;
-          if (fireAt <= now && now - fireAt < 5 * 60_000) {
-            const when = r.remindAt
-              ? fmt(new Date(r.remindAt), "d MMM, HH:mm")
-              : fmtTime(item.start);
-            showLocalNotification(
-              item.title || "Wydarzenie",
-              r.remindAt
-                ? `Przypomnienie o ${when}`
-                : `${item.type === "task" ? "Zadanie" : "Wydarzenie"} o ${when}`,
-            );
-            if (isSharedItem(item)) {
-              const next = reminders.map((x) =>
-                x.id === r.id ? { ...x, firedAt: new Date().toISOString() } : x,
-              );
-              patchItem(item.id, { personalReminders: next });
-              void updateOwnParticipationReminders(item.id, next);
-            } else {
-              patchItem(item.id, {
-                reminders: item.reminders.map((x) =>
-                  x.id === r.id ? { ...x, firedAt: new Date().toISOString() } : x,
-                ),
-              });
-            }
-          }
+      const due = collectDueNotifications(items, now, (key) => firedLog.has(key));
+      if (!due.length) return;
+
+      for (const n of due) {
+        showLocalNotification(n.title, n.body);
+        firedLog.set(n.key, now);
+
+        if (!n.markFiredReminderId) continue;
+        const item = useStore.getState().items[n.itemId];
+        if (!item) continue;
+        const firedAtIso = new Date().toISOString();
+        if (isSharedItem(item)) {
+          const next = (item.personalReminders ?? []).map((x) =>
+            x.id === n.markFiredReminderId ? { ...x, firedAt: firedAtIso } : x,
+          );
+          patchItem(item.id, { personalReminders: next });
+          void updateOwnParticipationReminders(item.id, next);
+        } else {
+          patchItem(item.id, {
+            reminders: item.reminders.map((x) =>
+              x.id === n.markFiredReminderId ? { ...x, firedAt: firedAtIso } : x,
+            ),
+          });
         }
       }
+      saveFiredLog(storage, firedLog, now);
     };
-    tick();
-    const id = setInterval(tick, 30_000);
+
+    void tick();
+    const id = setInterval(() => void tick(), 30_000);
     return () => clearInterval(id);
   }, [patchItem]);
 }

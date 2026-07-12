@@ -30,6 +30,23 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event: FetchEvent) => {
   const req = event.request;
   if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
+
+  // Nawigacje (index.html): network-first — po deployu użytkownik dostaje nową
+  // wersję od razu, a cache służy tylko jako fallback offline.
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put("/", copy));
+          return res;
+        })
+        .catch(() => caches.match("/") as Promise<Response>),
+    );
+    return;
+  }
+
+  // Zasoby (hashowane pliki buildu): cache-first.
   event.respondWith(
     caches.match(req).then(
       (cached) =>

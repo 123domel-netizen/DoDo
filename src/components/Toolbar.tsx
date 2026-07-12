@@ -13,7 +13,7 @@ import { useStore } from "@/state/store";
 import type { CalendarViewKind } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
-import { enablePush, ensureLocalNotificationPermission, pushSupported } from "@/lib/push";
+import { enableNotificationsFlow } from "@/lib/push";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
 import { Logo } from "@/components/brand/Logo";
@@ -63,16 +63,8 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const goToday = () => setSettings({ anchorDate: startOfDay(new Date()).toISOString() });
 
   const enableNotifications = async () => {
-    if (cloudEnabled && pushSupported()) {
-      const res = await enablePush();
-      if (!res.ok) {
-        const local = await ensureLocalNotificationPermission();
-        if (!local) alert(res.reason ?? "Nie udało się włączyć powiadomień.");
-      }
-    } else {
-      const ok = await ensureLocalNotificationPermission();
-      if (!ok) alert("Brak zgody na powiadomienia w przeglądarce.");
-    }
+    const res = await enableNotificationsFlow();
+    alert(res.message);
   };
 
   return (

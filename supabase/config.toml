@@ -1,9 +1,9 @@
 # Konfiguracja Supabase CLI.
-# Najważniejsze: funkcje wywoływane bez sesji użytkownika (Auth Hook, cron,
-# webhooki Google) MUSZĄ mieć wyłączoną weryfikację JWT. Inaczej brama Edge
-# odrzuca wywołanie z błędem typu „Hook requires authorization token", bo
-# GoTrue / cron / Google nie wysyłają tokenu JWT Supabase — uwierzytelniają się
-# własnym sekretem (Standard Webhooks) albo nagłówkiem sprawdzanym w funkcji.
+# Najważniejsze: funkcje wywoływane bez sesji użytkownika (Auth Hook, cron)
+# MUSZĄ mieć wyłączoną weryfikację JWT. Inaczej brama Edge odrzuca wywołanie
+# z błędem typu „Hook requires authorization token", bo GoTrue / cron nie
+# wysyłają tokenu JWT Supabase — uwierzytelniają się własnym sekretem
+# (Standard Webhooks) albo nagłówkiem sprawdzanym w funkcji.
 
 project_id = "kalendarz-todo"
 
@@ -14,16 +14,4 @@ verify_jwt = false
 
 # Cron wysyłający przypomnienia push.
 [functions.send-reminders]
-verify_jwt = false
-
-# OAuth integracji Google Calendar/Tasks (callback z Google).
-[functions.google-oauth]
-verify_jwt = false
-
-# Sync Google — funkcja sama weryfikuje token użytkownika (Authorization).
-[functions.google-sync]
-verify_jwt = false
-
-# Webhook powiadomień push z Google Calendar.
-[functions.google-webhook]
 verify_jwt = false
