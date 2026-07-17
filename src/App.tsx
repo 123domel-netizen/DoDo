@@ -10,12 +10,15 @@ import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
 import { useIsMobile } from "@/hooks/useMediaQuery";
+import { useChatStore } from "@/lib/chat/store";
 
 export default function App() {
   const hydrated = useStore((s) => s.hydrated);
   const editingId = useStore((s) => s.editingId);
   const isMobile = useIsMobile();
   const [todoOpen, setTodoOpen] = useState(true);
+  const chatPanelMode = useChatStore((s) => s.panelMode);
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
   useReminderScheduler();
   useAutoCloudRefresh();
 
@@ -24,7 +27,11 @@ export default function App() {
   }, []);
 
   // The editor lives in the side panel, so opening an item forces the panel open.
-  const panelOpen = todoOpen || Boolean(editingId);
+  // Deep-link do rozmowy (push) też wymusza otwarcie panelu (tryb czatu).
+  const panelOpen =
+    todoOpen ||
+    Boolean(editingId) ||
+    (chatPanelMode === "chat" && Boolean(activeConversationId));
 
   if (!hydrated) {
     return (

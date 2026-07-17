@@ -1,0 +1,195 @@
+import { describe, expect, it } from "vitest";
+import {
+  applyMessageToOverview,
+  markOverviewRead,
+  mergeMessages,
+  overviewTitle,
+  totalUnread,
+  trimList,
+  upsertMessageInList,
+} from "@/lib/chat/feed";
+import type { ChatMessage, ChatOverviewEntry } from "@/lib/chat/types";
+
+function msg(partial: Partial<ChatMessage>): ChatMessage {
+  return {
+    id: "m1",
+    conversationId: "c1",
+    authorUserId: "u1",
+    kind: "text",
+    body: "test",
+    threadRootId: null,
+    replyToMessageId: null,
+    createdAt: "2026-07-17T10:00:00.000Z",
+    editedAt: null,
+    deletedAt: null,
+    ...partial,
+  };
+}
+
+function entry(partial: Partial<ChatOverviewEntry>): ChatOverviewEntry {
+  return {
+    id: "c1",
+    kind: "channel",
+    name: "Dom",
+    description: null,
+    isPublic: false,
+    itemId: null,
+    createdBy: "u1",
+    lastMessageAt: "2026-07-17T09:00:00.000Z",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    myLastReadAt: "2026-07-17T09:00:00.000Z",
+    myNotify: "all",
+    myRole: "member",
+    unreadCount: 0,
+    lastMessage: null,
+    members: [],
+    ...partial,
+  };
+}
+
+describe("upsertMessageInList", () => {
+  it("wstawia w porządku createdAt", () => {
+    const a = msg({ id: "a", createdAt: "2026-07-17T10:00:00.000Z" });
+    const c = msg({ id: "c", createdAt: "2026-07-17T12:00:00.000Z" });
+    const b = msg({ id: "b", createdAt: "2026-07-17T11:00:00.000Z" });
+    const list = upsertMessageInList(upsertMessageInList([a], c), b);
+    expect(list.map((m) => m.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("podmienia po id zachowując znane links/attachments", () => {
+    const original = msg({
+      id: "a",
+      links: [{ itemId: "i1", kind: "created_from" }],
+      attachments: [],
+      sendState: "pending",
+    });
+    // event realtime bez zagnieżdżeń
+    const fromServer = msg({ id: "a", body: "po edycji" });
+    const list = upsertMessageInList([original], fromServer);
+    expect(list).toHaveLength(1);
+    expect(list[0].body).toBe("po edycji");
+    expect(list[0].links).toEqual([{ itemId: "i1", kind: "created_from" }]);
+    expect(list[0].sendState).toBeUndefined();
+  });
+
+  it("mergeMessages jest idempotentne", () => {
+    const a = msg({ id: "a" });
+    const b = msg({ id: "b", createdAt: "2026-07-17T11:00:00.000Z" });
+    const once = mergeMessages([], [a, b]);
+    const twice = mergeMessages(once, [a, b]);
+    expect(twice.map((m) => m.id)).toEqual(["a", "b"]);
+  });
+
+  it("trimList zostawia ogon", () => {
+    const list = [msg({ id: "a" }), msg({ id: "b" }), msg({ id: "c" })];
+    expect(trimList(list, 2).map((m) => m.id)).toEqual(["b", "c"]);
+  });
+});
+
+describe("applyMessageToOverview", () => {
+  const base = { myUserId: "me", activeConversationId: null, documentVisible: true };
+
+  it("bije unread dla cudzej wiadomości w nieaktywnej rozmowie", () => {
+    const incoming = msg({ authorUserId: "other", createdAt: "2026-07-17T10:00:00.000Z" });
+    const { overview, known } = applyMessageToOverview([entry({})], incoming, base);
+    expect(known).toBe(true);
+    expect(overview[0].unreadCount).toBe(1);
+    expect(overview[0].lastMessage?.id).toBe("m1");
+    expect(overview[0].lastMessageAt).toBe(incoming.createdAt);
+  });
+
+  it("nie bije unread dla własnych wiadomości", () => {
+    const incoming = msg({ authorUserId: "me" });
+    const { overview } = applyMessageToOverview([entry({})], incoming, base);
+    expect(overview[0].unreadCount).toBe(0);
+    expect(overview[0].lastMessage?.id).toBe("m1");
+  });
+
+  it("nie bije unread w aktywnej, widocznej rozmowie", () => {
+    const incoming = msg({ authorUserId: "other" });
+    const { overview } = applyMessageToOverview([entry({})], incoming, {
+      ...base,
+      activeConversationId: "c1",
+    });
+    expect(overview[0].unreadCount).toBe(0);
+  });
+
+  it("bije unread w aktywnej rozmowie gdy karta niewidoczna", () => {
+    const incoming = msg({ authorUserId: "other" });
+    const { overview } = applyMessageToOverview([entry({})], incoming, {
+      ...base,
+      activeConversationId: "c1",
+      documentVisible: false,
+    });
+    expect(overview[0].unreadCount).toBe(1);
+  });
+
+  it("odpowiedź w wątku nie zmienia lastMessage ani unread", () => {
+    const incoming = msg({ authorUserId: "other", threadRootId: "root" });
+    const prev = entry({ lastMessage: null });
+    const { overview } = applyMessageToOverview([prev], incoming, base);
+    expect(overview[0].unreadCount).toBe(0);
+    expect(overview[0].lastMessage).toBeNull();
+  });
+
+  it("nieznana rozmowa → known=false", () => {
+    const incoming = msg({ conversationId: "nieznana" });
+    const { known } = applyMessageToOverview([entry({})], incoming, base);
+    expect(known).toBe(false);
+  });
+
+  it("sortuje rozmowy po ostatniej wiadomości", () => {
+    const older = entry({ id: "c1", lastMessageAt: "2026-07-17T08:00:00.000Z" });
+    const newer = entry({ id: "c2", lastMessageAt: "2026-07-17T09:30:00.000Z" });
+    const incoming = msg({
+      conversationId: "c1",
+      authorUserId: "other",
+      createdAt: "2026-07-17T10:00:00.000Z",
+    });
+    const { overview } = applyMessageToOverview([newer, older], incoming, base);
+    expect(overview.map((c) => c.id)).toEqual(["c1", "c2"]);
+  });
+});
+
+describe("markOverviewRead / totalUnread", () => {
+  it("zeruje unread i podbija lastRead tylko w przód", () => {
+    const list = [
+      entry({ id: "c1", unreadCount: 3, myLastReadAt: "2026-07-17T09:00:00.000Z" }),
+      entry({ id: "c2", unreadCount: 2 }),
+    ];
+    const next = markOverviewRead(list, "c1", "2026-07-17T10:00:00.000Z");
+    expect(next[0].unreadCount).toBe(0);
+    expect(next[0].myLastReadAt).toBe("2026-07-17T10:00:00.000Z");
+    expect(next[1].unreadCount).toBe(2);
+    expect(totalUnread(next)).toBe(2);
+  });
+});
+
+describe("overviewTitle", () => {
+  it("kanał → nazwa; item → tytuł itemu; dm → pozostali członkowie", () => {
+    expect(overviewTitle(entry({ kind: "channel", name: "Budowa" }), "me", () => undefined)).toBe(
+      "Budowa",
+    );
+    expect(
+      overviewTitle(
+        entry({ kind: "item", name: null, itemId: "i1" }),
+        "me",
+        () => "Kupić pellet",
+      ),
+    ).toBe("Kupić pellet");
+    expect(
+      overviewTitle(
+        entry({
+          kind: "dm",
+          name: null,
+          members: [
+            { userId: "me", role: "member", displayName: "Ja", avatarUrl: null },
+            { userId: "u2", role: "member", displayName: "Ola", avatarUrl: null },
+          ],
+        }),
+        "me",
+        () => undefined,
+      ),
+    ).toBe("Ola");
+  });
+});

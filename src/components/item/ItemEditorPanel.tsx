@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -56,9 +58,18 @@ import {
   AlignLeft,
   Check,
   ClipboardPaste,
+  MessageSquare,
   Tag,
   Tags,
 } from "lucide-react";
+import { cloudEnabled } from "@/lib/supabase";
+
+// Czat ładowany leniwie — edytor nie płaci za moduł dyskusji, dopóki nietknięty.
+const ItemDiscussion = lazy(() =>
+  import("@/components/chat/ItemDiscussion").then((m) => ({
+    default: m.ItemDiscussion,
+  })),
+);
 
 const REMINDER_MENU_PRESETS: { label: string; minutes: number }[] = [
   { label: "5 minut przed", minutes: 5 },
@@ -586,6 +597,26 @@ export function ItemEditorPanel() {
         >
           <ItemTagsEditor item={it} onChange={handleTagIds} />
         </OptionalRow>
+
+        {/* Dyskusja (CHAT2-ITEM) — tylko zapisane wpisy, wymaga chmury */}
+        {cloudEnabled && !isDraft && (
+          <OptionalRow
+            icon={<MessageSquare size={15} />}
+            label="Dyskusja"
+            hasContent={false}
+            openKey="discussion"
+            open={open}
+            setOpen={setOpen}
+          >
+            <Suspense
+              fallback={
+                <div className="px-1 py-2 text-xs text-ink-faint">Ładowanie…</div>
+              }
+            >
+              <ItemDiscussion itemId={it.id} />
+            </Suspense>
+          </OptionalRow>
+        )}
 
         {!shareMode && (
           <>

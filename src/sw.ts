@@ -63,7 +63,7 @@ self.addEventListener("fetch", (event: FetchEvent) => {
 });
 
 self.addEventListener("push", (event: PushEvent) => {
-  let data: { title?: string; body?: string; url?: string } = {};
+  let data: { title?: string; body?: string; url?: string; tag?: string } = {};
   try {
     data = event.data?.json() ?? {};
   } catch {
@@ -75,6 +75,8 @@ self.addEventListener("push", (event: PushEvent) => {
       body: data.body ?? "",
       icon: "/icon-192.png",
       badge: "/icon-192.png",
+      // tag: czat nadpisuje poprzednie powiadomienie z tej samej rozmowy.
+      ...(data.tag ? { tag: data.tag } : {}),
       data: { url: data.url ?? "/" },
     }),
   );
@@ -86,7 +88,11 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if ("focus" in client) return (client as WindowClient).focus();
+        if ("focus" in client) {
+          // Otwarta aplikacja: nawiguj wewnątrz SPA (hash-router), bez reloadu.
+          (client as WindowClient).postMessage({ type: "navigate", url });
+          return (client as WindowClient).focus();
+        }
       }
       return self.clients.openWindow(url);
     }),

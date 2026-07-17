@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { addDays, addMonths, startOfDay } from "date-fns";
 import {
   Bell,
@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  MessageCircle,
   Plus,
   Settings2,
   Sliders,
@@ -39,8 +40,14 @@ import { signOut } from "@/lib/auth";
 import { TeamSettings } from "@/components/settings/TeamSettings";
 import { TagsSettings } from "@/components/settings/TagsSettings";
 import { SyncSettings } from "@/components/settings/SyncSettings";
+import { useChatStore } from "@/lib/chat/store";
+import { totalUnread } from "@/lib/chat/feed";
 
-type Tab = "dashboard" | "calendar" | "tasks";
+const ChatPanel = lazy(() =>
+  import("@/components/chat/ChatPanel").then((m) => ({ default: m.ChatPanel })),
+);
+
+type Tab = "dashboard" | "calendar" | "tasks" | "chat";
 type MobileCalendarMode = CalendarViewKind | "today";
 
 const MOBILE_VIEWS: { key: MobileCalendarMode; label: string }[] = [
@@ -78,6 +85,14 @@ export function MobileShell() {
   const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags" | "sync">("view");
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
+
+  const chatUnread = useChatStore((s) => (cloudEnabled ? totalUnread(s.overview) : 0));
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
+
+  // Deep-link (push / chip „→ rozmowa") otwiera rozmowę → przełącz na zakładkę czatu.
+  useEffect(() => {
+    if (activeConversationId) setTab("chat");
+  }, [activeConversationId]);
 
   const anchor = new Date(settings.anchorDate);
 
@@ -178,6 +193,15 @@ export function MobileShell() {
           label="Zadania"
           addLabel="Dodaj zadanie"
         />
+        {cloudEnabled && (
+          <TabSegment
+            active={tab === "chat"}
+            onSelect={() => setTab("chat")}
+            icon={<MessageCircle size={16} />}
+            label="Czat"
+            badge={chatUnread}
+          />
+        )}
       </div>
 
       {/* Pasek nawigacji daty + przełącznik widoku (kalendarz) */}
@@ -230,7 +254,8 @@ export function MobileShell() {
         </div>
       )}
 
-      {/* Chipsy filtra grup */}
+      {/* Chipsy filtra grup (nie dotyczą czatu) */}
+      {tab !== "chat" && (
       <div className="flex items-center gap-1.5 overflow-x-auto border-b border-line px-3 py-2 no-scrollbar">
         <GroupChip
           label="Wszystkie"
@@ -278,10 +303,21 @@ export function MobileShell() {
           <Plus size={14} />
         </button>
       </div>
+      )}
 
       {/* Treść */}
       <main className="min-h-0 flex-1 overflow-hidden">
-        {tab === "dashboard" ? (
+        {tab === "chat" ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-xs text-ink-faint">
+                Ładowanie czatu…
+              </div>
+            }
+          >
+            <ChatPanel />
+          </Suspense>
+        ) : tab === "dashboard" ? (
           <MobileDashboard />
         ) : tab === "calendar" ? (
           mobileView === "today" ? (
@@ -418,6 +454,7 @@ function TabSegment({
   icon,
   label,
   addLabel,
+  badge = 0,
 }: {
   active: boolean;
   onSelect: () => void;
@@ -425,6 +462,7 @@ function TabSegment({
   icon: ReactNode;
   label: string;
   addLabel?: string;
+  badge?: number;
 }) {
   return (
     <div
@@ -435,12 +473,17 @@ function TabSegment({
       <button
         type="button"
         onClick={onSelect}
-        className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-xs font-semibold transition sm:gap-1.5 sm:px-2 sm:text-sm ${
+        className={`relative flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-xs font-semibold transition sm:gap-1.5 sm:px-2 sm:text-sm ${
           active ? "text-ink" : "text-ink-light"
         }`}
       >
         {icon}
         <span className="truncate">{label}</span>
+        {badge > 0 && (
+          <span className="absolute -top-0.5 right-0 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-white">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        )}
       </button>
       {onAdd && (
         <button

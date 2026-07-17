@@ -1,0 +1,146 @@
+import type { ChatMessage, ChatOverviewEntry } from "@/lib/chat/types";
+
+/** Klucz porządku feedu: czas serwera, remis rozstrzyga id. */
+function isAfter(a: ChatMessage, b: ChatMessage): boolean {
+  if (a.createdAt !== b.createdAt) return a.createdAt > b.createdAt;
+  return a.id > b.id;
+}
+
+/**
+ * Scal wiadomość z listą (rosnąco po createdAt). Ten sam id → podmiana z
+ * zachowaniem zagnieżdżeń (links/attachments), których event realtime nie niesie.
+ */
+export function upsertMessageInList(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
+  const idx = list.findIndex((m) => m.id === msg.id);
+  if (idx >= 0) {
+    const prev = list[idx];
+    const merged: ChatMessage = {
+      ...prev,
+      ...msg,
+      links: msg.links ?? prev.links,
+      attachments: msg.attachments ?? prev.attachments,
+      sendState: msg.sendState,
+    };
+    const next = [...list];
+    next[idx] = merged;
+    return next;
+  }
+  // wstaw we właściwe miejsce (zwykle koniec)
+  let insertAt = list.length;
+  while (insertAt > 0 && isAfter(list[insertAt - 1], msg)) insertAt--;
+  const next = [...list];
+  next.splice(insertAt, 0, msg);
+  return next;
+}
+
+export function mergeMessages(list: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  let next = list;
+  for (const msg of incoming) next = upsertMessageInList(next, msg);
+  return next;
+}
+
+/** Przytnij cache do ostatnich `max` wiadomości (offline czyta ogon). */
+export function trimList(list: ChatMessage[], max: number): ChatMessage[] {
+  return list.length <= max ? list : list.slice(list.length - max);
+}
+
+export interface OverviewApplyOptions {
+  myUserId: string | null;
+  activeConversationId: string | null;
+  documentVisible: boolean;
+}
+
+/**
+ * Zastosuj przychodzącą wiadomość do listy rozmów: podbij lastMessage,
+ * lastMessageAt i unread (nie dla własnych; nie dla aktywnej, widocznej rozmowy;
+ * nie dla odpowiedzi w wątkach — spójnie z serwerowym licznikiem).
+ */
+export function applyMessageToOverview(
+  overview: ChatOverviewEntry[],
+  msg: ChatMessage,
+  opts: OverviewApplyOptions,
+): { overview: ChatOverviewEntry[]; known: boolean } {
+  const idx = overview.findIndex((c) => c.id === msg.conversationId);
+  if (idx < 0) return { overview, known: false };
+
+  const entry = overview[idx];
+  const isThreadReply = msg.threadRootId !== null;
+  const isNewer = !entry.lastMessageAt || msg.createdAt >= entry.lastMessageAt;
+
+  let unread = entry.unreadCount;
+  const activeVisible =
+    opts.activeConversationId === msg.conversationId && opts.documentVisible;
+  if (
+    !isThreadReply &&
+    !msg.deletedAt &&
+    msg.authorUserId !== opts.myUserId &&
+    !activeVisible &&
+    (!entry.myLastReadAt || msg.createdAt > entry.myLastReadAt)
+  ) {
+    unread = entry.unreadCount + 1;
+  }
+
+  const updated: ChatOverviewEntry = {
+    ...entry,
+    unreadCount: unread,
+    ...(isThreadReply
+      ? {}
+      : {
+          lastMessageAt: isNewer ? msg.createdAt : entry.lastMessageAt,
+          lastMessage: isNewer
+            ? {
+                id: msg.id,
+                kind: msg.kind,
+                body: msg.body,
+                authorUserId: msg.authorUserId,
+                createdAt: msg.createdAt,
+                deletedAt: msg.deletedAt,
+              }
+            : entry.lastMessage,
+        }),
+  };
+
+  const next = [...overview];
+  next[idx] = updated;
+  next.sort((a, b) =>
+    (b.lastMessageAt ?? b.createdAt).localeCompare(a.lastMessageAt ?? a.createdAt),
+  );
+  return { overview: next, known: true };
+}
+
+export function markOverviewRead(
+  overview: ChatOverviewEntry[],
+  conversationId: string,
+  atIso: string,
+): ChatOverviewEntry[] {
+  return overview.map((c) =>
+    c.id === conversationId
+      ? {
+          ...c,
+          unreadCount: 0,
+          myLastReadAt:
+            c.myLastReadAt && c.myLastReadAt > atIso ? c.myLastReadAt : atIso,
+        }
+      : c,
+  );
+}
+
+export function totalUnread(overview: ChatOverviewEntry[]): number {
+  return overview.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+}
+
+/** Nazwa rozmowy do wyświetlenia. */
+export function overviewTitle(
+  entry: ChatOverviewEntry,
+  myUserId: string | null,
+  itemTitleLookup: (itemId: string) => string | undefined,
+): string {
+  if (entry.kind === "channel") return entry.name ?? "Kanał";
+  if (entry.kind === "item") {
+    const title = entry.itemId ? itemTitleLookup(entry.itemId) : undefined;
+    return title?.trim() ? title : "Dyskusja wpisu";
+  }
+  const others = entry.members.filter((m) => m.userId !== myUserId);
+  if (!others.length) return "Notatki (ja)";
+  return others.map((m) => m.displayName || "Bez nazwy").join(", ");
+}

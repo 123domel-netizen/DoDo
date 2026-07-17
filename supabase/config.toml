@@ -15,3 +15,8 @@ verify_jwt = false
 # Cron wysyłający przypomnienia push.
 [functions.send-reminders]
 verify_jwt = false
+
+# Trigger pg_net po INSERT do messages (push czatu). Uwierzytelnianie:
+# nagłówek x-chat-secret sprawdzany w funkcji (sekret CHAT_PUSH_SECRET).
+[functions.notify-message]
+verify_jwt = false

@@ -35,6 +35,27 @@ Grupy (np. Rodzinne, Firma A, Zakupy):
 - Skrajnie prawy, pionowy pasek z etykietami obróconymi o 90° do filtrowania
 - Kolory grup widoczne w kalendarzu i na liście zadań
 
+Komunikator (wymaga Supabase; architektura: `docs/KOMUNIKATOR-ARCHITEKTURA-2026-07-17.md`):
+
+- **Kanały** (publiczne/prywatne), **wiadomości prywatne** (1:1 i małe grupy)
+  oraz **dyskusje przy zadaniach/wydarzeniach** (sekcja „Dyskusja" w edytorze;
+  wątek tworzy się przy pierwszym komentarzu, widzą go uczestnicy wpisu)
+- **Wiadomość → zadanie / wydarzenie**: menu wiadomości „Utwórz zadanie/
+  wydarzenie" otwiera edytor z prefill; po zapisaniu powstaje link zwrotny
+  (chip przy wiadomości i „Powstało z wiadomości" we wpisie)
+- Wątki w stylu Slack, edycja/usuwanie własnych wiadomości, liczniki
+  nieprzeczytanych (per rozmowa + na zakładce), wyciszanie rozmów
+- **Załączniki** (zdjęcia z kompresją po stronie klienta, PDF, pliki do 25 MB)
+  w prywatnym buckecie Supabase Storage (signed URLs)
+- **Wyszukiwarka** (pole na liście rozmów): wiadomości, zadania/wydarzenia,
+  pliki — Postgres FTS (unaccent + trigram)
+- **Push o nowej wiadomości** natychmiast po wysłaniu (trigger pg_net →
+  funkcja `notify-message`; collapse per rozmowa, deep-link do rozmowy)
+- Offline: outbox z idempotentnym retry (UUID po stronie klienta), cache
+  ostatnich ~50 wiadomości na rozmowę w IndexedDB
+- Mobile: czwarta zakładka **Czat**; desktop: przełącznik „Zadania | Czat"
+  w prawym panelu; deep-linki `#/czat/…`, `#/wpis/…`
+
 ## Szybki start (tryb lokalny)
 
 ```bash
@@ -61,7 +82,9 @@ komputerze oraz dostawać powiadomienia, podłącz darmowy projekt Supabase.
 
 1. Utwórz projekt na https://supabase.com (darmowy tier wystarcza dla ~10 osób).
 2. W SQL Editor uruchom migracje po kolei: `0001_init.sql`, `0005_allowed_users.sql`
-   i dalsze (`0006`–`0012`); `0002_cron.sql` przy konfiguracji push.
+   i dalsze (`0006`–`0016`); `0002_cron.sql` przy konfiguracji push,
+   `0017_chat_push.sql` przy pushu czatu (podmień `<PROJECT_REF>` i
+   `<CHAT_PUSH_SECRET>` — patrz sekcja Komunikator niżej).
    Migracje `0003`/`0004` (Google) są nieaktualne — pomiń; `0007`/`0008` czyszczą
    pozostałości integracji Google, jeśli kiedyś była włączona.
 3. Skopiuj `.env.example` do `.env` i uzupełnij:
@@ -177,6 +200,21 @@ integracja synchronizacji z Google Calendar/Tasks została **usunięta**
 > również gdy aplikacja jest zamknięta; urządzenie z aktywnym pushem nie duperuje
 > powiadomień lokalnie.
 
+### Push czatu (notify-message)
+
+Powiadomienie o nowej wiadomości idzie natychmiast po INSERT (nie co minutę):
+trigger `messages_notify_push` (pg_net) woła funkcję `notify-message`.
+
+```bash
+supabase functions deploy notify-message --no-verify-jwt
+supabase secrets set CHAT_PUSH_SECRET=<losowy-sekret>
+```
+
+W `0017_chat_push.sql` podmień `<PROJECT_REF>` i `<CHAT_PUSH_SECRET>` na te same
+wartości i uruchom w SQL Editorze. Funkcja odrzuca wywołania bez poprawnego
+nagłówka `x-chat-secret` (401). Diagnostyka:
+`select status_code from net._http_response order by id desc limit 5;`
+
 Zakres powiadomień (lokalnych i push):
 
 - przypomnienia względne („10 min przed") i absolutne (konkretna data/godzina),
@@ -219,18 +257,23 @@ ustaw komendę build `npm run build`, katalog publikacji `dist`, oraz zmienne
 src/
   components/
     calendar/   TimeGrid (siatka + drag&drop + chmurki), MonthView, ContextMenu
+    chat/       ChatPanel (lista rozmów + wyszukiwarka), ConversationView,
+                MessageBubble/Composer/ActionsSheet, ItemDiscussion (edytor)
     todo/       TodoPanel
     groups/     GroupRail (pasek 90°) + GroupsModal
     item/       ItemEditor (formularz wydarzenia/zadania)
     ui/         Modal
     Toolbar.tsx AuthGate.tsx
   lib/          time, format, factory, supabase, cloud, push, reminders, reminderScheduler
+  lib/chat/     osobny silnik czatu: store (Zustand+IDB), api, init (realtime,
+                outbox, mark-read), feed (czyste funkcje), convert, upload
+  lib/navigation.ts  mini hash-router (#/czat/…, #/wpis/…)
   state/        store.ts (Zustand + persist)
   hooks/        useReminderScheduler
-  sw.ts         service worker (offline cache + push)
+  sw.ts         service worker (offline cache + push + deep-link powiadomień)
 supabase/
-  migrations/   0001_init.sql … 0012_user_tags.sql
-  functions/    send-reminders, auth-allowlist
+  migrations/   0001_init.sql … 0017_chat_push.sql
+  functions/    send-reminders, auth-allowlist, notify-message
 ```
 
 ## Uwaga o widoku „9 dni”
