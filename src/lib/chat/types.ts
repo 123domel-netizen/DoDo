@@ -1,9 +1,13 @@
 export type ConversationKind = "channel" | "dm" | "item";
 
+export type MessageKind = "text" | "system" | "poll" | "gif" | "voice";
+
 export interface ChatProfile {
   userId: string;
   displayName: string;
   avatarUrl: string | null;
+  /** Heartbeat obecności (online = < 5 min temu). */
+  lastSeenAt: string | null;
 }
 
 export interface ChatMemberInfo {
@@ -15,7 +19,7 @@ export interface ChatMemberInfo {
 
 export interface ChatLastMessage {
   id: string;
-  kind: "text" | "system";
+  kind: MessageKind;
   body: string;
   authorUserId: string;
   createdAt: string;
@@ -35,6 +39,12 @@ export interface ChatOverviewEntry {
   myLastReadAt: string | null;
   myNotify: "all" | "mentions" | "none";
   myRole: "owner" | "admin" | "member";
+  /** Ulubiona (przypięta) rozmowa — zawsze na górze listy. */
+  myPinnedAt: string | null;
+  /** Wyciszenie do (ISO; "infinity" = na zawsze; null = brak). */
+  myMutedUntil: string | null;
+  /** Ręcznie oznaczona jako nieprzeczytana. */
+  myMarkedUnread: boolean;
   unreadCount: number;
   lastMessage: ChatLastMessage | null;
   members: ChatMemberInfo[];
@@ -57,14 +67,49 @@ export interface ChatAttachment {
   height: number | null;
 }
 
+export interface ChatReaction {
+  messageId: string;
+  userId: string;
+  emoji: string;
+}
+
+export interface PollOption {
+  id: string;
+  label: string;
+}
+
+export interface PollVote {
+  messageId: string;
+  userId: string;
+  optionId: string;
+}
+
+export interface LinkPreview {
+  url: string;
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+}
+
+/** Dane zależne od kindu wiadomości (kolumna messages.payload). */
+export interface MessagePayload {
+  poll?: { options: PollOption[] };
+  gif?: { url: string; width?: number; height?: number };
+  voice?: { durationSec: number };
+  linkPreview?: LinkPreview;
+}
+
 export type MessageSendState = "pending" | "failed";
 
 export interface ChatMessage {
   id: string;
   conversationId: string;
   authorUserId: string;
-  kind: "text" | "system";
+  kind: MessageKind;
   body: string;
+  payload: MessagePayload;
+  mentions: string[];
   threadRootId: string | null;
   replyToMessageId: string | null;
   createdAt: string;
@@ -73,6 +118,8 @@ export interface ChatMessage {
   /** undefined = nieznane (np. event realtime bez zagnieżdżeń) — nie nadpisywać. */
   links?: ChatItemLink[];
   attachments?: ChatAttachment[];
+  reactions?: ChatReaction[];
+  votes?: PollVote[];
   /** Tylko lokalnie (outbox). */
   sendState?: MessageSendState;
 }
@@ -97,4 +144,35 @@ export interface PublicChannelInfo {
   id: string;
   name: string;
   description: string | null;
+}
+
+export interface MessageRevision {
+  id: string;
+  messageId: string;
+  body: string;
+  editedAt: string;
+  editedBy: string | null;
+}
+
+export interface ChatDecision {
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  body: string;
+  createdBy: string;
+  decidedAt: string;
+}
+
+/** Krótka etykieta podglądu dla kindów specjalnych (lista rozmów, push). */
+export function messagePreviewLabel(kind: MessageKind, body: string): string {
+  switch (kind) {
+    case "poll":
+      return `📊 Ankieta: ${body}`;
+    case "gif":
+      return "GIF";
+    case "voice":
+      return "🎤 Wiadomość głosowa";
+    default:
+      return body;
+  }
 }

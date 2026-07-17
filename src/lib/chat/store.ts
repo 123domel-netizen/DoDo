@@ -14,7 +14,9 @@ import type {
   ChatMessage,
   ChatOverviewEntry,
   ChatProfile,
+  ChatReaction,
   OutboxEntry,
+  PollVote,
 } from "@/lib/chat/types";
 
 /** Cache: ogon rozmowy czytelny offline; twardy limit na rozmowę. */
@@ -32,6 +34,8 @@ interface ChatState {
   outbox: OutboxEntry[];
   activeConversationId: string | null;
   activeThreadRootId: string | null;
+  /** Wiadomość do podświetlenia po skoku (cytat / wynik wyszukiwania). */
+  flashMessageId: string | null;
   /** Desktop: tryb prawego panelu. */
   panelMode: "todo" | "chat";
 
@@ -52,6 +56,13 @@ interface ChatState {
   markMessageState: (msg: ChatMessage) => void;
   attachToMessage: (att: ChatAttachment) => void;
   linkToMessage: (messageId: string, link: ChatItemLink) => void;
+  applyReactionChange: (reaction: ChatReaction, removed: boolean) => void;
+  applyVoteChange: (vote: PollVote, removed: boolean) => void;
+  patchOverviewEntry: (
+    conversationId: string,
+    patch: Partial<ChatOverviewEntry>,
+  ) => void;
+  setFlashMessage: (id: string | null) => void;
   setActiveConversation: (id: string | null) => void;
   setActiveThread: (rootId: string | null) => void;
   markReadLocal: (conversationId: string, atIso: string) => void;
@@ -70,7 +81,36 @@ function emptyState() {
     outbox: [] as OutboxEntry[],
     activeConversationId: null as string | null,
     activeThreadRootId: null as string | null,
+    flashMessageId: null as string | null,
   };
+}
+
+/** Zastosuj zmianę do wiadomości o danym id wszędzie w cache (feed + wątki). */
+function patchMessageById(
+  s: Pick<ChatState, "messagesByConv" | "threadByRoot">,
+  messageId: string,
+  update: (msg: ChatMessage) => ChatMessage,
+): Partial<Pick<ChatState, "messagesByConv" | "threadByRoot">> {
+  const out: Partial<Pick<ChatState, "messagesByConv" | "threadByRoot">> = {};
+  for (const [convId, list] of Object.entries(s.messagesByConv)) {
+    const idx = list.findIndex((m) => m.id === messageId);
+    if (idx < 0) continue;
+    const next = [...list];
+    next[idx] = update(next[idx]);
+    out.messagesByConv = { ...s.messagesByConv, [convId]: next };
+    break;
+  }
+  for (const [rootId, list] of Object.entries(s.threadByRoot)) {
+    const idx = list.findIndex((m) => m.id === messageId);
+    if (idx < 0) continue;
+    const next = [...list];
+    next[idx] = update(next[idx]);
+    out.threadByRoot = {
+      ...(out.threadByRoot ?? s.threadByRoot),
+      [rootId]: next,
+    };
+  }
+  return out;
 }
 
 /** Zaktualizuj wiadomość wszędzie tam, gdzie jest w cache (feed + wątki). */
@@ -223,6 +263,37 @@ export const useChatStore = create<ChatState>()(
           }
           return {};
         }),
+
+      applyReactionChange: (reaction, removed) =>
+        set((s) =>
+          patchMessageById(s, reaction.messageId, (msg) => {
+            const existing = msg.reactions ?? [];
+            const without = existing.filter(
+              (r) => !(r.userId === reaction.userId && r.emoji === reaction.emoji),
+            );
+            return {
+              ...msg,
+              reactions: removed ? without : [...without, reaction],
+            };
+          }),
+        ),
+
+      applyVoteChange: (vote, removed) =>
+        set((s) =>
+          patchMessageById(s, vote.messageId, (msg) => {
+            const without = (msg.votes ?? []).filter((v) => v.userId !== vote.userId);
+            return { ...msg, votes: removed ? without : [...without, vote] };
+          }),
+        ),
+
+      patchOverviewEntry: (conversationId, patch) =>
+        set((s) => ({
+          overview: s.overview.map((c) =>
+            c.id === conversationId ? { ...c, ...patch } : c,
+          ),
+        })),
+
+      setFlashMessage: (id) => set({ flashMessageId: id }),
 
       setActiveConversation: (id) =>
         set({ activeConversationId: id, activeThreadRootId: null }),

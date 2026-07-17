@@ -1,11 +1,20 @@
-import type { Item } from "@/types";
+import type { ChecklistItem, Item } from "@/types";
+import { uid } from "@/lib/factory";
 
 /**
- * Prefill draftu itemu z treści wiadomości (CHAT2-LINK).
+ * Prefill draftu itemu z treści wiadomości (CHAT2-LINK / CHAT5).
  * Czysta funkcja — bez zależności od store'ów (testowalna w node).
  */
 
-export type ConvertTarget = "task" | "event";
+export type ConvertTarget = "task" | "event" | "checklist";
+
+/** Linie wiadomości jako pozycje checklisty (zdjęte wypunktowania). */
+export function checklistLinesFromBody(body: string): string[] {
+  return body
+    .split("\n")
+    .map((line) => line.trim().replace(/^([-*•]|\d+[.)])\s+/, "").trim())
+    .filter(Boolean);
+}
 
 export function draftFromMessage(
   msg: { body: string },
@@ -24,6 +33,31 @@ export function draftFromMessage(
       hasDueDate: false,
       showInTodo: true,
       showInCalendar: false,
+    };
+  }
+
+  if (target === "checklist") {
+    const lines = checklistLinesFromBody(msg.body);
+    // Pierwsza linia jako tytuł, gdy wygląda na nagłówek listy (a nie punkt).
+    const rawFirst = msg.body.split("\n")[0]?.trim() ?? "";
+    const firstIsHeader =
+      lines.length > 1 && /^[^-*•\d]/.test(rawFirst) && rawFirst.endsWith(":");
+    const items = firstIsHeader ? lines.slice(1) : lines;
+    const checklist: ChecklistItem[] = (items.length ? items : lines).map((text) => ({
+      id: uid(),
+      text: text.slice(0, 200),
+      done: false,
+    }));
+    return {
+      type: "task",
+      title: firstIsHeader
+        ? rawFirst.replace(/:$/, "").slice(0, 120)
+        : firstLine.slice(0, 120) || "Checklista",
+      description: `— z wiadomości od ${authorName}`,
+      hasDueDate: false,
+      showInTodo: true,
+      showInCalendar: false,
+      checklist,
     };
   }
 

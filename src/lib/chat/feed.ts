@@ -118,6 +118,7 @@ export function markOverviewRead(
       ? {
           ...c,
           unreadCount: 0,
+          myMarkedUnread: false,
           myLastReadAt:
             c.myLastReadAt && c.myLastReadAt > atIso ? c.myLastReadAt : atIso,
         }
@@ -126,7 +127,28 @@ export function markOverviewRead(
 }
 
 export function totalUnread(overview: ChatOverviewEntry[]): number {
-  return overview.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+  return overview.reduce(
+    (sum, c) => sum + (c.unreadCount || 0) + (c.myMarkedUnread && !c.unreadCount ? 1 : 0),
+    0,
+  );
+}
+
+/** Czy rozmowa jest aktualnie wyciszona ("infinity" = na zawsze). */
+export function isMuted(entry: ChatOverviewEntry, now: Date = new Date()): boolean {
+  if (!entry.myMutedUntil) return false;
+  if (entry.myMutedUntil === "infinity") return true;
+  const until = new Date(entry.myMutedUntil);
+  return !Number.isNaN(until.getTime()) && until > now;
+}
+
+/** Ulubione (przypięte) na górze, wewnątrz sekcji porządek po aktywności. */
+export function sortOverview(overview: ChatOverviewEntry[]): ChatOverviewEntry[] {
+  return [...overview].sort((a, b) => {
+    const ap = a.myPinnedAt ? 1 : 0;
+    const bp = b.myPinnedAt ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    return (b.lastMessageAt ?? b.createdAt).localeCompare(a.lastMessageAt ?? a.createdAt);
+  });
 }
 
 /** Nazwa rozmowy do wyświetlenia. */

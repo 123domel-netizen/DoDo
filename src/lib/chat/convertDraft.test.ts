@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { draftFromMessage } from "@/lib/chat/convertDraft";
+import {
+  checklistLinesFromBody,
+  draftFromMessage,
+} from "@/lib/chat/convertDraft";
 
 describe("draftFromMessage", () => {
   it("zadanie: pierwsza linia jako tytuł, pełna treść + autor w opisie", () => {
@@ -34,5 +37,34 @@ describe("draftFromMessage", () => {
   it("pusta treść → tytuł zastępczy", () => {
     const draft = draftFromMessage({ body: "" }, "task", "Jan");
     expect(draft.title).toBe("Nowe zadanie");
+  });
+
+  it("checklista: nagłówek z dwukropkiem → tytuł, punkty → pozycje", () => {
+    const draft = draftFromMessage(
+      { body: "Zakupy:\n- mleko\n- chleb\n* masło" },
+      "checklist",
+      "Ola",
+    );
+    expect(draft.type).toBe("task");
+    expect(draft.title).toBe("Zakupy");
+    expect(draft.checklist?.map((c) => c.text)).toEqual(["mleko", "chleb", "masło"]);
+    expect(draft.checklist?.every((c) => !c.done)).toBe(true);
+  });
+
+  it("checklista bez nagłówka: wszystkie linie jako pozycje", () => {
+    const draft = draftFromMessage({ body: "mleko\nchleb" }, "checklist", "Ola");
+    expect(draft.checklist?.map((c) => c.text)).toEqual(["mleko", "chleb"]);
+  });
+});
+
+describe("checklistLinesFromBody", () => {
+  it("zdejmuje wypunktowania i numerację", () => {
+    expect(checklistLinesFromBody("- a\n* b\n1. c\n2) d\n\ne")).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+    ]);
   });
 });

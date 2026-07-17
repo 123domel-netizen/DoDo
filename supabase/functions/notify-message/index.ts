@@ -1,6 +1,8 @@
 // Supabase Edge Function: notify-message
 // Wywoływana triggerem pg_net po INSERT do public.messages (0017_chat_push.sql).
 // Wysyła Web Push do członków rozmowy (poza autorem i wyciszonymi).
+// CHAT5: wyciszenia czasowe (muted_until), tryb „tylko wzmianki",
+// etykiety ankiet/GIF-ów/głosówek, wyróżnienie wzmianki w treści.
 // Collapse: tag = chat-{conversationId} — system nadpisuje poprzednie
 // powiadomienie z tej samej rozmowy zamiast układać stos.
 //
@@ -38,6 +40,20 @@ function truncate(text: string, max: number): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
+/** Treść zależna od kindu wiadomości. */
+function kindBody(kind: string, body: string, max: number): string {
+  switch (kind) {
+    case "poll":
+      return `📊 Ankieta: ${truncate(body, max - 12)}`;
+    case "gif":
+      return "GIF";
+    case "voice":
+      return "🎤 Wiadomość głosowa";
+    default:
+      return truncate(body, max);
+  }
+}
+
 Deno.serve(async (req) => {
   if (!CHAT_PUSH_SECRET || req.headers.get("x-chat-secret") !== CHAT_PUSH_SECRET) {
     return json({ error: "unauthorized" }, 401);
@@ -58,12 +74,15 @@ Deno.serve(async (req) => {
 
   const { data: msg } = await admin
     .from("messages")
-    .select("id, conversation_id, author_user_id, kind, body, deleted_at, thread_root_id")
+    .select(
+      "id, conversation_id, author_user_id, kind, body, mentions, deleted_at, thread_root_id",
+    )
     .eq("id", messageId)
     .maybeSingle();
   if (!msg || msg.deleted_at || msg.kind === "system") {
     return json({ ok: true, sent: 0, skipped: "no pushable message" });
   }
+  const mentions: string[] = (msg.mentions as string[] | null) ?? [];
 
   const { data: conv } = await admin
     .from("conversations")
@@ -72,15 +91,30 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (!conv || conv.archived_at) return json({ ok: true, sent: 0 });
 
-  // Odbiorcy: aktywni członkowie − autor − wyciszeni.
+  // Odbiorcy: aktywni członkowie − autor − notify:none − wyciszeni (muted_until)
+  // − (tryb „tylko wzmianki" bez wzmianki).
   const { data: members } = await admin
     .from("conversation_members")
-    .select("user_id, notify")
+    .select("user_id, notify, muted_until")
     .eq("conversation_id", conv.id)
     .is("left_at", null)
     .neq("user_id", msg.author_user_id)
     .neq("notify", "none");
-  const recipientIds = (members ?? []).map((m) => m.user_id as string);
+  const now = Date.now();
+  const recipientIds = (members ?? [])
+    .filter((m) => {
+      const mutedUntil = m.muted_until as string | null;
+      if (mutedUntil) {
+        if (mutedUntil === "infinity") return false;
+        const t = new Date(mutedUntil).getTime();
+        if (!Number.isNaN(t) && t > now) return false;
+      }
+      if (m.notify === "mentions" && !mentions.includes(m.user_id as string)) {
+        return false;
+      }
+      return true;
+    })
+    .map((m) => m.user_id as string);
   if (!recipientIds.length) return json({ ok: true, sent: 0 });
 
   const { data: authorProfile } = await admin
@@ -104,17 +138,18 @@ Deno.serve(async (req) => {
     title = authorName;
   }
 
-  const bodyText =
+  const baseBody =
     conv.kind === "dm"
-      ? truncate(msg.body ?? "", 140)
-      : `${authorName}: ${truncate(msg.body ?? "", 120)}`;
+      ? kindBody(msg.kind as string, msg.body ?? "", 140)
+      : `${authorName}: ${kindBody(msg.kind as string, msg.body ?? "", 120)}`;
 
-  const payload = JSON.stringify({
-    title,
-    body: bodyText || "Nowa wiadomość",
-    url: `/#/czat/${conv.id}`,
-    tag: `chat-${conv.id}`,
-  });
+  const buildPayload = (mentioned: boolean) =>
+    JSON.stringify({
+      title: mentioned ? `@ ${title}` : title,
+      body: (mentioned ? `Oznaczono Cię — ${baseBody}` : baseBody) || "Nowa wiadomość",
+      url: `/#/czat/${conv.id}`,
+      tag: `chat-${conv.id}`,
+    });
 
   const { data: subsData } = await admin
     .from("push_subscriptions")
@@ -126,7 +161,7 @@ Deno.serve(async (req) => {
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: sub.keys } as webpush.PushSubscription,
-        payload,
+        buildPayload(mentions.includes(sub.user_id)),
       );
       sent++;
     } catch (e) {

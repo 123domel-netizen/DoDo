@@ -20,3 +20,8 @@ verify_jwt = false
 # nagłówek x-chat-secret sprawdzany w funkcji (sekret CHAT_PUSH_SECRET).
 [functions.notify-message]
 verify_jwt = false
+
+# Podgląd linków (OG scraping) — wywoływana z klienta z sesją użytkownika,
+# więc weryfikacja JWT ZOSTAJE włączona.
+[functions.link-preview]
+verify_jwt = true

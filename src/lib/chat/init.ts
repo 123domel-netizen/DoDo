@@ -6,7 +6,15 @@ import { onRouteChange } from "@/lib/navigation";
 import * as api from "@/lib/chat/api";
 import { uploadAttachmentsForMessage } from "@/lib/chat/upload";
 import { useChatStore, switchChatPersistUser } from "@/lib/chat/store";
-import type { ChatItemLink, ChatMessage } from "@/lib/chat/types";
+import { firstUrl } from "@/lib/chat/markdown";
+import type {
+  ChatItemLink,
+  ChatMessage,
+  ChatReaction,
+  MessageKind,
+  MessagePayload,
+  PollOption,
+} from "@/lib/chat/types";
 
 /**
  * CHAT1-CORE: orkiestracja czatu — auth, realtime, outbox, mark-read.
@@ -122,7 +130,9 @@ export async function openThread(rootId: string) {
 export interface SendOptions {
   conversationId: string;
   body: string;
-  kind?: "text" | "system";
+  kind?: MessageKind;
+  payload?: MessagePayload;
+  mentions?: string[];
   threadRootId?: string | null;
   replyToMessageId?: string | null;
 }
@@ -134,6 +144,8 @@ export function buildOutgoingMessage(opts: SendOptions, userId: string): ChatMes
     authorUserId: userId,
     kind: opts.kind ?? "text",
     body: opts.body.trim(),
+    payload: opts.payload ?? {},
+    mentions: opts.mentions ?? [],
     threadRootId: opts.threadRootId ?? null,
     replyToMessageId: opts.replyToMessageId ?? null,
     createdAt: new Date().toISOString(),
@@ -141,6 +153,8 @@ export function buildOutgoingMessage(opts: SendOptions, userId: string): ChatMes
     deletedAt: null,
     links: [],
     attachments: [],
+    reactions: [],
+    votes: [],
     sendState: "pending",
   };
 }
@@ -149,13 +163,66 @@ export function sendChatMessage(opts: SendOptions): ChatMessage | null {
   const st = useChatStore.getState();
   if (!st.userId) return null;
   const body = opts.body.trim();
-  if (!body) return null;
+  // GIF niesie treść w payloadzie; pozostałe kindy wymagają tekstu.
+  if (!body && opts.kind !== "gif") return null;
 
   const msg = buildOutgoingMessage({ ...opts, body }, st.userId);
   st.enqueueOutbox({ message: msg, attempts: 0 });
   st.applyIncomingMessage(msg, true);
   void flushOutbox();
   return msg;
+}
+
+/** Ankieta: pytanie w body, opcje w payload.poll (głosy w poll_votes). */
+export function sendPollMessage(
+  conversationId: string,
+  question: string,
+  optionLabels: string[],
+  threadRootId: string | null = null,
+): ChatMessage | null {
+  const options: PollOption[] = optionLabels
+    .map((label) => label.trim())
+    .filter(Boolean)
+    .map((label) => ({ id: uid(), label }));
+  if (options.length < 2) return null;
+  return sendChatMessage({
+    conversationId,
+    body: question,
+    kind: "poll",
+    payload: { poll: { options } },
+    threadRootId,
+  });
+}
+
+export function sendGifMessage(
+  conversationId: string,
+  url: string,
+  threadRootId: string | null = null,
+): ChatMessage | null {
+  return sendChatMessage({
+    conversationId,
+    body: "",
+    kind: "gif",
+    payload: { gif: { url } },
+    threadRootId,
+  });
+}
+
+/** Wiadomość głosowa: nagranie jako załącznik, czas trwania w payloadzie. */
+export async function sendVoiceMessage(
+  conversationId: string,
+  file: File,
+  durationSec: number,
+  threadRootId: string | null = null,
+): Promise<{ error?: string }> {
+  return sendChatMessageWithFiles({
+    conversationId,
+    body: "",
+    kind: "voice",
+    payload: { voice: { durationSec } },
+    threadRootId,
+    files: [file],
+  });
 }
 
 /**
@@ -190,7 +257,29 @@ export async function sendChatMessageWithFiles(
   const after = useChatStore.getState();
   after.removeFromOutbox(msg.id);
   after.markMessageState({ ...msg, attachments, sendState: undefined });
+  void enrichLinkPreview({ ...msg, attachments });
   return errors.length ? { error: errors.join("\n") } : {};
+}
+
+// ---------------------------------------------------------------------------
+// Podgląd linków (OG scraping przez funkcję Edge, dopinany po wysyłce)
+// ---------------------------------------------------------------------------
+
+const enrichedPreviewIds = new Set<string>();
+
+async function enrichLinkPreview(msg: ChatMessage) {
+  if (msg.kind !== "text" || msg.payload.linkPreview) return;
+  if (msg.attachments?.length) return;
+  const url = firstUrl(msg.body);
+  if (!url || enrichedPreviewIds.has(msg.id)) return;
+  enrichedPreviewIds.add(msg.id);
+
+  const preview = await api.fetchLinkPreview(url);
+  if (!preview) return;
+  const payload: MessagePayload = { ...msg.payload, linkPreview: preview };
+  const { error } = await api.updateMessagePayload(msg.id, payload);
+  if (error) return;
+  useChatStore.getState().markMessageState({ ...msg, payload, sendState: undefined });
 }
 
 let flushing = false;
@@ -216,6 +305,7 @@ export async function flushOutbox() {
         }
         st.removeFromOutbox(entry.message.id);
         st.markMessageState({ ...entry.message, sendState: undefined });
+        void enrichLinkPreview(entry.message);
       } catch (err) {
         // Błąd sieci — zostaw w outboxie; po limicie prób oznacz failed.
         const attempts = entry.attempts + 1;
@@ -266,11 +356,125 @@ export function discardFailedMessage(messageId: string) {
 // Edycja / kasowanie (optimistic, LWW na własnym wierszu)
 // ---------------------------------------------------------------------------
 
-export async function editChatMessage(msg: ChatMessage, body: string) {
+export async function editChatMessage(
+  msg: ChatMessage,
+  body: string,
+  mentions: string[] = msg.mentions,
+) {
   const st = useChatStore.getState();
-  st.markMessageState({ ...msg, body, editedAt: new Date().toISOString() });
-  const { error } = await api.updateMessageBody(msg.id, body);
+  st.markMessageState({ ...msg, body, mentions, editedAt: new Date().toISOString() });
+  const { error } = await api.updateMessageBody(msg.id, body, mentions);
   if (error) console.warn("[chat] edit failed:", error);
+}
+
+// ---------------------------------------------------------------------------
+// Reakcje / głosy w ankietach (optimistic + realtime dosynchronizuje resztę)
+// ---------------------------------------------------------------------------
+
+export async function toggleReaction(msg: ChatMessage, emoji: string) {
+  const st = useChatStore.getState();
+  if (!st.userId || msg.sendState) return;
+  const reaction: ChatReaction = { messageId: msg.id, userId: st.userId, emoji };
+  const mine = (msg.reactions ?? []).some(
+    (r) => r.userId === st.userId && r.emoji === emoji,
+  );
+  st.applyReactionChange(reaction, mine);
+  const { error } = mine
+    ? await api.removeReaction(reaction)
+    : await api.addReaction(reaction);
+  if (error) {
+    console.warn("[chat] reaction failed:", error);
+    st.applyReactionChange(reaction, !mine);
+  }
+}
+
+/** Głos w ankiecie: ta sama opcja = cofnięcie głosu, inna = zmiana. */
+export async function votePoll(msg: ChatMessage, optionId: string) {
+  const st = useChatStore.getState();
+  if (!st.userId || msg.sendState) return;
+  const current = (msg.votes ?? []).find((v) => v.userId === st.userId);
+  if (current && current.optionId === optionId) {
+    st.applyVoteChange({ messageId: msg.id, userId: st.userId, optionId }, true);
+    const { error } = await api.deletePollVote(msg.id, st.userId);
+    if (error) st.applyVoteChange(current, false);
+    return;
+  }
+  const vote = { messageId: msg.id, userId: st.userId, optionId };
+  st.applyVoteChange(vote, false);
+  const { error } = await api.upsertPollVote(vote);
+  if (error) {
+    console.warn("[chat] vote failed:", error);
+    if (current) st.applyVoteChange(current, false);
+    else st.applyVoteChange(vote, true);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prefs rozmowy: ulubione / wyciszenie / oznacz nieprzeczytane
+// ---------------------------------------------------------------------------
+
+export async function pinConversation(conversationId: string, pinned: boolean) {
+  useChatStore.getState().patchOverviewEntry(conversationId, {
+    myPinnedAt: pinned ? new Date().toISOString() : null,
+  });
+  const { error } = await api.setConversationPinned(conversationId, pinned);
+  if (error) console.warn("[chat] pin failed:", error);
+  scheduleOverviewRefresh(400);
+}
+
+export const MUTE_PRESETS: { label: string; minutes: number | null }[] = [
+  { label: "1 godzina", minutes: 60 },
+  { label: "8 godzin", minutes: 8 * 60 },
+  { label: "24 godziny", minutes: 24 * 60 },
+  { label: "7 dni", minutes: 7 * 24 * 60 },
+  { label: "Na zawsze", minutes: null },
+];
+
+/** minutes = null → na zawsze; unmute przez muteConversationOff. */
+export async function muteConversation(conversationId: string, minutes: number | null) {
+  const until =
+    minutes === null
+      ? "infinity"
+      : new Date(Date.now() + minutes * 60_000).toISOString();
+  useChatStore.getState().patchOverviewEntry(conversationId, { myMutedUntil: until });
+  const { error } = await api.setConversationMute(conversationId, until);
+  if (error) console.warn("[chat] mute failed:", error);
+  scheduleOverviewRefresh(400);
+}
+
+export async function unmuteConversation(conversationId: string) {
+  useChatStore.getState().patchOverviewEntry(conversationId, { myMutedUntil: null });
+  const { error } = await api.setConversationMute(conversationId, null);
+  if (error) console.warn("[chat] unmute failed:", error);
+  scheduleOverviewRefresh(400);
+}
+
+export async function markUnread(conversationId: string) {
+  useChatStore.getState().patchOverviewEntry(conversationId, { myMarkedUnread: true });
+  const { error } = await api.markConversationUnread(conversationId);
+  if (error) console.warn("[chat] mark unread failed:", error);
+}
+
+// ---------------------------------------------------------------------------
+// Skok do wiadomości (cytat / wynik wyszukiwania) — dociąga starsze strony
+// ---------------------------------------------------------------------------
+
+export async function jumpToMessage(conversationId: string, messageId: string) {
+  const st = useChatStore.getState();
+  const inFeed = () =>
+    (useChatStore.getState().messagesByConv[conversationId] ?? []).some(
+      (m) => m.id === messageId,
+    );
+  if (!inFeed()) {
+    for (let i = 0; i < 6; i++) {
+      if (!useChatStore.getState().hasMoreByConv[conversationId]) break;
+      await loadOlderMessages(conversationId);
+      if (inFeed()) break;
+    }
+  }
+  if (inFeed()) {
+    st.setFlashMessage(messageId);
+  }
 }
 
 export async function deleteChatMessage(msg: ChatMessage) {
@@ -385,6 +589,42 @@ function setupRealtime(userId: string) {
     )
     .on(
       "postgres_changes",
+      { event: "*", schema: "public", table: "message_reactions" },
+      (payload) => {
+        const row = (payload.eventType === "DELETE" ? payload.old : payload.new) as
+          | Record<string, unknown>
+          | null;
+        if (!row?.message_id) return;
+        useChatStore.getState().applyReactionChange(
+          {
+            messageId: row.message_id as string,
+            userId: row.user_id as string,
+            emoji: (row.emoji as string) ?? "",
+          },
+          payload.eventType === "DELETE",
+        );
+      },
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "poll_votes" },
+      (payload) => {
+        const row = (payload.eventType === "DELETE" ? payload.old : payload.new) as
+          | Record<string, unknown>
+          | null;
+        if (!row?.message_id) return;
+        useChatStore.getState().applyVoteChange(
+          {
+            messageId: row.message_id as string,
+            userId: row.user_id as string,
+            optionId: (row.option_id as string) ?? "",
+          },
+          payload.eventType === "DELETE",
+        );
+      },
+    )
+    .on(
+      "postgres_changes",
       { event: "INSERT", schema: "public", table: "message_item_links" },
       (payload) => {
         const row = payload.new as Record<string, unknown>;
@@ -431,16 +671,44 @@ function setupRealtime(userId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Obecność online (heartbeat co 2 min przy widocznej karcie; online = < 5 min)
+// ---------------------------------------------------------------------------
+
+const PRESENCE_INTERVAL_MS = 120_000;
+let presenceTimer: ReturnType<typeof setInterval> | null = null;
+
+async function presenceBeat() {
+  if (!currentUserId || !api.chatAvailable() || !documentVisible()) return;
+  await api.updateMyPresence(currentUserId);
+  // Przy okazji odśwież profile — zielone kropki innych osób.
+  const profiles = await api.fetchProfiles();
+  useChatStore.getState().setProfiles(profiles);
+}
+
+function startPresence() {
+  if (presenceTimer) clearInterval(presenceTimer);
+  presenceTimer = setInterval(() => void presenceBeat(), PRESENCE_INTERVAL_MS);
+  void presenceBeat();
+}
+
+function stopPresence() {
+  if (presenceTimer) clearInterval(presenceTimer);
+  presenceTimer = null;
+}
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
 async function handleChatUser(userId: string | null) {
   teardownRealtime();
+  stopPresence();
   currentUserId = userId;
   await switchChatPersistUser(userId);
   if (!userId || !api.chatAvailable()) return;
   await refreshChat();
   setupRealtime(userId);
+  startPresence();
   void flushOutbox();
 }
 
@@ -467,6 +735,7 @@ export function initChat() {
       if (document.visibilityState === "visible") {
         void flushOutbox();
         scheduleOverviewRefresh(300);
+        void presenceBeat();
       }
     });
   }

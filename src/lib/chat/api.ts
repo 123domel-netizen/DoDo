@@ -1,20 +1,27 @@
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import type {
   ChatAttachment,
+  ChatDecision,
   ChatItemLink,
   ChatMemberInfo,
   ChatMessage,
   ChatOverviewEntry,
   ChatProfile,
+  ChatReaction,
   ChatSearchResult,
+  LinkPreview,
+  MessagePayload,
+  MessageRevision,
+  PollVote,
   PublicChannelInfo,
 } from "@/lib/chat/types";
 
 export const MESSAGES_PAGE_SIZE = 40;
 
-/** Zagnieżdżone selecty: linki do itemów + załączniki jednym zapytaniem. */
+/** Zagnieżdżone selecty: linki, załączniki, reakcje i głosy jednym zapytaniem. */
 const MESSAGE_SELECT =
-  "*, message_item_links(item_id, kind), message_attachments(*)";
+  "*, message_item_links(item_id, kind), message_attachments(*), " +
+  "message_reactions(message_id, user_id, emoji), poll_votes(message_id, user_id, option_id)";
 
 type Row = Record<string, unknown>;
 
@@ -32,6 +39,22 @@ function rowToAttachment(row: Row): ChatAttachment {
   };
 }
 
+export function rowToReaction(row: Row): ChatReaction {
+  return {
+    messageId: row.message_id as string,
+    userId: row.user_id as string,
+    emoji: (row.emoji as string) ?? "",
+  };
+}
+
+export function rowToVote(row: Row): PollVote {
+  return {
+    messageId: row.message_id as string,
+    userId: row.user_id as string,
+    optionId: (row.option_id as string) ?? "",
+  };
+}
+
 export function rowToMessage(row: Row, withNested: boolean): ChatMessage {
   const msg: ChatMessage = {
     id: row.id as string,
@@ -39,6 +62,8 @@ export function rowToMessage(row: Row, withNested: boolean): ChatMessage {
     authorUserId: row.author_user_id as string,
     kind: ((row.kind as string) ?? "text") as ChatMessage["kind"],
     body: (row.body as string) ?? "",
+    payload: ((row.payload as MessagePayload | null) ?? {}) as MessagePayload,
+    mentions: ((row.mentions as string[] | null) ?? []) as string[],
     threadRootId: (row.thread_root_id as string | null) ?? null,
     replyToMessageId: (row.reply_to_message_id as string | null) ?? null,
     createdAt: row.created_at as string,
@@ -53,6 +78,10 @@ export function rowToMessage(row: Row, withNested: boolean): ChatMessage {
     }));
     const atts = (row.message_attachments as Row[] | null) ?? [];
     msg.attachments = atts.map(rowToAttachment);
+    const reactions = (row.message_reactions as Row[] | null) ?? [];
+    msg.reactions = reactions.map(rowToReaction);
+    const votes = (row.poll_votes as Row[] | null) ?? [];
+    msg.votes = votes.map(rowToVote);
   }
   return msg;
 }
@@ -73,11 +102,14 @@ function rowToOverviewEntry(row: Row): ChatOverviewEntry {
     myLastReadAt: (row.my_last_read_at as string | null) ?? null,
     myNotify: ((row.my_notify as string) ?? "all") as ChatOverviewEntry["myNotify"],
     myRole: ((row.my_role as string) ?? "member") as ChatOverviewEntry["myRole"],
+    myPinnedAt: (row.my_pinned_at as string | null) ?? null,
+    myMutedUntil: (row.my_muted_until as string | null) ?? null,
+    myMarkedUnread: (row.my_marked_unread as boolean) ?? false,
     unreadCount: Number(row.unread_count ?? 0),
     lastMessage: last
       ? {
           id: last.id as string,
-          kind: ((last.kind as string) ?? "text") as "text" | "system",
+          kind: ((last.kind as string) ?? "text") as ChatMessage["kind"],
           body: (last.body as string) ?? "",
           authorUserId: last.author_user_id as string,
           createdAt: last.created_at as string,
@@ -120,9 +152,19 @@ export async function fetchProfiles(): Promise<Record<string, ChatProfile>> {
       userId: row.user_id as string,
       displayName: (row.display_name as string) ?? "",
       avatarUrl: (row.avatar_url as string | null) ?? null,
+      lastSeenAt: (row.last_seen_at as string | null) ?? null,
     };
   }
   return out;
+}
+
+/** Heartbeat obecności (online = last_seen_at < 5 min temu). */
+export async function updateMyPresence(userId: string): Promise<void> {
+  if (!supabase) return;
+  await supabase
+    .from("profiles")
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq("user_id", userId);
 }
 
 export async function fetchMessagesPage(
@@ -145,7 +187,7 @@ export async function fetchMessagesPage(
     console.warn("[chat] messages fetch failed:", error.message);
     return { messages: [], hasMore: false };
   }
-  const rows = (data as Row[]) ?? [];
+  const rows = (data as unknown as Row[]) ?? [];
   const messages = rows.map((r) => rowToMessage(r, true)).reverse();
   return { messages, hasMore: rows.length === MESSAGES_PAGE_SIZE };
 }
@@ -162,7 +204,17 @@ export async function fetchThreadMessages(rootId: string): Promise<ChatMessage[]
     console.warn("[chat] thread fetch failed:", error.message);
     return [];
   }
-  return ((data as Row[]) ?? []).map((r) => rowToMessage(r, true));
+  return ((data as unknown as Row[]) ?? []).map((r) => rowToMessage(r, true));
+}
+
+export async function fetchMessageById(id: string): Promise<ChatMessage | null> {
+  if (!supabase) return null;
+  const { data } = await supabase
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+  return data ? rowToMessage(data as unknown as Row, true) : null;
 }
 
 /** Liczby odpowiedzi w wątkach dla widocznych rootów (jedno zapytanie). */
@@ -193,6 +245,8 @@ export async function insertMessage(msg: ChatMessage): Promise<{ error?: string 
     author_user_id: msg.authorUserId,
     kind: msg.kind,
     body: msg.body,
+    payload: msg.payload,
+    mentions: msg.mentions,
     thread_root_id: msg.threadRootId,
     reply_to_message_id: msg.replyToMessageId,
   });
@@ -203,12 +257,23 @@ export async function insertMessage(msg: ChatMessage): Promise<{ error?: string 
 export async function updateMessageBody(
   id: string,
   body: string,
+  mentions: string[],
 ): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { error } = await supabase
     .from("messages")
-    .update({ body, edited_at: new Date().toISOString() })
+    .update({ body, mentions, edited_at: new Date().toISOString() })
     .eq("id", id);
+  return error ? { error: error.message } : {};
+}
+
+/** Nadpisanie payloadu (np. dopięcie linkPreview po wysyłce). */
+export async function updateMessagePayload(
+  id: string,
+  payload: MessagePayload,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.from("messages").update({ payload }).eq("id", id);
   return error ? { error: error.message } : {};
 }
 
@@ -223,6 +288,184 @@ export async function softDeleteMessage(
     .eq("id", id);
   return error ? { error: error.message } : {};
 }
+
+// ---------------------------------------------------------------------------
+// Reakcje / ankiety
+// ---------------------------------------------------------------------------
+
+export async function addReaction(r: ChatReaction): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.from("message_reactions").insert({
+    message_id: r.messageId,
+    user_id: r.userId,
+    emoji: r.emoji,
+  });
+  if (error && error.code !== "23505") return { error: error.message };
+  return {};
+}
+
+export async function removeReaction(r: ChatReaction): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase
+    .from("message_reactions")
+    .delete()
+    .eq("message_id", r.messageId)
+    .eq("user_id", r.userId)
+    .eq("emoji", r.emoji);
+  return error ? { error: error.message } : {};
+}
+
+export async function upsertPollVote(v: PollVote): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase
+    .from("poll_votes")
+    .upsert(
+      { message_id: v.messageId, user_id: v.userId, option_id: v.optionId },
+      { onConflict: "message_id,user_id" },
+    );
+  return error ? { error: error.message } : {};
+}
+
+export async function deletePollVote(
+  messageId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase
+    .from("poll_votes")
+    .delete()
+    .eq("message_id", messageId)
+    .eq("user_id", userId);
+  return error ? { error: error.message } : {};
+}
+
+// ---------------------------------------------------------------------------
+// Historia edycji / decyzje / wzmianki / media
+// ---------------------------------------------------------------------------
+
+export async function fetchRevisions(messageId: string): Promise<MessageRevision[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("message_revisions")
+    .select("*")
+    .eq("message_id", messageId)
+    .order("edited_at", { ascending: false });
+  if (error) return [];
+  return ((data as Row[]) ?? []).map((r) => ({
+    id: r.id as string,
+    messageId: r.message_id as string,
+    body: (r.body as string) ?? "",
+    editedAt: r.edited_at as string,
+    editedBy: (r.edited_by as string | null) ?? null,
+  }));
+}
+
+function rowToDecision(r: Row): ChatDecision {
+  return {
+    id: r.id as string,
+    conversationId: r.conversation_id as string,
+    messageId: (r.message_id as string | null) ?? null,
+    body: (r.body as string) ?? "",
+    createdBy: r.created_by as string,
+    decidedAt: r.decided_at as string,
+  };
+}
+
+export async function fetchDecisions(conversationId: string): Promise<ChatDecision[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("decisions")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("decided_at", { ascending: false });
+  if (error) return [];
+  return ((data as Row[]) ?? []).map(rowToDecision);
+}
+
+export async function addDecision(input: {
+  conversationId: string;
+  messageId: string | null;
+  body: string;
+  createdBy: string;
+}): Promise<{ decision?: ChatDecision; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { data, error } = await supabase
+    .from("decisions")
+    .insert({
+      conversation_id: input.conversationId,
+      message_id: input.messageId,
+      body: input.body,
+      created_by: input.createdBy,
+    })
+    .select()
+    .single();
+  if (error) return { error: error.message };
+  return { decision: rowToDecision(data as Row) };
+}
+
+export async function deleteDecision(id: string): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.from("decisions").delete().eq("id", id);
+  return error ? { error: error.message } : {};
+}
+
+/** Wiadomości, w których mnie oznaczono (filtr wzmianek). */
+export async function fetchMyMentions(userId: string): Promise<ChatMessage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("messages")
+    .select("*")
+    .contains("mentions", [userId])
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map((r) => rowToMessage(r, false));
+}
+
+export interface ConversationAttachment extends ChatAttachment {
+  createdAt: string;
+}
+
+/** Wszystkie załączniki rozmowy (zakładka Media). */
+export async function fetchConversationAttachments(
+  conversationId: string,
+): Promise<ConversationAttachment[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("message_attachments")
+    .select("*, messages!inner(conversation_id, deleted_at)")
+    .eq("messages.conversation_id", conversationId)
+    .is("messages.deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(300);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map((r) => ({
+    ...rowToAttachment(r),
+    createdAt: r.created_at as string,
+  }));
+}
+
+/** Wiadomości z linkami (zakładka Media → Linki); URL-e wyciąga klient. */
+export async function fetchConversationLinkMessages(
+  conversationId: string,
+): Promise<ChatMessage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .is("deleted_at", null)
+    .ilike("body", "%http%")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map((r) => rowToMessage(r, false));
+}
+
+// ---------------------------------------------------------------------------
+// Rozmowy
+// ---------------------------------------------------------------------------
 
 export async function createConversation(
   kind: "channel" | "dm",
@@ -307,6 +550,41 @@ export async function markConversationRead(
   return error ? { error: error.message } : {};
 }
 
+export async function markConversationUnread(
+  conversationId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("mark_conversation_unread", {
+    p_conversation_id: conversationId,
+  });
+  return error ? { error: error.message } : {};
+}
+
+export async function setConversationPinned(
+  conversationId: string,
+  pinned: boolean,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("set_conversation_pinned", {
+    p_conversation_id: conversationId,
+    p_pinned: pinned,
+  });
+  return error ? { error: error.message } : {};
+}
+
+/** null = wyłącz wyciszenie; "infinity" = na zawsze; inaczej ISO końca. */
+export async function setConversationMute(
+  conversationId: string,
+  mutedUntil: string | null,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("set_conversation_mute", {
+    p_conversation_id: conversationId,
+    p_muted_until: mutedUntil,
+  });
+  return error ? { error: error.message } : {};
+}
+
 export async function setConversationNotify(
   conversationId: string,
   userId: string,
@@ -385,4 +663,26 @@ export async function searchAll(query: string): Promise<ChatSearchResult[]> {
     createdAt: r.created_at as string,
     rank: Number(r.rank ?? 0),
   }));
+}
+
+/** Podgląd linku przez funkcję Edge (OG scraping po stronie serwera). */
+export async function fetchLinkPreview(url: string): Promise<LinkPreview | null> {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.functions.invoke("link-preview", {
+      body: { url },
+    });
+    if (error || !data) return null;
+    const d = data as Row;
+    if (!d.title && !d.description && !d.imageUrl) return null;
+    return {
+      url,
+      title: (d.title as string | null) ?? null,
+      description: (d.description as string | null) ?? null,
+      imageUrl: (d.imageUrl as string | null) ?? null,
+      siteName: (d.siteName as string | null) ?? null,
+    };
+  } catch {
+    return null;
+  }
 }

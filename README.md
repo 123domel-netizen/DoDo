@@ -40,17 +40,30 @@ Komunikator (wymaga Supabase; architektura: `docs/KOMUNIKATOR-ARCHITEKTURA-2026-
 - **Kanały** (publiczne/prywatne), **wiadomości prywatne** (1:1 i małe grupy)
   oraz **dyskusje przy zadaniach/wydarzeniach** (sekcja „Dyskusja" w edytorze;
   wątek tworzy się przy pierwszym komentarzu, widzą go uczestnicy wpisu)
-- **Wiadomość → zadanie / wydarzenie**: menu wiadomości „Utwórz zadanie/
-  wydarzenie" otwiera edytor z prefill; po zapisaniu powstaje link zwrotny
-  (chip przy wiadomości i „Powstało z wiadomości" we wpisie)
-- Wątki w stylu Slack, edycja/usuwanie własnych wiadomości, liczniki
-  nieprzeczytanych (per rozmowa + na zakładce), wyciszanie rozmów
+- **Wiadomość → obiekt DoDo**: menu wiadomości tworzy z niej **zadanie**,
+  **wydarzenie**, **checklistę** (linie → pozycje) lub zapisuje jako **decyzję**
+  (rejestr ustaleń rozmowy). Konwersje itemów otwierają edytor z prefill; po
+  zapisaniu powstaje link zwrotny (chip przy wiadomości i „Powstało z wiadomości")
+- **Wzmianki `@`** (autouzupełnianie tylko uczestników rozmowy): wyróżnienie
+  wiadomości, push, filtr „moje wzmianki" na liście rozmów
+- **Reakcje** (👍 ❤️ 😂 👀 ✅ 🎉) i **ankiety** (jeden głos na osobę, zmiana głosu)
+- **Odpowiedzi z cytatem** (klik cytatu → skok do źródła), **wątki** w stylu Slack
+- **Markdown lite** (`**pogrubienie**`, `*kursywa*`, `` `kod` ``, `~~przekreślenie~~`),
+  **wiadomości głosowe** (nagraj/wyślij/odsłuchaj), **GIF-y** (tylko link do
+  dostawcy — Tenor przez `VITE_TENOR_API_KEY` lub wklejony URL), **podgląd linków**
+  (OG scraping w funkcji `link-preview`)
+- **Historia edycji** (kto/kiedy/poprzednie wersje), edycja/usuwanie własnych
+- **Ulubione** (przypięte na górze), **wyciszanie** (1 h / 8 h / 24 h / 7 dni /
+  na zawsze), **oznacz jako nieprzeczytane**, tryb „tylko wzmianki"
+- **Zakładka Media** per rozmowa (Zdjęcia / Pliki / Linki), **status online**
+  (zielona kropka; heartbeat, online = < 5 min)
 - **Załączniki** (zdjęcia z kompresją po stronie klienta, PDF, pliki do 25 MB)
   w prywatnym buckecie Supabase Storage (signed URLs)
 - **Wyszukiwarka** (pole na liście rozmów): wiadomości, zadania/wydarzenia,
   pliki — Postgres FTS (unaccent + trigram)
 - **Push o nowej wiadomości** natychmiast po wysłaniu (trigger pg_net →
-  funkcja `notify-message`; collapse per rozmowa, deep-link do rozmowy)
+  funkcja `notify-message`; collapse per rozmowa, respektuje wyciszenia i
+  wzmianki, deep-link do rozmowy)
 - Offline: outbox z idempotentnym retry (UUID po stronie klienta), cache
   ostatnich ~50 wiadomości na rozmowę w IndexedDB
 - Mobile: czwarta zakładka **Czat**; desktop: przełącznik „Zadania | Czat"
@@ -215,6 +228,22 @@ wartości i uruchom w SQL Editorze. Funkcja odrzuca wywołania bez poprawnego
 nagłówka `x-chat-secret` (401). Diagnostyka:
 `select status_code from net._http_response order by id desc limit 5;`
 
+### Podgląd linków (link-preview)
+
+Karty podglądu (tytuł/opis/miniatura) pobiera funkcja `link-preview` (OG scraping
+po stronie serwera — klient nie może przez CORS). `verify_jwt = true`, więc
+wywołania wymagają sesji użytkownika; guard SSRF blokuje `localhost` i adresy
+prywatne. Wynik ląduje w `messages.payload.linkPreview` (bez tabeli cache).
+
+```bash
+supabase functions deploy link-preview
+```
+
+### GIF-y (opcjonalnie Tenor)
+
+Bez klucza działa wklejanie linku do GIF-a (plik zostaje u dostawcy — DoDo
+zapisuje tylko URL). Z kluczem `VITE_TENOR_API_KEY` dochodzi wyszukiwarka Tenor.
+
 Zakres powiadomień (lokalnych i push):
 
 - przypomnienia względne („10 min przed") i absolutne (konkretna data/godzina),
@@ -257,8 +286,10 @@ ustaw komendę build `npm run build`, katalog publikacji `dist`, oraz zmienne
 src/
   components/
     calendar/   TimeGrid (siatka + drag&drop + chmurki), MonthView, ContextMenu
-    chat/       ChatPanel (lista rozmów + wyszukiwarka), ConversationView,
-                MessageBubble/Composer/ActionsSheet, ItemDiscussion (edytor)
+    chat/       ChatPanel (lista rozmów, ulubione, wzmianki, wyszukiwarka),
+                ConversationView, MessageBubble/Composer/ActionsSheet,
+                PollCreateDialog, GifPicker, EditHistoryModal,
+                ConversationMediaView, DecisionsView, ItemDiscussion (edytor)
     todo/       TodoPanel
     groups/     GroupRail (pasek 90°) + GroupsModal
     item/       ItemEditor (formularz wydarzenia/zadania)
@@ -266,13 +297,15 @@ src/
     Toolbar.tsx AuthGate.tsx
   lib/          time, format, factory, supabase, cloud, push, reminders, reminderScheduler
   lib/chat/     osobny silnik czatu: store (Zustand+IDB), api, init (realtime,
-                outbox, mark-read), feed (czyste funkcje), convert, upload
+                outbox, mark-read, presence, reakcje/głosy), feed, convert,
+                upload, markdown, mentions, polls, voice, presence (czyste fn.)
   lib/navigation.ts  mini hash-router (#/czat/…, #/wpis/…)
   state/        store.ts (Zustand + persist)
   hooks/        useReminderScheduler
   sw.ts         service worker (offline cache + push + deep-link powiadomień)
 supabase/
-  migrations/   0001_init.sql … 0017_chat_push.sql
+  migrations/   0001_init.sql … 0018_chat_features.sql
+  functions/    auth-allowlist, send-reminders, notify-message, link-preview
   functions/    send-reminders, auth-allowlist, notify-message
 ```
 

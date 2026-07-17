@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMessageToOverview,
+  isMuted,
   markOverviewRead,
   mergeMessages,
   overviewTitle,
+  sortOverview,
   totalUnread,
   trimList,
   upsertMessageInList,
@@ -17,6 +19,8 @@ function msg(partial: Partial<ChatMessage>): ChatMessage {
     authorUserId: "u1",
     kind: "text",
     body: "test",
+    payload: {},
+    mentions: [],
     threadRootId: null,
     replyToMessageId: null,
     createdAt: "2026-07-17T10:00:00.000Z",
@@ -40,6 +44,9 @@ function entry(partial: Partial<ChatOverviewEntry>): ChatOverviewEntry {
     myLastReadAt: "2026-07-17T09:00:00.000Z",
     myNotify: "all",
     myRole: "member",
+    myPinnedAt: null,
+    myMutedUntil: null,
+    myMarkedUnread: false,
     unreadCount: 0,
     lastMessage: null,
     members: [],
@@ -162,6 +169,44 @@ describe("markOverviewRead / totalUnread", () => {
     expect(next[0].myLastReadAt).toBe("2026-07-17T10:00:00.000Z");
     expect(next[1].unreadCount).toBe(2);
     expect(totalUnread(next)).toBe(2);
+  });
+
+  it("markOverviewRead czyści też ręczne oznaczenie nieprzeczytanej", () => {
+    const list = [entry({ id: "c1", unreadCount: 0, myMarkedUnread: true })];
+    const next = markOverviewRead(list, "c1", "2026-07-17T10:00:00.000Z");
+    expect(next[0].myMarkedUnread).toBe(false);
+  });
+
+  it("totalUnread liczy ręcznie oznaczone jako 1 przy zerowym liczniku", () => {
+    const list = [
+      entry({ id: "c1", unreadCount: 0, myMarkedUnread: true }),
+      entry({ id: "c2", unreadCount: 4, myMarkedUnread: true }),
+    ];
+    // c1: brak licznika, ale marked → +1; c2: 4 (marked nie dublował)
+    expect(totalUnread(list)).toBe(5);
+  });
+});
+
+describe("isMuted / sortOverview", () => {
+  it("isMuted: infinity zawsze, przyszła data tak, przeszła nie", () => {
+    const now = new Date("2026-07-17T12:00:00.000Z");
+    expect(isMuted(entry({ myMutedUntil: "infinity" }), now)).toBe(true);
+    expect(isMuted(entry({ myMutedUntil: "2026-07-17T13:00:00.000Z" }), now)).toBe(true);
+    expect(isMuted(entry({ myMutedUntil: "2026-07-17T11:00:00.000Z" }), now)).toBe(false);
+    expect(isMuted(entry({ myMutedUntil: null }), now)).toBe(false);
+  });
+
+  it("sortOverview: przypięte na górze, wewnątrz po aktywności", () => {
+    const list = [
+      entry({ id: "a", lastMessageAt: "2026-07-17T08:00:00.000Z" }),
+      entry({
+        id: "b",
+        lastMessageAt: "2026-07-17T07:00:00.000Z",
+        myPinnedAt: "2026-07-17T00:00:00.000Z",
+      }),
+      entry({ id: "c", lastMessageAt: "2026-07-17T09:00:00.000Z" }),
+    ];
+    expect(sortOverview(list).map((c) => c.id)).toEqual(["b", "c", "a"]);
   });
 });
 

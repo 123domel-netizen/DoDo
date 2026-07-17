@@ -1,7 +1,7 @@
 import type { Item } from "@/types";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { createItemLink } from "@/lib/chat/api";
+import { addDecision, createItemLink } from "@/lib/chat/api";
 import { sendChatMessage } from "@/lib/chat/init";
 import { draftFromMessage, type ConvertTarget } from "@/lib/chat/convertDraft";
 import type { ChatMessage } from "@/lib/chat/types";
@@ -37,7 +37,12 @@ async function finalizeConversion(p: PendingConversion, item: Item) {
     .getState()
     .linkToMessage(p.messageId, { itemId: item.id, kind: "created_from" });
 
-  const label = p.target === "task" ? "Utworzono zadanie" : "Utworzono wydarzenie";
+  const label =
+    p.target === "task"
+      ? "Utworzono zadanie"
+      : p.target === "checklist"
+        ? "Utworzono checklistę"
+        : "Utworzono wydarzenie";
   sendChatMessage({
     conversationId: p.conversationId,
     body: `${label}: ${item.title || "(bez tytułu)"}`,
@@ -51,6 +56,34 @@ function clearPending() {
     unsubscribe();
     unsubscribe = null;
   }
+}
+
+/**
+ * Wiadomość → decyzja: wpis w rejestrze ustaleń rozmowy + notka systemowa.
+ * (Decyzja nie jest itemem — żyje przy rozmowie, buduje historię ustaleń.)
+ */
+export async function saveMessageAsDecision(
+  msg: ChatMessage,
+): Promise<{ error?: string }> {
+  const userId = useChatStore.getState().userId;
+  if (!userId) return { error: "Brak zalogowanego użytkownika." };
+  const body = msg.body.trim();
+  if (!body) return { error: "Pusta wiadomość nie może być decyzją." };
+
+  const { error } = await addDecision({
+    conversationId: msg.conversationId,
+    messageId: msg.id,
+    body,
+    createdBy: userId,
+  });
+  if (error) return { error };
+
+  sendChatMessage({
+    conversationId: msg.conversationId,
+    body: `📌 Zapisano decyzję: ${body.slice(0, 140)}`,
+    kind: "system",
+  });
+  return {};
 }
 
 /**
