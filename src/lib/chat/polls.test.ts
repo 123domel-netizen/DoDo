@@ -23,6 +23,8 @@ function pollMsg(votes: { userId: string; optionId: string }[]): ChatMessage {
     createdAt: "2026-07-17T10:00:00.000Z",
     editedAt: null,
     deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
     votes: votes.map((v) => ({ messageId: "p1", ...v })),
   };
 }

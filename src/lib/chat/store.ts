@@ -2,9 +2,11 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { idbStorage } from "@/lib/idbStorage";
 import {
+  applyFocusIncoming,
   applyMessageToOverview,
   markOverviewRead,
   mergeMessages,
+  reconcilePinnedList,
   trimList,
   upsertMessageInList,
 } from "@/lib/chat/feed";
@@ -15,6 +17,7 @@ import type {
   ChatOverviewEntry,
   ChatProfile,
   ChatReaction,
+  FocusFeed,
   OutboxEntry,
   PollVote,
 } from "@/lib/chat/types";
@@ -31,6 +34,10 @@ interface ChatState {
   hasMoreByConv: Record<string, boolean>;
   replyCounts: Record<string, number>;
   threadByRoot: Record<string, ChatMessage[]>;
+  /** Przypięte wątki per rozmowa (porządek: najnowsze przypięcie pierwsze). */
+  pinnedByConv: Record<string, ChatMessage[]>;
+  /** Okno kontekstowe wokół kotwicy (skok do starej wiadomości). */
+  focusFeed: FocusFeed | null;
   outbox: OutboxEntry[];
   activeConversationId: string | null;
   activeThreadRootId: string | null;
@@ -50,6 +57,10 @@ interface ChatState {
   applyIncomingMessage: (msg: ChatMessage, documentVisible: boolean) => boolean;
   setThreadMessages: (rootId: string, messages: ChatMessage[]) => void;
   setReplyCounts: (counts: Record<string, number>) => void;
+  setPinnedMessages: (conversationId: string, messages: ChatMessage[]) => void;
+  setFocusFeed: (feed: FocusFeed | null) => void;
+  prependFocusMessages: (messages: ChatMessage[], hasOlder: boolean) => void;
+  appendFocusMessages: (messages: ChatMessage[], hasNewer: boolean) => void;
   enqueueOutbox: (entry: OutboxEntry) => void;
   updateOutbox: (messageId: string, patch: Partial<OutboxEntry>) => void;
   removeFromOutbox: (messageId: string) => void;
@@ -78,6 +89,8 @@ function emptyState() {
     hasMoreByConv: {} as Record<string, boolean>,
     replyCounts: {} as Record<string, number>,
     threadByRoot: {} as Record<string, ChatMessage[]>,
+    pinnedByConv: {} as Record<string, ChatMessage[]>,
+    focusFeed: null as FocusFeed | null,
     outbox: [] as OutboxEntry[],
     activeConversationId: null as string | null,
     activeThreadRootId: null as string | null,
@@ -85,13 +98,18 @@ function emptyState() {
   };
 }
 
-/** Zastosuj zmianę do wiadomości o danym id wszędzie w cache (feed + wątki). */
+type CacheSlices = Pick<
+  ChatState,
+  "messagesByConv" | "threadByRoot" | "pinnedByConv" | "focusFeed"
+>;
+
+/** Zastosuj zmianę do wiadomości o danym id wszędzie w cache (feed + wątki + przypięte + okno kontekstowe). */
 function patchMessageById(
-  s: Pick<ChatState, "messagesByConv" | "threadByRoot">,
+  s: CacheSlices,
   messageId: string,
   update: (msg: ChatMessage) => ChatMessage,
-): Partial<Pick<ChatState, "messagesByConv" | "threadByRoot">> {
-  const out: Partial<Pick<ChatState, "messagesByConv" | "threadByRoot">> = {};
+): Partial<CacheSlices> {
+  const out: Partial<CacheSlices> = {};
   for (const [convId, list] of Object.entries(s.messagesByConv)) {
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx < 0) continue;
@@ -110,15 +128,39 @@ function patchMessageById(
       [rootId]: next,
     };
   }
+  for (const [convId, list] of Object.entries(s.pinnedByConv)) {
+    const idx = list.findIndex((m) => m.id === messageId);
+    if (idx < 0) continue;
+    const next = [...list];
+    next[idx] = update(next[idx]);
+    out.pinnedByConv = { ...s.pinnedByConv, [convId]: next };
+    break;
+  }
+  if (s.focusFeed) {
+    const idx = s.focusFeed.messages.findIndex((m) => m.id === messageId);
+    if (idx >= 0) {
+      const next = [...s.focusFeed.messages];
+      next[idx] = update(next[idx]);
+      out.focusFeed = { ...s.focusFeed, messages: next };
+    }
+  }
   return out;
 }
 
-/** Zaktualizuj wiadomość wszędzie tam, gdzie jest w cache (feed + wątki). */
-function patchEverywhere(
-  s: Pick<ChatState, "messagesByConv" | "threadByRoot">,
+/** Przypięte wątki rozmowy po zmianie stanu wiadomości (pin/unpin/delete). */
+function reconcilePinned(
+  s: Pick<ChatState, "pinnedByConv">,
   msg: ChatMessage,
-): Partial<Pick<ChatState, "messagesByConv" | "threadByRoot">> {
-  const out: Partial<Pick<ChatState, "messagesByConv" | "threadByRoot">> = {};
+): Partial<Pick<ChatState, "pinnedByConv">> {
+  const next = reconcilePinnedList(s.pinnedByConv[msg.conversationId], msg);
+  return next
+    ? { pinnedByConv: { ...s.pinnedByConv, [msg.conversationId]: next } }
+    : {};
+}
+
+/** Zaktualizuj wiadomość wszędzie tam, gdzie jest w cache (feed + wątki + okno). */
+function patchEverywhere(s: CacheSlices, msg: ChatMessage): Partial<CacheSlices> {
+  const out: Partial<CacheSlices> = {};
   const feed = s.messagesByConv[msg.conversationId];
   if (feed && msg.threadRootId === null) {
     out.messagesByConv = {
@@ -132,6 +174,17 @@ function patchEverywhere(
     out.threadByRoot = {
       ...s.threadByRoot,
       [rootId]: upsertMessageInList(thread, msg),
+    };
+  }
+  if (
+    s.focusFeed &&
+    s.focusFeed.conversationId === msg.conversationId &&
+    msg.threadRootId === null &&
+    s.focusFeed.messages.some((m) => m.id === msg.id)
+  ) {
+    out.focusFeed = {
+      ...s.focusFeed,
+      messages: upsertMessageInList(s.focusFeed.messages, msg),
     };
   }
   return out;
@@ -186,7 +239,10 @@ export const useChatStore = create<ChatState>()(
               }
             : s.replyCounts;
 
-        set({ overview, replyCounts, ...patches });
+        const focusNext = applyFocusIncoming(patches.focusFeed ?? s.focusFeed, msg);
+        const focusPatch = focusNext ? { focusFeed: focusNext } : {};
+
+        set({ overview, replyCounts, ...patches, ...focusPatch });
         return known;
       },
 
@@ -201,6 +257,39 @@ export const useChatStore = create<ChatState>()(
 
       setReplyCounts: (counts) =>
         set((s) => ({ replyCounts: { ...s.replyCounts, ...counts } })),
+
+      setPinnedMessages: (conversationId, messages) =>
+        set((s) => ({
+          pinnedByConv: { ...s.pinnedByConv, [conversationId]: messages },
+        })),
+
+      setFocusFeed: (feed) => set({ focusFeed: feed }),
+
+      prependFocusMessages: (messages, hasOlder) =>
+        set((s) =>
+          s.focusFeed
+            ? {
+                focusFeed: {
+                  ...s.focusFeed,
+                  messages: mergeMessages(s.focusFeed.messages, messages),
+                  hasOlder,
+                },
+              }
+            : {},
+        ),
+
+      appendFocusMessages: (messages, hasNewer) =>
+        set((s) =>
+          s.focusFeed
+            ? {
+                focusFeed: {
+                  ...s.focusFeed,
+                  messages: mergeMessages(s.focusFeed.messages, messages),
+                  hasNewer,
+                },
+              }
+            : {},
+        ),
 
       enqueueOutbox: (entry) =>
         set((s) => {
@@ -234,7 +323,8 @@ export const useChatStore = create<ChatState>()(
           outbox: s.outbox.filter((e) => e.message.id !== messageId),
         })),
 
-      markMessageState: (msg) => set((s) => patchEverywhere(s, msg)),
+      markMessageState: (msg) =>
+        set((s) => ({ ...patchEverywhere(s, msg), ...reconcilePinned(s, msg) })),
 
       attachToMessage: (att) =>
         set((s) => {
@@ -296,7 +386,7 @@ export const useChatStore = create<ChatState>()(
       setFlashMessage: (id) => set({ flashMessageId: id }),
 
       setActiveConversation: (id) =>
-        set({ activeConversationId: id, activeThreadRootId: null }),
+        set({ activeConversationId: id, activeThreadRootId: null, focusFeed: null }),
 
       setActiveThread: (rootId) => set({ activeThreadRootId: rootId }),
 

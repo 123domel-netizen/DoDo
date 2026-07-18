@@ -103,6 +103,29 @@ export async function openConversation(conversationId: string) {
   st.setActiveConversation(conversationId);
   markRead(conversationId);
   await loadConversationMessages(conversationId);
+  void loadPinnedMessages(conversationId);
+}
+
+export async function loadPinnedMessages(conversationId: string) {
+  const pinned = await api.fetchPinnedMessages(conversationId);
+  useChatStore.getState().setPinnedMessages(conversationId, pinned);
+}
+
+/** Przypnij/odepnij wątek (optimistic; realtime UPDATE dosynchronizuje innych). */
+export async function pinThreadMessage(msg: ChatMessage, pinned: boolean) {
+  const st = useChatStore.getState();
+  if (msg.sendState) return;
+  const optimistic: ChatMessage = {
+    ...msg,
+    pinnedAt: pinned ? new Date().toISOString() : null,
+    pinnedBy: pinned ? st.userId : null,
+  };
+  st.markMessageState(optimistic);
+  const { error } = await api.setMessagePinned(msg.id, pinned);
+  if (error) {
+    console.warn("[chat] pin thread failed:", error);
+    st.markMessageState(msg);
+  }
 }
 
 export async function loadOlderMessages(conversationId: string) {
@@ -151,6 +174,8 @@ export function buildOutgoingMessage(opts: SendOptions, userId: string): ChatMes
     createdAt: new Date().toISOString(),
     editedAt: null,
     deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
     links: [],
     attachments: [],
     reactions: [],
@@ -456,24 +481,90 @@ export async function markUnread(conversationId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Skok do wiadomości (cytat / wynik wyszukiwania) — dociąga starsze strony
+// Skok do wiadomości (cytat / decyzja / notatka / wynik wyszukiwania):
+// wiadomość w załadowanym feedzie → flash; poza nim → okno kontekstowe ±10
+// doładowywane w obie strony (bez dociągania całej historii).
 // ---------------------------------------------------------------------------
 
 export async function jumpToMessage(conversationId: string, messageId: string) {
   const st = useChatStore.getState();
-  const inFeed = () =>
-    (useChatStore.getState().messagesByConv[conversationId] ?? []).some(
-      (m) => m.id === messageId,
+
+  const focus = st.focusFeed;
+  if (focus?.conversationId === conversationId) {
+    const inFocus = focus.messages.find(
+      (m) => m.id === messageId || m.threadRootId === messageId,
     );
-  if (!inFeed()) {
-    for (let i = 0; i < 6; i++) {
-      if (!useChatStore.getState().hasMoreByConv[conversationId]) break;
-      await loadOlderMessages(conversationId);
-      if (inFeed()) break;
+    if (inFocus) {
+      st.setFlashMessage(inFocus.threadRootId ?? messageId);
+      return;
     }
   }
-  if (inFeed()) {
+
+  const tail = st.messagesByConv[conversationId] ?? [];
+  const inTail = tail.find((m) => m.id === messageId);
+  if (inTail && !inTail.threadRootId) {
+    st.setFocusFeed(null);
     st.setFlashMessage(messageId);
+    return;
+  }
+
+  const ctx = await api.fetchMessagesAround(conversationId, messageId);
+  if (!ctx || !ctx.messages.length) return;
+  const after = useChatStore.getState();
+  after.setFocusFeed({
+    conversationId,
+    anchorId: ctx.pivotId,
+    messages: ctx.messages,
+    hasOlder: ctx.hasOlder,
+    hasNewer: ctx.hasNewer,
+  });
+  // Kotwica w wątku → flashuje jej root (kontekst głównego feedu).
+  after.setFlashMessage(ctx.pivotId);
+  const counts = await api.fetchReplyCounts(ctx.messages.map((m) => m.id));
+  if (Object.keys(counts).length) useChatStore.getState().setReplyCounts(counts);
+}
+
+let focusLoading = false;
+
+export async function loadOlderFocus() {
+  const focus = useChatStore.getState().focusFeed;
+  if (!focus || !focus.hasOlder || focusLoading) return;
+  focusLoading = true;
+  try {
+    const oldest = focus.messages[0];
+    if (!oldest) return;
+    const { messages, hasMore } = await api.fetchMessagesPage(focus.conversationId, {
+      createdAt: oldest.createdAt,
+    });
+    useChatStore.getState().prependFocusMessages(messages, hasMore);
+  } finally {
+    focusLoading = false;
+  }
+}
+
+export async function loadNewerFocus() {
+  const focus = useChatStore.getState().focusFeed;
+  if (!focus || !focus.hasNewer || focusLoading) return;
+  focusLoading = true;
+  try {
+    const newest = focus.messages[focus.messages.length - 1];
+    if (!newest) return;
+    const { messages, hasMore } = await api.fetchNewerMessages(focus.conversationId, {
+      createdAt: newest.createdAt,
+    });
+    useChatStore.getState().appendFocusMessages(messages, hasMore);
+  } finally {
+    focusLoading = false;
+  }
+}
+
+/** Wyjście z okna kontekstowego z powrotem do ogona rozmowy. */
+export function returnToLatest(conversationId: string) {
+  const st = useChatStore.getState();
+  st.setFocusFeed(null);
+  st.setFlashMessage(null);
+  if (!(st.messagesByConv[conversationId] ?? []).length) {
+    void loadConversationMessages(conversationId);
   }
 }
 

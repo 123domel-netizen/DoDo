@@ -5,6 +5,7 @@ import type {
   ChatItemLink,
   ChatMemberInfo,
   ChatMessage,
+  ChatNote,
   ChatOverviewEntry,
   ChatProfile,
   ChatReaction,
@@ -14,6 +15,7 @@ import type {
   MessageRevision,
   PollVote,
   PublicChannelInfo,
+  ThreadListEntry,
 } from "@/lib/chat/types";
 
 export const MESSAGES_PAGE_SIZE = 40;
@@ -69,6 +71,8 @@ export function rowToMessage(row: Row, withNested: boolean): ChatMessage {
     createdAt: row.created_at as string,
     editedAt: (row.edited_at as string | null) ?? null,
     deletedAt: (row.deleted_at as string | null) ?? null,
+    pinnedAt: (row.pinned_at as string | null) ?? null,
+    pinnedBy: (row.pinned_by as string | null) ?? null,
   };
   if (withNested) {
     const links = (row.message_item_links as Row[] | null) ?? [];
@@ -190,6 +194,99 @@ export async function fetchMessagesPage(
   const rows = (data as unknown as Row[]) ?? [];
   const messages = rows.map((r) => rowToMessage(r, true)).reverse();
   return { messages, hasMore: rows.length === MESSAGES_PAGE_SIZE };
+}
+
+/** Nowsze wiadomości (feed kontekstowy przewijany w dół). */
+export async function fetchNewerMessages(
+  conversationId: string,
+  after: { createdAt: string },
+  limit = MESSAGES_PAGE_SIZE,
+): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
+  if (!supabase) return { messages: [], hasMore: false };
+  const { data, error } = await supabase
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .eq("conversation_id", conversationId)
+    .is("thread_root_id", null)
+    .gt("created_at", after.createdAt)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(limit);
+  if (error) {
+    console.warn("[chat] newer fetch failed:", error.message);
+    return { messages: [], hasMore: false };
+  }
+  const rows = (data as unknown as Row[]) ?? [];
+  return {
+    messages: rows.map((r) => rowToMessage(r, true)),
+    hasMore: rows.length === limit,
+  };
+}
+
+export const CONTEXT_WINDOW = 10;
+
+/**
+ * Okno kontekstowe wokół wiadomości: kotwica + do 10 przed i 10 po
+ * (skok do decyzji/notatki/wyniku wyszukiwania bez dociągania całej historii).
+ */
+export async function fetchMessagesAround(
+  conversationId: string,
+  messageId: string,
+): Promise<{
+  messages: ChatMessage[];
+  hasOlder: boolean;
+  hasNewer: boolean;
+  /** Wiadomość-kotwica w głównym feedzie (root, gdy cel był odpowiedzią w wątku). */
+  pivotId: string;
+} | null> {
+  if (!supabase) return null;
+  const { data: anchorRow } = await supabase
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .eq("id", messageId)
+    .maybeSingle();
+  if (!anchorRow) return null;
+  const anchor = rowToMessage(anchorRow as unknown as Row, true);
+
+  // Kotwica w wątku → kontekstem jest jej root w głównym feedzie.
+  const pivot = anchor.threadRootId
+    ? await fetchMessageById(anchor.threadRootId)
+    : anchor;
+  if (!pivot) return null;
+
+  const [olderRes, newerRes] = await Promise.all([
+    supabase
+      .from("messages")
+      .select(MESSAGE_SELECT)
+      .eq("conversation_id", conversationId)
+      .is("thread_root_id", null)
+      .lt("created_at", pivot.createdAt)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(CONTEXT_WINDOW),
+    supabase
+      .from("messages")
+      .select(MESSAGE_SELECT)
+      .eq("conversation_id", conversationId)
+      .is("thread_root_id", null)
+      .gt("created_at", pivot.createdAt)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(CONTEXT_WINDOW),
+  ]);
+  const olderRows = ((olderRes.data as unknown as Row[]) ?? []).map((r) =>
+    rowToMessage(r, true),
+  );
+  const newerRows = ((newerRes.data as unknown as Row[]) ?? []).map((r) =>
+    rowToMessage(r, true),
+  );
+  const hasOlder = olderRows.length === CONTEXT_WINDOW;
+  return {
+    messages: [...olderRows.reverse(), pivot, ...newerRows],
+    hasOlder,
+    hasNewer: newerRows.length === CONTEXT_WINDOW,
+    pivotId: pivot.id,
+  };
 }
 
 export async function fetchThreadMessages(rootId: string): Promise<ChatMessage[]> {
@@ -407,6 +504,118 @@ export async function deleteDecision(id: string): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { error } = await supabase.from("decisions").delete().eq("id", id);
   return error ? { error: error.message } : {};
+}
+
+function rowToNote(r: Row): ChatNote {
+  return {
+    id: r.id as string,
+    conversationId: r.conversation_id as string,
+    messageId: (r.message_id as string | null) ?? null,
+    body: (r.body as string) ?? "",
+    createdBy: r.created_by as string,
+    notedAt: r.noted_at as string,
+  };
+}
+
+export async function fetchNotes(conversationId: string): Promise<ChatNote[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("notes")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("noted_at", { ascending: false });
+  if (error) return [];
+  return ((data as Row[]) ?? []).map(rowToNote);
+}
+
+export async function addNote(input: {
+  conversationId: string;
+  messageId: string | null;
+  body: string;
+  createdBy: string;
+}): Promise<{ note?: ChatNote; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { data, error } = await supabase
+    .from("notes")
+    .insert({
+      conversation_id: input.conversationId,
+      message_id: input.messageId,
+      body: input.body,
+      created_by: input.createdBy,
+    })
+    .select()
+    .single();
+  if (error) return { error: error.message };
+  return { note: rowToNote(data as Row) };
+}
+
+export async function deleteNote(id: string): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.from("notes").delete().eq("id", id);
+  return error ? { error: error.message } : {};
+}
+
+// ---------------------------------------------------------------------------
+// Przypinanie wątków / lista wątków
+// ---------------------------------------------------------------------------
+
+export async function setMessagePinned(
+  messageId: string,
+  pinned: boolean,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("set_message_pinned", {
+    p_message_id: messageId,
+    p_pinned: pinned,
+  });
+  return error ? { error: error.message } : {};
+}
+
+/** Przypięte wątki rozmowy (najnowsze przypięcia pierwsze). */
+export async function fetchPinnedMessages(
+  conversationId: string,
+): Promise<ChatMessage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .eq("conversation_id", conversationId)
+    .not("pinned_at", "is", null)
+    .is("deleted_at", null)
+    .order("pinned_at", { ascending: false })
+    .limit(100);
+  if (error) return [];
+  return ((data as unknown as Row[]) ?? []).map((r) => rowToMessage(r, true));
+}
+
+/** Wątki rozmowy: rooty z ≥1 odpowiedzią + liczby odpowiedzi (2 zapytania). */
+export async function fetchThreadsList(
+  conversationId: string,
+): Promise<ThreadListEntry[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("messages")
+    .select("thread_root_id")
+    .eq("conversation_id", conversationId)
+    .not("thread_root_id", "is", null)
+    .is("deleted_at", null);
+  if (error) return [];
+  const counts = new Map<string, number>();
+  for (const row of (data as Row[]) ?? []) {
+    const id = row.thread_root_id as string;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  if (!counts.size) return [];
+  const { data: rootRows, error: rootErr } = await supabase
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .in("id", [...counts.keys()])
+    .order("created_at", { ascending: false });
+  if (rootErr) return [];
+  return ((rootRows as unknown as Row[]) ?? []).map((r) => {
+    const root = rowToMessage(r, true);
+    return { root, replyCount: counts.get(root.id) ?? 0 };
+  });
 }
 
 /** Wiadomości, w których mnie oznaczono (filtr wzmianek). */

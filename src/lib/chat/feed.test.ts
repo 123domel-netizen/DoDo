@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyFocusIncoming,
   applyMessageToOverview,
   isMuted,
   markOverviewRead,
   mergeMessages,
   overviewTitle,
+  reconcilePinnedList,
   sortOverview,
   totalUnread,
   trimList,
   upsertMessageInList,
 } from "@/lib/chat/feed";
-import type { ChatMessage, ChatOverviewEntry } from "@/lib/chat/types";
+import type { ChatMessage, ChatOverviewEntry, FocusFeed } from "@/lib/chat/types";
 
 function msg(partial: Partial<ChatMessage>): ChatMessage {
   return {
@@ -26,6 +28,8 @@ function msg(partial: Partial<ChatMessage>): ChatMessage {
     createdAt: "2026-07-17T10:00:00.000Z",
     editedAt: null,
     deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
     ...partial,
   };
 }
@@ -236,5 +240,106 @@ describe("overviewTitle", () => {
         () => undefined,
       ),
     ).toBe("Ola");
+  });
+});
+
+describe("reconcilePinnedList (CHAT6: przypinanie wątków)", () => {
+  it("dodaje przypiętą wiadomość i sortuje: najnowsze przypięcie pierwsze", () => {
+    const a = msg({ id: "a", pinnedAt: "2026-07-18T10:00:00.000Z" });
+    const b = msg({ id: "b", pinnedAt: "2026-07-18T11:00:00.000Z" });
+    const withA = reconcilePinnedList(undefined, a);
+    expect(withA?.map((m) => m.id)).toEqual(["a"]);
+    const withBoth = reconcilePinnedList(withA!, b);
+    expect(withBoth?.map((m) => m.id)).toEqual(["b", "a"]);
+  });
+
+  it("usuwa z listy po odpięciu i po skasowaniu wiadomości", () => {
+    const a = msg({ id: "a", pinnedAt: "2026-07-18T10:00:00.000Z" });
+    const list = reconcilePinnedList(undefined, a)!;
+    expect(reconcilePinnedList(list, msg({ id: "a", pinnedAt: null }))).toEqual([]);
+    expect(
+      reconcilePinnedList(
+        list,
+        msg({
+          id: "a",
+          pinnedAt: "2026-07-18T10:00:00.000Z",
+          deletedAt: "2026-07-18T12:00:00.000Z",
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("zwraca null, gdy nic się nie zmienia (nieprzypięta spoza listy)", () => {
+    expect(reconcilePinnedList(undefined, msg({ id: "x" }))).toBeNull();
+    const list = [msg({ id: "a", pinnedAt: "2026-07-18T10:00:00.000Z" })];
+    expect(reconcilePinnedList(list, msg({ id: "x" }))).toBeNull();
+  });
+
+  it("odpowiedzi w wątkach nie trafiają na listę przypiętych", () => {
+    expect(
+      reconcilePinnedList(
+        undefined,
+        msg({ id: "r", threadRootId: "root", pinnedAt: "2026-07-18T10:00:00.000Z" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("aktualizacja przypiętej zachowuje znane zagnieżdżenia", () => {
+    const withAtt = {
+      ...msg({ id: "a", pinnedAt: "2026-07-18T10:00:00.000Z" }),
+      attachments: [
+        {
+          id: "att1",
+          messageId: "a",
+          bucketPath: "p",
+          thumbPath: null,
+          fileName: "f.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+          width: null,
+          height: null,
+        },
+      ],
+    };
+    const list = reconcilePinnedList(undefined, withAtt)!;
+    const updated = reconcilePinnedList(
+      list,
+      msg({ id: "a", body: "edytowana", pinnedAt: "2026-07-18T10:00:00.000Z" }),
+    )!;
+    expect(updated[0].body).toBe("edytowana");
+    expect(updated[0].attachments?.[0].id).toBe("att1");
+  });
+});
+
+describe("applyFocusIncoming (CHAT6: okno kontekstowe)", () => {
+  const focusBase: FocusFeed = {
+    conversationId: "c1",
+    anchorId: "anchor",
+    messages: [msg({ id: "anchor" })],
+    hasOlder: true,
+    hasNewer: false,
+  };
+
+  it("dopisuje nową wiadomość, gdy okno doładowane do końca", () => {
+    const incoming = msg({ id: "new", createdAt: "2026-07-18T12:00:00.000Z" });
+    const next = applyFocusIncoming(focusBase, incoming);
+    expect(next?.messages.map((m) => m.id)).toEqual(["anchor", "new"]);
+  });
+
+  it("ignoruje, gdy okno ma jeszcze nowsze strony (hasNewer)", () => {
+    expect(
+      applyFocusIncoming({ ...focusBase, hasNewer: true }, msg({ id: "new" })),
+    ).toBeNull();
+  });
+
+  it("ignoruje inne rozmowy, wątki i duplikaty", () => {
+    expect(
+      applyFocusIncoming(focusBase, msg({ id: "n", conversationId: "c2" })),
+    ).toBeNull();
+    expect(
+      applyFocusIncoming(focusBase, msg({ id: "n", threadRootId: "anchor" })),
+    ).toBeNull();
+    expect(applyFocusIncoming(focusBase, msg({ id: "anchor" }))).toBeNull();
+    expect(applyFocusIncoming(null, msg({ id: "n" }))).toBeNull();
   });
 });

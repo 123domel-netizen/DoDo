@@ -115,6 +115,9 @@ export interface ChatMessage {
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+  /** Przypięcie wątku do rozmowy (wspólne dla wszystkich członków). */
+  pinnedAt: string | null;
+  pinnedBy: string | null;
   /** undefined = nieznane (np. event realtime bez zagnieżdżeń) — nie nadpisywać. */
   links?: ChatItemLink[];
   attachments?: ChatAttachment[];
@@ -161,6 +164,33 @@ export interface ChatDecision {
   body: string;
   createdBy: string;
   decidedAt: string;
+}
+
+export interface ChatNote {
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  body: string;
+  createdBy: string;
+  notedAt: string;
+}
+
+/** Wpis listy wątków rozmowy (root + liczba odpowiedzi). */
+export interface ThreadListEntry {
+  root: ChatMessage;
+  replyCount: number;
+}
+
+/**
+ * Feed kontekstowy: okno wiadomości wokół kotwicy (skok do decyzji/notatki/
+ * cytatu spoza ogona) — doładowywane w obie strony, niezależne od ogona.
+ */
+export interface FocusFeed {
+  conversationId: string;
+  anchorId: string;
+  messages: ChatMessage[];
+  hasOlder: boolean;
+  hasNewer: boolean;
 }
 
 /** Krótka etykieta podglądu dla kindów specjalnych (lista rozmów, push). */

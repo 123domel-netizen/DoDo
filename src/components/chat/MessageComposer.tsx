@@ -51,6 +51,8 @@ interface MessageComposerProps {
   onSendVoice?: (file: File, durationSec: number) => void | Promise<void>;
   onSendPoll?: (question: string, options: string[]) => void;
   onSendGif?: (url: string) => void;
+  /** Sygnał „piszę" (throttling po stronie odbiorcy hooka). */
+  onTyping?: () => void;
   disabled?: boolean;
   allowFiles?: boolean;
   autoFocus?: boolean;
@@ -69,6 +71,7 @@ export function MessageComposer({
   onSendVoice,
   onSendPoll,
   onSendGif,
+  onTyping,
   disabled = false,
   allowFiles = true,
   autoFocus = false,
@@ -398,6 +401,7 @@ export function MessageComposer({
               setBody(e.target.value);
               autoGrow();
               refreshMention();
+              if (!editing && e.target.value.trim()) onTyping?.();
             }}
             onKeyUp={refreshMention}
             onClick={refreshMention}

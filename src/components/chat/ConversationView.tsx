@@ -1,18 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
   ArrowLeft,
   AtSign,
   Bell,
   BellOff,
   ChevronUp,
   FolderOpen,
+  Gavel,
   Hash,
   LogOut,
   MailOpen,
   MessageSquare,
+  MessagesSquare,
   MoreVertical,
   Pin,
   PinOff,
+  StickyNote,
   User,
   Users,
 } from "lucide-react";
@@ -24,13 +28,17 @@ import {
   deleteChatMessage,
   editChatMessage,
   jumpToMessage,
+  loadNewerFocus,
+  loadOlderFocus,
   loadOlderMessages,
   markRead,
   markUnread,
   muteConversation,
   openThread,
   pinConversation,
+  pinThreadMessage,
   retryFailedMessage,
+  returnToLatest,
   scheduleOverviewRefresh,
   sendChatMessage,
   sendChatMessageWithFiles,
@@ -46,8 +54,18 @@ import {
   leaveConversation,
   setConversationNotify,
 } from "@/lib/chat/api";
-import { beginConvertMessageToItem, saveMessageAsDecision } from "@/lib/chat/convert";
+import {
+  beginConvertMessageToItem,
+  saveMessageAsDecision,
+  saveMessageAsNote,
+} from "@/lib/chat/convert";
 import { isOnline } from "@/lib/chat/presence";
+import {
+  TYPING_EXPIRE_MS,
+  joinTyping,
+  typingLabel,
+  type TypingHandle,
+} from "@/lib/chat/typing";
 import type { ChatMessage, ChatProfile } from "@/lib/chat/types";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { MessageComposer, type ReplyTarget } from "@/components/chat/MessageComposer";
@@ -57,7 +75,9 @@ import {
 } from "@/components/chat/MessageActionsSheet";
 import { EditHistoryModal } from "@/components/chat/EditHistoryModal";
 import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
-import { DecisionsView } from "@/components/chat/DecisionsView";
+import { RegistryView, type RegistryMode } from "@/components/chat/RegistryView";
+import { PinnedThreadsBar } from "@/components/chat/PinnedThreadsBar";
+import { ThreadsSheet } from "@/components/chat/ThreadsSheet";
 
 interface ConversationViewProps {
   conversationId: string;
@@ -81,8 +101,11 @@ function MessageFeed({
   quotedLookup,
   flashMessageId,
   replyCounts,
-  hasMore,
+  hasOlder,
   onLoadOlder,
+  hasNewer = false,
+  onLoadNewer,
+  initialBottom = true,
   onOpenThread,
   onOpenActions,
   onJumpTo,
@@ -95,35 +118,48 @@ function MessageFeed({
   quotedLookup: (id: string) => ChatMessage | null;
   flashMessageId: string | null;
   replyCounts: Record<string, number>;
-  hasMore: boolean;
-  onLoadOlder?: () => void;
+  hasOlder: boolean;
+  onLoadOlder?: () => void | Promise<void>;
+  hasNewer?: boolean;
+  onLoadNewer?: () => void | Promise<void>;
+  /** false w oknie kontekstowym — start przy kotwicy, nie na dole. */
+  initialBottom?: boolean;
   onOpenThread?: (rootId: string) => void;
-  onOpenActions: (msg: ChatMessage) => void;
+  onOpenActions: (msg: ChatMessage, anchor: DOMRect) => void;
   onJumpTo: (messageId: string) => void;
   inThread?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const stickToBottom = useRef(true);
+  const stickToBottom = useRef(initialBottom);
   const lastCount = useRef(0);
+  const loadingOlder = useRef(false);
+  const loadingNewer = useRef(false);
+  /** scrollHeight sprzed dołożenia starszych — do zakotwiczenia pozycji. */
+  const anchorHeight = useRef<number | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     if (messages.length !== lastCount.current) {
       lastCount.current = messages.length;
-      if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+      if (anchorHeight.current !== null) {
+        el.scrollTop += el.scrollHeight - anchorHeight.current;
+        anchorHeight.current = null;
+      } else if (stickToBottom.current) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
   }, [messages]);
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-    // przy zmianie rozmowy zawsze dół
-    stickToBottom.current = true;
+    if (el && initialBottom) el.scrollTop = el.scrollHeight;
+    stickToBottom.current = initialBottom;
+    // przy zmianie rozmowy / trybu zawsze od nowa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Skok do podświetlonej wiadomości (cytat / media / decyzje).
+  // Skok do podświetlonej wiadomości (cytat / media / decyzje / notatki).
   useEffect(() => {
     if (!flashMessageId || !scrollRef.current) return;
     const el = scrollRef.current.querySelector(
@@ -135,20 +171,45 @@ function MessageFeed({
     }
   }, [flashMessageId, messages.length]);
 
+  const triggerOlder = () => {
+    const el = scrollRef.current;
+    if (!el || !hasOlder || !onLoadOlder || loadingOlder.current) return;
+    loadingOlder.current = true;
+    anchorHeight.current = el.scrollHeight;
+    void Promise.resolve(onLoadOlder()).finally(() => {
+      loadingOlder.current = false;
+      // Fetch bez zmian (błąd/koniec) → kotwica nie może zostać na później.
+      setTimeout(() => {
+        anchorHeight.current = null;
+      }, 250);
+    });
+  };
+
+  const triggerNewer = () => {
+    if (!hasNewer || !onLoadNewer || loadingNewer.current) return;
+    loadingNewer.current = true;
+    void Promise.resolve(onLoadNewer()).finally(() => {
+      loadingNewer.current = false;
+    });
+  };
+
   return (
     <div
       ref={scrollRef}
       onScroll={(e) => {
         const el = e.currentTarget;
-        stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        stickToBottom.current = !hasNewer && nearBottom;
+        if (el.scrollTop < 150) triggerOlder();
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) triggerNewer();
       }}
       className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-2"
     >
-      {hasMore && onLoadOlder && (
+      {hasOlder && onLoadOlder && (
         <div className="flex justify-center pb-2">
           <button
             type="button"
-            onClick={onLoadOlder}
+            onClick={triggerOlder}
             className="flex items-center gap-1 rounded-full border border-line bg-surface-raised px-3 py-1 text-[11px] text-ink-light transition hover:border-line-strong hover:text-ink"
           >
             <ChevronUp size={12} /> Pokaż wcześniejsze
@@ -216,6 +277,7 @@ export function ConversationView({
   const replyCounts = useChatStore((s) => s.replyCounts);
   const flashMessageId = useChatStore((s) => s.flashMessageId);
   const setFlashMessage = useChatStore((s) => s.setFlashMessage);
+  const focusFeedRaw = useChatStore((s) => s.focusFeed);
   const threadRootId = useChatStore((s) => (embedded ? null : s.activeThreadRootId));
   const threadMessages = useChatStore((s) =>
     threadRootId ? s.threadByRoot[threadRootId] : undefined,
@@ -223,18 +285,27 @@ export function ConversationView({
   const setActiveThread = useChatStore((s) => s.setActiveThread);
   const items = useStore((s) => s.items);
 
-  const [actionMsg, setActionMsg] = useState<ChatMessage | null>(null);
+  const [actionTarget, setActionTarget] = useState<{
+    msg: ChatMessage;
+    anchor: DOMRect;
+  } | null>(null);
   const [editing, setEditing] = useState<{ id: string; body: string } | null>(null);
   const [replyTo, setReplyTo] = useState<(ReplyTarget & { threadRootId: string | null }) | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [muteMenuOpen, setMuteMenuOpen] = useState(false);
   const [historyMsg, setHistoryMsg] = useState<ChatMessage | null>(null);
   const [showMedia, setShowMedia] = useState(false);
-  const [showDecisions, setShowDecisions] = useState(false);
+  const [registryMode, setRegistryMode] = useState<RegistryMode | null>(null);
+  const [showThreads, setShowThreads] = useState(false);
   const [fetchedQuotes, setFetchedQuotes] = useState<Record<string, ChatMessage | null>>({});
+  const [typing, setTyping] = useState<Record<string, { name: string; at: number }>>({});
+  const typingHandle = useRef<TypingHandle | null>(null);
 
   const entry = overview.find((c) => c.id === conversationId);
+  const focus =
+    !embedded && focusFeedRaw?.conversationId === conversationId ? focusFeedRaw : null;
   const feed = useMemo(() => (messages ?? []).filter((m) => !m.threadRootId), [messages]);
+  const displayedFeed = focus ? focus.messages : feed;
 
   const title = entry
     ? overviewTitle(entry, myUserId, (id) => items[id]?.title)
@@ -257,17 +328,54 @@ export function ConversationView({
   const dmOther = entry?.kind === "dm" ? entry.members.find((m) => m.userId !== myUserId) : null;
   const dmOtherOnline = Boolean(dmOther && isOnline(profiles[dmOther.userId]?.lastSeenAt));
 
+  // Wskaźnik „X pisze…" (Realtime broadcast, wygasa po TYPING_EXPIRE_MS).
+  useEffect(() => {
+    const handle = joinTyping(conversationId, (p) => {
+      if (p.userId === myUserId) return;
+      setTyping((t) => ({ ...t, [p.userId]: { name: p.name, at: Date.now() } }));
+    });
+    typingHandle.current = handle;
+    return () => {
+      handle?.unsubscribe();
+      typingHandle.current = null;
+      setTyping({});
+    };
+  }, [conversationId, myUserId]);
+
+  useEffect(() => {
+    if (!Object.keys(typing).length) return;
+    const t = setInterval(() => {
+      setTyping((prev) => {
+        const now = Date.now();
+        const next = Object.fromEntries(
+          Object.entries(prev).filter(([, v]) => now - v.at < TYPING_EXPIRE_MS),
+        );
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [typing]);
+
+  const notifyTyping = useCallback(() => {
+    if (!myUserId) return;
+    const name = profiles[myUserId]?.displayName || "Ktoś";
+    typingHandle.current?.notify({ userId: myUserId, name });
+  }, [myUserId, profiles]);
+
+  const typingText = typingLabel(Object.values(typing).map((v) => v.name));
+
   // Cytaty: wiadomości spoza załadowanego feedu dociągamy pojedynczo.
   const allLoaded = useMemo(() => {
     const map = new Map<string, ChatMessage>();
     for (const m of messages ?? []) map.set(m.id, m);
+    for (const m of focus?.messages ?? []) map.set(m.id, m);
     for (const m of threadMessages ?? []) map.set(m.id, m);
     return map;
-  }, [messages, threadMessages]);
+  }, [messages, focus?.messages, threadMessages]);
 
   useEffect(() => {
     const missing = new Set<string>();
-    for (const m of feed) {
+    for (const m of displayedFeed) {
       if (
         m.replyToMessageId &&
         !allLoaded.has(m.replyToMessageId) &&
@@ -286,7 +394,7 @@ export function ConversationView({
     return () => {
       cancelled = true;
     };
-  }, [feed, allLoaded, fetchedQuotes]);
+  }, [displayedFeed, allLoaded, fetchedQuotes]);
 
   const quotedLookup = useCallback(
     (id: string) => allLoaded.get(id) ?? fetchedQuotes[id] ?? null,
@@ -317,6 +425,8 @@ export function ConversationView({
     async (body: string, files: File[], mentions: string[]) => {
       const reply = replyTo;
       setReplyTo(null);
+      // Wysyłka z widoku głównego wraca do ogona (nowa wiadomość ląduje na dole).
+      if (!threadRootId) returnToLatest(conversationId);
       if (files.length > 0) {
         const { error } = await sendChatMessageWithFiles({
           conversationId,
@@ -381,6 +491,14 @@ export function ConversationView({
             if (error) alert(error);
           });
           break;
+        case "saveNote":
+          void saveMessageAsNote(msg).then(({ error }) => {
+            if (error) alert(error);
+          });
+          break;
+        case "pinThread":
+          void pinThreadMessage(msg, !msg.pinnedAt);
+          break;
         case "openThread":
           void openThread(msg.threadRootId ?? msg.id);
           break;
@@ -403,11 +521,13 @@ export function ConversationView({
 
   const handleSaveEdit = useCallback(
     (id: string, body: string, mentions: string[]) => {
-      const msg = (messages ?? []).find((m) => m.id === id);
+      const msg =
+        (messages ?? []).find((m) => m.id === id) ??
+        focus?.messages.find((m) => m.id === id);
       setEditing(null);
       if (msg) void editChatMessage(msg, body, mentions);
     },
-    [messages],
+    [messages, focus?.messages],
   );
 
   const muted = entry ? isMuted(entry) : false;
@@ -437,11 +557,17 @@ export function ConversationView({
     replyTo,
     onCancelReply: () => setReplyTo(null),
     onSendVoice: handleSendVoice,
+    onTyping: notifyTyping,
   };
+
+  const headerIconBtn =
+    "rounded-lg p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink";
 
   // ── Widok wątku ──────────────────────────────────────────────────────────
   if (threadRootId) {
-    const rootFromFeed = feed.find((m) => m.id === threadRootId);
+    const rootFromFeed =
+      displayedFeed.find((m) => m.id === threadRootId) ??
+      feed.find((m) => m.id === threadRootId);
     const thread =
       threadMessages ?? (rootFromFeed ? [rootFromFeed] : ([] as ChatMessage[]));
     return (
@@ -450,7 +576,7 @@ export function ConversationView({
           <button
             type="button"
             onClick={() => setActiveThread(null)}
-            className="rounded-lg p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+            className={headerIconBtn}
             aria-label="Wróć do rozmowy"
           >
             <ArrowLeft size={18} />
@@ -469,22 +595,26 @@ export function ConversationView({
           quotedLookup={quotedLookup}
           flashMessageId={flashMessageId}
           replyCounts={replyCounts}
-          hasMore={false}
-          onOpenActions={setActionMsg}
+          hasOlder={false}
+          onOpenActions={(msg, anchor) => setActionTarget({ msg, anchor })}
           onJumpTo={handleJumpTo}
           inThread
         />
+        {typingText && (
+          <div className="px-3 pb-0.5 text-[11px] text-ink-faint">{typingText}</div>
+        )}
         <MessageComposer
           onSend={handleSend}
           placeholder="Odpowiedz w wątku…"
           {...composerShared}
         />
         <MessageActionsSheet
-          msg={actionMsg}
-          mine={actionMsg?.authorUserId === myUserId}
+          msg={actionTarget?.msg ?? null}
+          anchor={actionTarget?.anchor ?? null}
+          mine={actionTarget?.msg.authorUserId === myUserId}
           allowThread={false}
           onAction={handleAction}
-          onClose={() => setActionMsg(null)}
+          onClose={() => setActionTarget(null)}
         />
         <EditHistoryModal
           msg={historyMsg}
@@ -499,18 +629,18 @@ export function ConversationView({
   return (
     <div className={`flex min-h-0 flex-col ${embedded ? "" : "h-full"}`}>
       {!embedded && (
-        <div className="relative flex items-center gap-2 border-b border-line px-2 py-2">
+        <div className="relative flex items-center gap-1.5 border-b border-line px-2 py-2">
           {onBack && (
             <button
               type="button"
               onClick={onBack}
-              className="rounded-lg p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+              className={headerIconBtn}
               aria-label="Wróć do listy rozmów"
             >
               <ArrowLeft size={18} />
             </button>
           )}
-          <span className="relative text-ink-faint">
+          <span className="relative shrink-0 text-ink-faint">
             {entry?.kind === "channel" ? (
               <Hash size={15} />
             ) : entry?.kind === "dm" ? (
@@ -542,17 +672,46 @@ export function ConversationView({
             )}
           </div>
           {entry && (
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen((v) => !v);
-                setMuteMenuOpen(false);
-              }}
-              className="rounded-lg p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-              aria-label="Opcje rozmowy"
-            >
-              <MoreVertical size={17} />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setShowMedia(true)}
+                className={headerIconBtn}
+                aria-label="Media i pliki"
+                title="Media i pliki"
+              >
+                <FolderOpen size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRegistryMode("decisions")}
+                className={headerIconBtn}
+                aria-label="Decyzje"
+                title="Decyzje"
+              >
+                <Gavel size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRegistryMode("notes")}
+                className={headerIconBtn}
+                aria-label="Notatki"
+                title="Notatki"
+              >
+                <StickyNote size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen((v) => !v);
+                  setMuteMenuOpen(false);
+                }}
+                className={headerIconBtn}
+                aria-label="Opcje rozmowy"
+              >
+                <MoreVertical size={17} />
+              </button>
+            </>
           )}
           {menuOpen && entry && (
             <>
@@ -563,6 +722,17 @@ export function ConversationView({
                 onClick={() => setMenuOpen(false)}
               />
               <div className="thin-scrollbar absolute right-2 top-full z-50 mt-1 max-h-[70vh] w-56 overflow-y-auto rounded-xl border border-line bg-surface-overlay p-1 shadow-pop">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowThreads(true);
+                    setMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                >
+                  <MessagesSquare size={14} /> Wątki
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -635,28 +805,6 @@ export function ConversationView({
                   <MailOpen size={14} /> Oznacz jako nieprzeczytane
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMedia(true);
-                    setMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
-                >
-                  <FolderOpen size={14} /> Media i pliki
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowDecisions(true);
-                    setMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
-                >
-                  <Pin size={14} /> Decyzje
-                </button>
-
                 {entry.kind !== "item" && (
                   <button
                     type="button"
@@ -672,35 +820,69 @@ export function ConversationView({
         </div>
       )}
 
+      {!embedded && (
+        <PinnedThreadsBar
+          conversationId={conversationId}
+          profiles={profiles}
+          replyCounts={replyCounts}
+          onOpenThread={(rootId) => void openThread(rootId)}
+          onJumpTo={handleJumpTo}
+        />
+      )}
+
       <MessageFeed
-        messages={feed}
+        key={focus ? `focus-${focus.anchorId}` : "tail"}
+        messages={displayedFeed}
         myUserId={myUserId}
         profiles={profiles}
         mentionNames={mentionNames}
         quotedLookup={quotedLookup}
         flashMessageId={flashMessageId}
         replyCounts={replyCounts}
-        hasMore={hasMore}
-        onLoadOlder={() => void loadOlderMessages(conversationId)}
+        hasOlder={focus ? focus.hasOlder : hasMore}
+        onLoadOlder={
+          focus ? () => loadOlderFocus() : () => loadOlderMessages(conversationId)
+        }
+        hasNewer={focus?.hasNewer ?? false}
+        onLoadNewer={focus ? () => loadNewerFocus() : undefined}
+        initialBottom={!focus}
         onOpenThread={embedded ? undefined : (rootId) => void openThread(rootId)}
-        onOpenActions={setActionMsg}
+        onOpenActions={(msg, anchor) => setActionTarget({ msg, anchor })}
         onJumpTo={handleJumpTo}
       />
+
+      {focus && (
+        <button
+          type="button"
+          onClick={() => returnToLatest(conversationId)}
+          className="flex items-center justify-center gap-1.5 border-t border-line bg-surface-raised/60 px-3 py-1.5 text-[11px] text-accent transition hover:bg-surface-raised"
+        >
+          <ArrowDown size={12} /> Przeglądasz starsze wiadomości — wróć do najnowszych
+        </button>
+      )}
+
+      {typingText && (
+        <div className="px-3 pb-0.5 text-[11px] text-ink-faint">{typingText}</div>
+      )}
 
       <MessageComposer
         onSend={handleSend}
         autoFocus={!embedded}
         onSendPoll={(q, opts) => void sendPollMessage(conversationId, q, opts)}
-        onSendGif={(url) => void sendGifMessage(conversationId, url)}
+        onSendGif={(url) => {
+          returnToLatest(conversationId);
+          void sendGifMessage(conversationId, url);
+        }}
         {...composerShared}
       />
 
       <MessageActionsSheet
-        msg={actionMsg}
-        mine={actionMsg?.authorUserId === myUserId}
+        msg={actionTarget?.msg ?? null}
+        anchor={actionTarget?.anchor ?? null}
+        mine={actionTarget?.msg.authorUserId === myUserId}
         allowThread={!embedded}
         onAction={handleAction}
-        onClose={() => setActionMsg(null)}
+        onClose={() => setActionTarget(null)}
       />
 
       <EditHistoryModal
@@ -717,13 +899,23 @@ export function ConversationView({
         />
       )}
 
-      {showDecisions && (
-        <DecisionsView
+      {registryMode && (
+        <RegistryView
+          mode={registryMode}
           conversationId={conversationId}
           myUserId={myUserId}
           profiles={profiles}
-          onClose={() => setShowDecisions(false)}
+          onClose={() => setRegistryMode(null)}
           onJumpTo={handleJumpTo}
+        />
+      )}
+
+      {showThreads && (
+        <ThreadsSheet
+          conversationId={conversationId}
+          profiles={profiles}
+          onClose={() => setShowThreads(false)}
+          onOpenThread={(rootId) => void openThread(rootId)}
         />
       )}
     </div>

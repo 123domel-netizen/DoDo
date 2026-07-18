@@ -9,6 +9,7 @@ import {
   ExternalLink,
   MessageSquare,
   MoreHorizontal,
+  Pin,
   RotateCw,
 } from "lucide-react";
 import { format, isToday } from "date-fns";
@@ -276,7 +277,7 @@ interface MessageBubbleProps {
   replyCount?: number;
   inThread?: boolean;
   onOpenThread?: (rootId: string) => void;
-  onOpenActions?: (msg: ChatMessage) => void;
+  onOpenActions?: (msg: ChatMessage, anchor: DOMRect) => void;
   onRetry?: (messageId: string) => void;
   onToggleReaction?: (msg: ChatMessage, emoji: string) => void;
   onVote?: (msg: ChatMessage, optionId: string) => void;
@@ -336,6 +337,14 @@ export function MessageBubble({
           </div>
         )}
         <div
+          onContextMenu={
+            !deleted && !pending && !failed && onOpenActions
+              ? (e) => {
+                  e.preventDefault();
+                  onOpenActions(msg, new DOMRect(e.clientX, e.clientY, 0, 0));
+                }
+              : undefined
+          }
           className={`relative rounded-2xl border px-3 py-2 text-sm leading-snug transition-colors ${
             mine
               ? "border-accent/30 bg-accent/15 text-ink"
@@ -443,6 +452,9 @@ export function MessageBubble({
           )}
 
           <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-ink-faint">
+            {msg.pinnedAt && !deleted && (
+              <Pin size={10} className="text-accent" aria-label="Wątek przypięty" />
+            )}
             {msg.editedAt && !deleted && <span>(edytowano)</span>}
             <span>{formatMessageTime(msg.createdAt)}</span>
             {pending && <Clock size={10} aria-label="Wysyłanie…" />}
@@ -494,7 +506,15 @@ export function MessageBubble({
           {!deleted && !pending && !failed && onOpenActions && (
             <button
               type="button"
-              onClick={() => onOpenActions(msg)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenActions(msg, e.currentTarget.getBoundingClientRect());
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onOpenActions(msg, e.currentTarget.getBoundingClientRect());
+              }}
               aria-label="Akcje wiadomości"
               className="rounded p-0.5 text-ink-faint opacity-60 transition hover:bg-surface-overlay hover:text-ink group-hover:opacity-100"
             >

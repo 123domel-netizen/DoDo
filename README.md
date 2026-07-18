@@ -41,22 +41,38 @@ Komunikator (wymaga Supabase; architektura: `docs/KOMUNIKATOR-ARCHITEKTURA-2026-
   oraz **dyskusje przy zadaniach/wydarzeniach** (sekcja „Dyskusja" w edytorze;
   wątek tworzy się przy pierwszym komentarzu, widzą go uczestnicy wpisu)
 - **Wiadomość → obiekt DoDo**: menu wiadomości tworzy z niej **zadanie**,
-  **wydarzenie**, **checklistę** (linie → pozycje) lub zapisuje jako **decyzję**
-  (rejestr ustaleń rozmowy). Konwersje itemów otwierają edytor z prefill; po
-  zapisaniu powstaje link zwrotny (chip przy wiadomości i „Powstało z wiadomości")
+  **wydarzenie**, **checklistę** (linie → pozycje) lub zapisuje jako **decyzję** /
+  **notatkę** (rejestry rozmowy). Konwersje itemów otwierają edytor z prefill; po
+  zapisaniu powstaje link zwrotny (chip przy wiadomości i „Powstało z wiadomości").
+  Rejestry same też konwertują: **notatka/decyzja → zadanie / wydarzenie /
+  checklista / nawzajem** (wymienność obiektów)
 - **Wzmianki `@`** (autouzupełnianie tylko uczestników rozmowy): wyróżnienie
   wiadomości, push, filtr „moje wzmianki" na liście rozmów
 - **Reakcje** (👍 ❤️ 😂 👀 ✅ 🎉) i **ankiety** (jeden głos na osobę, zmiana głosu)
 - **Odpowiedzi z cytatem** (klik cytatu → skok do źródła), **wątki** w stylu Slack
+  z listą wątków rozmowy (menu ⋯) i **przypinaniem wątków** na górze czatu
+  (bez limitu; widoczne 3 + „jeszcze N" z pełną listą i odpinaniem)
+- **Skok do kontekstu**: klik w decyzję/notatkę/cytat spoza załadowanego ogona
+  otwiera okno ±10 wiadomości wokół źródła, doładowywane w obie strony przy
+  przewijaniu, z powrotem „do najnowszych" jednym tapnięciem
 - **Markdown lite** (`**pogrubienie**`, `*kursywa*`, `` `kod` ``, `~~przekreślenie~~`),
-  **wiadomości głosowe** (nagraj/wyślij/odsłuchaj), **GIF-y** (tylko link do
-  dostawcy — Tenor przez `VITE_TENOR_API_KEY` lub wklejony URL), **podgląd linków**
+  **wiadomości głosowe** (nagraj/wyślij/odsłuchaj), **podgląd linków**
   (OG scraping w funkcji `link-preview`)
+- **GIF-y jak w Messengerze**: wyszukiwarka z siatką i wysyłką jednym
+  kliknięciem — działa od razu (GIPHY; własny klucz `VITE_GIPHY_API_KEY`
+  opcjonalnie, `VITE_TENOR_API_KEY` przełącza na Tenor); pliki zostają
+  u dostawcy, DoDo zapisuje tylko URL
 - **Historia edycji** (kto/kiedy/poprzednie wersje), edycja/usuwanie własnych
 - **Ulubione** (przypięte na górze), **wyciszanie** (1 h / 8 h / 24 h / 7 dni /
   na zawsze), **oznacz jako nieprzeczytane**, tryb „tylko wzmianki"
+- **Pasek rozmowy**: przyciski Media / Decyzje / Notatki przy tytule + menu ⋯
+  (wątki, ulubione, wyciszanie, powiadomienia, opuszczenie)
 - **Zakładka Media** per rozmowa (Zdjęcia / Pliki / Linki), **status online**
-  (zielona kropka; heartbeat, online = < 5 min)
+  (zielona kropka; heartbeat, online = < 5 min), wskaźnik **„X pisze…"**
+  (Realtime broadcast, bez zapisu w DB)
+- **Płynne ładowanie historii**: start od ostatniej strony (~40 wiadomości),
+  starsze dociągają się automatycznie przy przewijaniu w górę (z zakotwiczeniem
+  pozycji scrolla)
 - **Załączniki** (zdjęcia z kompresją po stronie klienta, PDF, pliki do 25 MB)
   w prywatnym buckecie Supabase Storage (signed URLs)
 - **Wyszukiwarka** (pole na liście rozmów): wiadomości, zadania/wydarzenia,
@@ -304,7 +320,7 @@ src/
   hooks/        useReminderScheduler
   sw.ts         service worker (offline cache + push + deep-link powiadomień)
 supabase/
-  migrations/   0001_init.sql … 0018_chat_features.sql
+  migrations/   0001_init.sql … 0019_chat_pins_notes.sql
   functions/    auth-allowlist, send-reminders, notify-message, link-preview
   functions/    send-reminders, auth-allowlist, notify-message
 ```

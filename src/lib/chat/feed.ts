@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatOverviewEntry } from "@/lib/chat/types";
+import type { ChatMessage, ChatOverviewEntry, FocusFeed } from "@/lib/chat/types";
 
 /** Klucz porządku feedu: czas serwera, remis rozstrzyga id. */
 function isAfter(a: ChatMessage, b: ChatMessage): boolean {
@@ -42,6 +42,56 @@ export function mergeMessages(list: ChatMessage[], incoming: ChatMessage[]): Cha
 /** Przytnij cache do ostatnich `max` wiadomości (offline czyta ogon). */
 export function trimList(list: ChatMessage[], max: number): ChatMessage[] {
   return list.length <= max ? list : list.slice(list.length - max);
+}
+
+/** Merge z zachowaniem zagnieżdżeń, których event realtime nie niesie. */
+export function mergeKnownNested(prev: ChatMessage, msg: ChatMessage): ChatMessage {
+  return {
+    ...prev,
+    ...msg,
+    links: msg.links ?? prev.links,
+    attachments: msg.attachments ?? prev.attachments,
+    reactions: msg.reactions ?? prev.reactions,
+    votes: msg.votes ?? prev.votes,
+    sendState: msg.sendState,
+  };
+}
+
+/**
+ * Lista przypiętych wątków rozmowy po zmianie stanu wiadomości
+ * (pin/unpin/delete). Zwraca null, gdy lista nie wymaga zmiany.
+ * Porządek: najnowsze przypięcie pierwsze.
+ */
+export function reconcilePinnedList(
+  list: ChatMessage[] | undefined,
+  msg: ChatMessage,
+): ChatMessage[] | null {
+  const shouldBePinned = Boolean(msg.pinnedAt) && !msg.deletedAt && !msg.threadRootId;
+  const idx = (list ?? []).findIndex((m) => m.id === msg.id);
+  if (!shouldBePinned) {
+    if (!list || idx < 0) return null;
+    return list.filter((m) => m.id !== msg.id);
+  }
+  const base = list ?? [];
+  const merged = idx >= 0 ? mergeKnownNested(base[idx], msg) : msg;
+  return [...base.filter((m) => m.id !== msg.id), merged].sort((a, b) =>
+    (b.pinnedAt ?? "").localeCompare(a.pinnedAt ?? ""),
+  );
+}
+
+/**
+ * Dopisz przychodzącą wiadomość do okna kontekstowego doładowanego do końca
+ * (hasNewer=false) — przewijanie w dół schodzi płynnie do teraźniejszości.
+ * Zwraca null, gdy okno nie wymaga zmiany.
+ */
+export function applyFocusIncoming(
+  focus: FocusFeed | null,
+  msg: ChatMessage,
+): FocusFeed | null {
+  if (!focus || focus.conversationId !== msg.conversationId) return null;
+  if (focus.hasNewer || msg.threadRootId !== null) return null;
+  if (focus.messages.some((m) => m.id === msg.id)) return null;
+  return { ...focus, messages: upsertMessageInList(focus.messages, msg) };
 }
 
 export interface OverviewApplyOptions {
