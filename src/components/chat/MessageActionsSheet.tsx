@@ -74,7 +74,13 @@ function ActionRow({
   return (
     <button
       type="button"
-      onClick={onClick}
+      // pointerdown: unikamy „ghost click” po odmontowaniu portalu (który
+      // potrafił od razu zamknąć świeżo otwarty widok wątku).
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
       className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] leading-snug transition ${
         danger
           ? "text-red-400 hover:bg-red-500/10"
@@ -196,7 +202,11 @@ export function MessageActionsSheet({
               key={emoji}
               type="button"
               role="menuitem"
-              onClick={() => act("react", emoji)}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                act("react", emoji);
+              }}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-base transition hover:bg-white/[0.08] hover:scale-110"
               aria-label={`Reaguj ${emoji}`}
             >

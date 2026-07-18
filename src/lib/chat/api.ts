@@ -73,6 +73,7 @@ export function rowToMessage(row: Row, withNested: boolean): ChatMessage {
     deletedAt: (row.deleted_at as string | null) ?? null,
     pinnedAt: (row.pinned_at as string | null) ?? null,
     pinnedBy: (row.pinned_by as string | null) ?? null,
+    threadTitle: (row.thread_title as string | null) ?? null,
   };
   if (withNested) {
     const links = (row.message_item_links as Row[] | null) ?? [];
@@ -479,6 +480,21 @@ export async function fetchDecisions(conversationId: string): Promise<ChatDecisi
   return ((data as Row[]) ?? []).map(rowToDecision);
 }
 
+/** Decyzje ze wskazanych rozmów (hub — lista globalna w ramach membership). */
+export async function fetchDecisionsForConversations(
+  conversationIds: string[],
+): Promise<ChatDecision[]> {
+  if (!supabase || conversationIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("decisions")
+    .select("*")
+    .in("conversation_id", conversationIds)
+    .order("decided_at", { ascending: false })
+    .limit(100);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map(rowToDecision);
+}
+
 export async function addDecision(input: {
   conversationId: string;
   messageId: string | null;
@@ -528,6 +544,21 @@ export async function fetchNotes(conversationId: string): Promise<ChatNote[]> {
   return ((data as Row[]) ?? []).map(rowToNote);
 }
 
+/** Notatki ze wskazanych rozmów (hub — lista globalna w ramach membership). */
+export async function fetchNotesForConversations(
+  conversationIds: string[],
+): Promise<ChatNote[]> {
+  if (!supabase || conversationIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("notes")
+    .select("*")
+    .in("conversation_id", conversationIds)
+    .order("noted_at", { ascending: false })
+    .limit(100);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map(rowToNote);
+}
+
 export async function addNote(input: {
   conversationId: string;
   messageId: string | null;
@@ -567,6 +598,18 @@ export async function setMessagePinned(
   const { error } = await supabase.rpc("set_message_pinned", {
     p_message_id: messageId,
     p_pinned: pinned,
+  });
+  return error ? { error: error.message } : {};
+}
+
+export async function setThreadTitle(
+  messageId: string,
+  title: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("set_thread_title", {
+    p_message_id: messageId,
+    p_title: title,
   });
   return error ? { error: error.message } : {};
 }
@@ -618,6 +661,66 @@ export async function fetchThreadsList(
   });
 }
 
+/** Wątki ze wskazanych rozmów (hub). */
+export async function fetchThreadsForConversations(
+  conversationIds: string[],
+): Promise<(ThreadListEntry & { conversationId: string })[]> {
+  if (!supabase || conversationIds.length === 0) return [];
+  const ids = conversationIds.slice(0, 40);
+  const { data, error } = await supabase
+    .from("messages")
+    .select("thread_root_id, conversation_id")
+    .in("conversation_id", ids)
+    .not("thread_root_id", "is", null)
+    .is("deleted_at", null);
+  if (error) return [];
+  const counts = new Map<string, { conversationId: string; count: number }>();
+  for (const row of (data as Row[]) ?? []) {
+    const rootId = row.thread_root_id as string;
+    const conversationId = row.conversation_id as string;
+    const prev = counts.get(rootId);
+    counts.set(rootId, {
+      conversationId,
+      count: (prev?.count ?? 0) + 1,
+    });
+  }
+  if (!counts.size) return [];
+  const { data: rootRows, error: rootErr } = await supabase
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .in("id", [...counts.keys()])
+    .order("created_at", { ascending: false })
+    .limit(80);
+  if (rootErr) return [];
+  return ((rootRows as unknown as Row[]) ?? []).map((r) => {
+    const root = rowToMessage(r, true);
+    const meta = counts.get(root.id);
+    return {
+      root,
+      replyCount: meta?.count ?? 0,
+      conversationId: meta?.conversationId ?? root.conversationId,
+    };
+  });
+}
+
+/** Przypięte wątki ze wskazanych rozmów (hub). */
+export async function fetchPinnedMessagesForConversations(
+  conversationIds: string[],
+): Promise<ChatMessage[]> {
+  if (!supabase || conversationIds.length === 0) return [];
+  const ids = conversationIds.slice(0, 40);
+  const { data, error } = await supabase
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .in("conversation_id", ids)
+    .not("pinned_at", "is", null)
+    .is("deleted_at", null)
+    .order("pinned_at", { ascending: false })
+    .limit(50);
+  if (error) return [];
+  return ((data as unknown as Row[]) ?? []).map((r) => rowToMessage(r, true));
+}
+
 /** Wiadomości, w których mnie oznaczono (filtr wzmianek). */
 export async function fetchMyMentions(userId: string): Promise<ChatMessage[]> {
   if (!supabase) return [];
@@ -653,6 +756,31 @@ export async function fetchConversationAttachments(
     ...rowToAttachment(r),
     createdAt: r.created_at as string,
   }));
+}
+
+/** Załączniki ze wskazanych rozmów (hub Media). */
+export async function fetchAttachmentsForConversations(
+  conversationIds: string[],
+): Promise<(ConversationAttachment & { conversationId: string })[]> {
+  if (!supabase || conversationIds.length === 0) return [];
+  const ids = conversationIds.slice(0, 40);
+  const { data, error } = await supabase
+    .from("message_attachments")
+    .select("*, messages!inner(conversation_id, deleted_at)")
+    .in("messages.conversation_id", ids)
+    .is("messages.deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map((r) => {
+    const msg = r.messages as Row | Row[] | null;
+    const msgRow = Array.isArray(msg) ? msg[0] : msg;
+    return {
+      ...rowToAttachment(r),
+      createdAt: r.created_at as string,
+      conversationId: (msgRow?.conversation_id as string) ?? "",
+    };
+  });
 }
 
 /** Wiadomości z linkami (zakładka Media → Linki); URL-e wyciąga klient. */
@@ -847,6 +975,44 @@ export async function fetchItemLinks(itemId: string): Promise<ItemSourceLink[]> 
       messageId: row.message_id as string,
       conversationId: msg.conversation_id as string,
       kind: (row.kind as ChatItemLink["kind"]) ?? "reference",
+    });
+  }
+  return out;
+}
+
+export interface RecentItemLink {
+  messageId: string;
+  itemId: string;
+  kind: ChatItemLink["kind"];
+  conversationId: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+/** Ostatnie powiązania wiadomość ↔ wpis (hub „Powiązania”). */
+export async function fetchRecentItemLinks(limit = 50): Promise<RecentItemLink[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("message_item_links")
+    .select(
+      "message_id, item_id, kind, created_at, created_by, messages!inner(conversation_id, deleted_at)",
+    )
+    .is("messages.deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return [];
+  const out: RecentItemLink[] = [];
+  for (const row of (data as Row[]) ?? []) {
+    const msg = row.messages as Row | Row[] | null;
+    const msgRow = Array.isArray(msg) ? msg[0] : msg;
+    if (!msgRow?.conversation_id) continue;
+    out.push({
+      messageId: row.message_id as string,
+      itemId: row.item_id as string,
+      kind: (row.kind as ChatItemLink["kind"]) ?? "reference",
+      conversationId: msgRow.conversation_id as string,
+      createdAt: (row.created_at as string) ?? new Date().toISOString(),
+      createdBy: (row.created_by as string) ?? "",
     });
   }
   return out;

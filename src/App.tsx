@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Toolbar } from "@/components/Toolbar";
 import { CalendarView } from "@/components/calendar/CalendarView";
 import { SidePanel } from "@/components/SidePanel";
@@ -10,28 +10,47 @@ import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
 import { useIsMobile } from "@/hooks/useMediaQuery";
+import { useHubHotkeys } from "@/hooks/useHubHotkeys";
+import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
+import { closeChatDetailPanel } from "@/lib/chat/init";
+
+const WorkspaceHub = lazy(() =>
+  import("@/components/hub/WorkspaceHub").then((m) => ({ default: m.WorkspaceHub })),
+);
 
 export default function App() {
   const hydrated = useStore((s) => s.hydrated);
   const editingId = useStore((s) => s.editingId);
+  const panelMode = useChatStore((s) => s.panelMode);
+  const hubExpanded = useChatStore((s) => s.hubExpanded);
   const isMobile = useIsMobile();
   const [todoOpen, setTodoOpen] = useState(true);
-  const chatPanelMode = useChatStore((s) => s.panelMode);
-  const activeConversationId = useChatStore((s) => s.activeConversationId);
   useReminderScheduler();
   useAutoCloudRefresh();
+  useHubHotkeys(!isMobile && cloudEnabled);
 
   useEffect(() => {
     document.title = "DoDo";
   }, []);
 
-  // The editor lives in the side panel, so opening an item forces the panel open.
-  // Deep-link do rozmowy (push) też wymusza otwarcie panelu (tryb czatu).
-  const panelOpen =
-    todoOpen ||
-    Boolean(editingId) ||
-    (chatPanelMode === "chat" && Boolean(activeConversationId));
+  // Detal hubu / edytor wymuszają otwarcie prawego panelu.
+  const detailForced = Boolean(editingId) || panelMode !== "todo";
+  const panelOpen = todoOpen || detailForced;
+
+  useEffect(() => {
+    if (detailForced) setTodoOpen(true);
+  }, [detailForced]);
+
+  const togglePanel = () => {
+    if (detailForced) {
+      if (editingId) useStore.getState().setEditing(null);
+      if (panelMode !== "todo") closeChatDetailPanel();
+      setTodoOpen(false);
+      return;
+    }
+    setTodoOpen((v) => !v);
+  };
 
   if (!hydrated) {
     return (
@@ -48,10 +67,35 @@ export default function App() {
         <MobileShell />
       ) : (
         <div className="flex h-full flex-col">
-          <Toolbar todoOpen={todoOpen} onToggleTodo={() => setTodoOpen((v) => !v)} />
+          <Toolbar todoOpen={panelOpen} onToggleTodo={togglePanel} />
           <div className="flex min-h-0 flex-1">
-            <main className="min-w-0 flex-1">
-              <CalendarView />
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div
+                className={`min-h-0 overflow-hidden ${
+                  hubExpanded ? "flex-[2]" : "flex-[5]"
+                }`}
+              >
+                <CalendarView />
+              </div>
+              {cloudEnabled && (
+                <div
+                  className={`min-h-0 overflow-hidden border-t border-line bg-surface ${
+                    hubExpanded ? "flex-[5]" : "flex-[3]"
+                  }`}
+                >
+                  <Suspense
+                    fallback={
+                      <div className="flex h-full items-center justify-center text-xs text-ink-faint">
+                        Ładowanie hubu…
+                      </div>
+                    }
+                  >
+                    <div className="h-full min-h-0">
+                      <WorkspaceHub />
+                    </div>
+                  </Suspense>
+                </div>
+              )}
             </main>
             {panelOpen && (
               <aside className="relative w-full max-w-[400px] shrink-0 border-l border-accent/15 bg-gradient-to-b from-surface-raised/80 to-surface shadow-[-6px_0_24px_rgba(0,0,0,0.12)] md:w-[380px] lg:w-[400px]">

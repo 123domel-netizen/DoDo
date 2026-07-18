@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { MessageSquare, MoreHorizontal, Pin, PinOff, X } from "lucide-react";
 import { useChatStore } from "@/lib/chat/store";
 import { loadPinnedMessages, pinThreadMessage } from "@/lib/chat/init";
+import { threadDisplayTitle } from "@/lib/chat/feed";
 import type { ChatMessage, ChatProfile } from "@/lib/chat/types";
 
 /**
@@ -10,13 +11,6 @@ import type { ChatMessage, ChatProfile } from "@/lib/chat/types";
  * (przypinać można bez limitu). Klik: wątek z odpowiedziami → widok wątku,
  * bez odpowiedzi → skok do wiadomości.
  */
-
-function pinnedSnippet(msg: ChatMessage): string {
-  if (msg.kind === "voice") return "🎤 Wiadomość głosowa";
-  if (msg.kind === "gif") return "GIF";
-  if (msg.kind === "poll") return `📊 ${msg.body}`;
-  return msg.body || "(załącznik)";
-}
 
 const VISIBLE_LIMIT = 3;
 
@@ -78,7 +72,7 @@ export function PinnedThreadsBar({
               <span className="text-ink-faint">
                 {profiles[msg.authorUserId]?.displayName || "Nieznany"}:
               </span>{" "}
-              {pinnedSnippet(msg)}
+              {threadDisplayTitle(msg)}
             </span>
             {(replyCounts[msg.id] ?? 0) > 0 && (
               <span className="flex shrink-0 items-center gap-0.5 text-[10px] text-accent">
@@ -129,7 +123,7 @@ export function PinnedThreadsBar({
                           ` · ${replyCounts[msg.id]} odp.`}
                       </span>
                       <span className="line-clamp-2 break-words text-sm text-ink">
-                        {pinnedSnippet(msg)}
+                        {threadDisplayTitle(msg)}
                       </span>
                     </button>
                     <button

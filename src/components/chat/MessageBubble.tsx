@@ -56,7 +56,7 @@ export function MessageBody({
 }) {
   const segments = parseMarkdownLite(body, mentionNames);
   return (
-    <div className="whitespace-pre-wrap break-words">
+    <span className="whitespace-pre-wrap break-words">
       {segments.map((seg, i) => {
         switch (seg.type) {
           case "bold":
@@ -99,7 +99,7 @@ export function MessageBody({
             return <span key={i}>{seg.text}</span>;
         }
       })}
-    </div>
+    </span>
   );
 }
 
@@ -328,11 +328,11 @@ export function MessageBubble({
   return (
     <div
       data-message-id={msg.id}
-      className={`group flex px-3 py-0.5 ${mine ? "justify-end" : "justify-start"}`}
+      className={`group relative flex px-2 py-px ${mine ? "justify-end" : "justify-start"}`}
     >
-      <div className={`max-w-[85%] min-w-0 ${mine ? "items-end" : "items-start"}`}>
+      <div className={`relative max-w-[88%] min-w-0 ${mine ? "items-end" : "items-start"}`}>
         {showAuthor && !mine && (
-          <div className="mb-0.5 px-1 text-[11px] font-medium text-ink-light">
+          <div className="mb-px px-1 text-[10px] font-medium leading-tight text-ink-light">
             {authorName}
           </div>
         )}
@@ -345,7 +345,7 @@ export function MessageBubble({
                 }
               : undefined
           }
-          className={`relative rounded-2xl border px-3 py-2 text-sm leading-snug transition-colors ${
+          className={`relative rounded-xl border px-2 py-1 text-[13px] leading-snug transition-colors ${
             mine
               ? "border-accent/30 bg-accent/15 text-ink"
               : mentioned
@@ -365,14 +365,14 @@ export function MessageBubble({
                   onClick={() =>
                     quoted.msg && onJumpTo ? onJumpTo(quoted.msg.id) : undefined
                   }
-                  className="mb-1.5 flex w-full items-start gap-1.5 rounded-lg border-l-2 border-accent/60 bg-surface-overlay/60 px-2 py-1 text-left"
+                  className="mb-1 flex w-full items-start gap-1 rounded border-l-2 border-accent/60 bg-surface-overlay/60 px-1.5 py-0.5 text-left"
                 >
-                  <CornerUpLeft size={11} className="mt-0.5 shrink-0 text-accent" />
+                  <CornerUpLeft size={10} className="mt-0.5 shrink-0 text-accent" />
                   <span className="min-w-0 flex-1">
                     <span className="block text-[10px] font-medium text-accent">
                       {quoted.authorName}
                     </span>
-                    <span className="line-clamp-2 text-[11px] text-ink-faint">
+                    <span className="line-clamp-1 text-[10px] text-ink-faint">
                       {quoted.msg
                         ? quoted.msg.deletedAt
                           ? "Wiadomość usunięta"
@@ -400,7 +400,7 @@ export function MessageBubble({
                   alt="GIF"
                   loading="lazy"
                   referrerPolicy="no-referrer"
-                  className="max-h-56 w-auto max-w-full rounded-lg"
+                  className="max-h-40 w-auto max-w-full rounded-lg"
                 />
               ) : msg.kind === "voice" ? (
                 voiceAtt ? (
@@ -418,7 +418,7 @@ export function MessageBubble({
               )}
 
               {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
+                <div className="mt-1 flex flex-wrap gap-1.5">
                   {msg.attachments!.map((att) => (
                     <AttachmentTile key={att.id} att={att} />
                   ))}
@@ -428,7 +428,7 @@ export function MessageBubble({
               {msg.kind === "text" && <LinkPreviewCard msg={msg} />}
 
               {(msg.links?.length ?? 0) > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-1 flex flex-wrap gap-1">
                   {msg.links!.map((link) => {
                     const item = items[link.itemId];
                     const isTask = item ? item.type === "task" : true;
@@ -437,9 +437,9 @@ export function MessageBubble({
                         key={link.itemId}
                         type="button"
                         onClick={() => setEditing(link.itemId)}
-                        className="flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[11px] text-ink transition hover:bg-accent/20"
+                        className="flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px text-[10px] text-ink transition hover:bg-accent/20"
                       >
-                        {isTask ? <CheckSquare size={11} /> : <CalendarDays size={11} />}
+                        {isTask ? <CheckSquare size={10} /> : <CalendarDays size={10} />}
                         <span className="max-w-[10rem] truncate">
                           {item?.title?.trim() || (item ? "(bez tytułu)" : "Usunięty wpis")}
                         </span>
@@ -451,32 +451,72 @@ export function MessageBubble({
             </>
           )}
 
-          <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-ink-faint">
+          {/* Meta w jednej linii z treścią — oszczędza wysokość */}
+          <span className="ml-1.5 inline-flex translate-y-px items-center gap-1 whitespace-nowrap align-bottom text-[10px] leading-none text-ink-faint">
             {msg.pinnedAt && !deleted && (
-              <Pin size={10} className="text-accent" aria-label="Wątek przypięty" />
+              <Pin size={9} className="text-accent" aria-label="Wątek przypięty" />
             )}
-            {msg.editedAt && !deleted && <span>(edytowano)</span>}
+            {msg.editedAt && !deleted && <span>(ed.)</span>}
             <span>{formatMessageTime(msg.createdAt)}</span>
-            {pending && <Clock size={10} aria-label="Wysyłanie…" />}
-            {failed && <AlertTriangle size={10} className="text-red-400" aria-label="Nie wysłano" />}
-          </div>
+            {pending && <Clock size={9} aria-label="Wysyłanie…" />}
+            {failed && (
+              <AlertTriangle size={9} className="text-red-400" aria-label="Nie wysłano" />
+            )}
+            {!inThread && replyCount > 0 && onOpenThread && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenThread(msg.id);
+                }}
+                className="inline-flex items-center gap-0.5 rounded text-accent transition hover:brightness-125"
+                aria-label={`Otwórz wątek (${replyCount})`}
+                title={`Wątek · ${replyCount}`}
+              >
+                <MessageSquare size={9} />
+                <span>{replyCount}</span>
+              </button>
+            )}
+          </span>
         </div>
 
+        {/* Akcje obok bąbelka (hover), nie pod nim */}
+        {!deleted && !pending && !failed && onOpenActions && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenActions(msg, e.currentTarget.getBoundingClientRect());
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onOpenActions(msg, e.currentTarget.getBoundingClientRect());
+            }}
+            aria-label="Akcje wiadomości"
+            className={`absolute top-1/2 z-10 -translate-y-1/2 rounded-md border border-line bg-surface-overlay p-0.5 text-ink-faint opacity-0 shadow-sm transition hover:text-ink group-hover:opacity-100 ${
+              mine ? "-left-7" : "-right-7"
+            }`}
+          >
+            <MoreHorizontal size={12} />
+          </button>
+        )}
+
         {!deleted && reactions.length > 0 && (
-          <div className={`mt-0.5 flex flex-wrap gap-1 px-1 ${mine ? "justify-end" : ""}`}>
+          <div className={`mt-px flex flex-wrap gap-0.5 px-0.5 ${mine ? "justify-end" : ""}`}>
             {reactions.map((r) => (
               <button
                 key={r.emoji}
                 type="button"
                 onClick={() => onToggleReaction?.(msg, r.emoji)}
-                className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] transition ${
+                className={`flex items-center gap-0.5 rounded-full border px-1 py-px text-[10px] transition ${
                   r.mine
                     ? "border-accent/50 bg-accent/15 text-ink"
                     : "border-line bg-surface-raised text-ink-light hover:border-line-strong"
                 }`}
               >
                 <span>{r.emoji}</span>
-                {r.count > 1 && <span className="text-[10px]">{r.count}</span>}
+                {r.count > 1 && <span className="text-[9px]">{r.count}</span>}
               </button>
             ))}
           </div>
@@ -486,42 +526,11 @@ export function MessageBubble({
           <button
             type="button"
             onClick={() => onRetry(msg.id)}
-            className="mt-0.5 flex items-center gap-1 px-1 text-[11px] text-red-400 transition hover:text-red-300"
+            className="mt-px flex items-center gap-1 px-1 text-[10px] text-red-400 transition hover:text-red-300"
           >
-            <RotateCw size={11} /> Nie wysłano — ponów
+            <RotateCw size={10} /> Nie wysłano — ponów
           </button>
         )}
-
-        <div className="mt-0.5 flex items-center gap-2 px-1">
-          {!inThread && replyCount > 0 && onOpenThread && (
-            <button
-              type="button"
-              onClick={() => onOpenThread(msg.id)}
-              className="flex items-center gap-1 text-[11px] text-accent transition hover:brightness-125"
-            >
-              <MessageSquare size={11} />
-              Wątek ({replyCount})
-            </button>
-          )}
-          {!deleted && !pending && !failed && onOpenActions && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenActions(msg, e.currentTarget.getBoundingClientRect());
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onOpenActions(msg, e.currentTarget.getBoundingClientRect());
-              }}
-              aria-label="Akcje wiadomości"
-              className="rounded p-0.5 text-ink-faint opacity-60 transition hover:bg-surface-overlay hover:text-ink group-hover:opacity-100"
-            >
-              <MoreHorizontal size={13} />
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );

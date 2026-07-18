@@ -211,12 +211,14 @@ create policy "member sends own messages" on public.messages
       select 1 from public.conversations c
       where c.id = conversation_id and c.archived_at is null
     )
-    -- wątek: root musi istnieć w tej samej rozmowie i sam nie być odpowiedzią
+    -- wątek: root musi istnieć w tej samej rozmowie i sam nie być odpowiedzią.
+    -- WAŻNE: kwalifikuj messages.thread_root_id — inaczej Postgres bierze
+    -- r.thread_root_id z aliasu wewnętrznego i EXISTS nigdy nie przechodzi.
     and (
-      thread_root_id is null
+      messages.thread_root_id is null
       or exists (
         select 1 from public.messages r
-        where r.id = thread_root_id
+        where r.id = messages.thread_root_id
           and r.conversation_id = messages.conversation_id
           and r.thread_root_id is null
       )

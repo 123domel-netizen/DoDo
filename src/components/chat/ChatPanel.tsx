@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AtSign,
   BellOff,
@@ -18,7 +18,7 @@ import { cloudEnabled } from "@/lib/supabase";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { isMuted, overviewTitle, sortOverview } from "@/lib/chat/feed";
-import { jumpToMessage, openConversation } from "@/lib/chat/init";
+import { jumpToMessage, openConversation, openThread } from "@/lib/chat/init";
 import {
   fetchMyMentions,
   fetchPublicChannels,
@@ -27,6 +27,7 @@ import {
 } from "@/lib/chat/api";
 import { isOnline } from "@/lib/chat/presence";
 import { setRouteHash } from "@/lib/navigation";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import type {
   ChatMessage,
   ChatOverviewEntry,
@@ -35,8 +36,11 @@ import type {
 } from "@/lib/chat/types";
 import { messagePreviewLabel } from "@/lib/chat/types";
 import { ConversationView } from "@/components/chat/ConversationView";
+import { ChatContextColumn } from "@/components/chat/ChatContextColumn";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
+
+const FREQUENT_LIMIT = 8;
 
 function ConversationRow({
   entry,
@@ -122,6 +126,73 @@ function ConversationRow({
   );
 }
 
+function NavRow({
+  entry,
+  title,
+  online,
+  active,
+  onOpen,
+}: {
+  entry: ChatOverviewEntry;
+  title: string;
+  online: boolean;
+  active: boolean;
+  onOpen: () => void;
+}) {
+  const muted = isMuted(entry);
+  const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+  const label =
+    entry.kind === "channel" ? (title.startsWith("#") ? title : `#${title}`) : title;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition ${
+        active ? "bg-accent/15 text-ink" : "hover:bg-surface-raised"
+      }`}
+    >
+      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center text-ink-faint">
+        {entry.kind === "channel" ? (
+          <Hash size={12} />
+        ) : entry.kind === "item" ? (
+          <MessageSquare size={12} />
+        ) : entry.members.length > 2 ? (
+          <Users size={12} />
+        ) : (
+          <User size={12} />
+        )}
+        {online && (
+          <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-surface bg-green-500" />
+        )}
+      </span>
+      <span
+        className={`min-w-0 flex-1 truncate text-[12px] leading-tight ${
+          showUnread ? "font-semibold text-ink" : "text-ink-light"
+        }`}
+      >
+        {label}
+      </span>
+      {muted && <BellOff size={10} className="shrink-0 text-ink-faint" />}
+      {entry.unreadCount > 0 ? (
+        <span className="flex h-3.5 min-w-[0.875rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold text-white">
+          {entry.unreadCount > 99 ? "99+" : entry.unreadCount}
+        </span>
+      ) : entry.myMarkedUnread ? (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+      ) : null}
+    </button>
+  );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-1.5 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+      {children}
+    </div>
+  );
+}
+
 function SearchResults({
   results,
   onClose,
@@ -192,63 +263,52 @@ function SearchResults({
   );
 }
 
-/** Filtr wzmianek: wiadomości, w których mnie oznaczono. */
 function MentionsList({ onOpen }: { onOpen: (msg: ChatMessage) => void }) {
   const myUserId = useChatStore((s) => s.userId);
   const overview = useChatStore((s) => s.overview);
   const profiles = useChatStore((s) => s.profiles);
-  const items = useStore((s) => s.items);
-  const [mentions, setMentions] = useState<ChatMessage[] | null>(null);
+  const [rows, setRows] = useState<ChatMessage[] | null>(null);
 
   useEffect(() => {
     if (!myUserId) return;
     let cancelled = false;
-    void fetchMyMentions(myUserId).then((m) => {
-      if (!cancelled) setMentions(m);
+    void fetchMyMentions(myUserId).then((list) => {
+      if (!cancelled) setRows(list);
     });
     return () => {
       cancelled = true;
     };
   }, [myUserId]);
 
-  if (mentions === null) {
+  if (rows === null) {
     return <div className="px-4 py-6 text-center text-xs text-ink-faint">Wczytywanie…</div>;
   }
-  if (!mentions.length) {
+  if (!rows.length) {
     return (
       <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-        Nikt Cię jeszcze nie oznaczył.
-        <br />
-        Wzmianki (@imię) z rozmów pojawią się tutaj.
+        Brak wzmianek.
       </div>
     );
   }
 
   return (
     <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
-      {mentions.map((m) => {
-        const conv = overview.find((c) => c.id === m.conversationId);
-        const convTitle = conv
-          ? overviewTitle(conv, myUserId, (id) => items[id]?.title)
-          : "Rozmowa";
+      {rows.map((msg) => {
+        const conv = overview.find((c) => c.id === msg.conversationId);
         return (
           <button
-            key={m.id}
+            key={msg.id}
             type="button"
-            onClick={() => onOpen(m)}
-            className="flex w-full items-start gap-2.5 border-b border-line/50 px-3 py-2.5 text-left transition hover:bg-surface-raised"
+            onClick={() => onOpen(msg)}
+            className="flex w-full flex-col gap-0.5 border-b border-line/50 px-3 py-2.5 text-left transition hover:bg-surface-raised"
           >
-            <AtSign size={14} className="mt-0.5 shrink-0 text-accent" />
-            <span className="min-w-0 flex-1">
-              <span className="flex items-baseline justify-between gap-2">
-                <span className="truncate text-xs font-medium text-ink-light">
-                  {profiles[m.authorUserId]?.displayName || "Nieznany"} · {convTitle}
-                </span>
-                <span className="shrink-0 text-[10px] text-ink-faint">
-                  {formatMessageTime(m.createdAt)}
-                </span>
-              </span>
-              <span className="mt-0.5 line-clamp-2 text-sm text-ink">{m.body}</span>
+            <span className="truncate text-[11px] text-ink-faint">
+              {profiles[msg.authorUserId]?.displayName || "Nieznany"}
+              {conv ? ` · ${overviewTitle(conv, myUserId, () => undefined)}` : ""}
+            </span>
+            <span className="line-clamp-2 text-sm text-ink">{msg.body || "(załącznik)"}</span>
+            <span className="text-[10px] text-ink-faint">
+              {formatMessageTime(msg.createdAt)}
             </span>
           </button>
         );
@@ -258,6 +318,7 @@ function MentionsList({ onOpen }: { onOpen: (msg: ChatMessage) => void }) {
 }
 
 export function ChatPanel() {
+  const isMobile = useIsMobile();
   const myUserId = useChatStore((s) => s.userId);
   const overview = useChatStore((s) => s.overview);
   const profiles = useChatStore((s) => s.profiles);
@@ -276,13 +337,13 @@ export function ChatPanel() {
   const discoverable = publicChannels.filter((c) => !joinedIds.has(c.id));
   const sorted = useMemo(() => sortOverview(overview), [overview]);
   const pinned = sorted.filter((c) => c.myPinnedAt);
-  const rest = sorted.filter((c) => !c.myPinnedAt);
+  const unpinned = sorted.filter((c) => !c.myPinnedAt);
+  const frequent = unpinned.slice(0, FREQUENT_LIMIT);
+  const more = unpinned.slice(FREQUENT_LIMIT);
 
   useEffect(() => {
-    if (!activeId && cloudEnabled) {
-      void fetchPublicChannels().then(setPublicChannels);
-    }
-  }, [activeId]);
+    if (cloudEnabled) void fetchPublicChannels().then(setPublicChannels);
+  }, []);
 
   if (!cloudEnabled) {
     return (
@@ -299,7 +360,7 @@ export function ChatPanel() {
     );
   }
 
-  if (activeId) {
+  if (isMobile && activeId) {
     return (
       <ConversationView
         conversationId={activeId}
@@ -354,7 +415,10 @@ export function ChatPanel() {
     return Boolean(other && isOnline(profiles[other.userId]?.lastSeenAt));
   };
 
-  const renderRow = (entry: ChatOverviewEntry) => {
+  const titleOf = (entry: ChatOverviewEntry) =>
+    overviewTitle(entry, myUserId, (id) => items[id]?.title);
+
+  const renderMobileRow = (entry: ChatOverviewEntry) => {
     const last = entry.lastMessage;
     const authorName =
       last && last.kind !== "system"
@@ -367,7 +431,7 @@ export function ChatPanel() {
       <ConversationRow
         key={entry.id}
         entry={entry}
-        title={overviewTitle(entry, myUserId, (id) => items[id]?.title)}
+        title={titleOf(entry)}
         authorName={authorName}
         online={dmOnline(entry)}
         onOpen={() => openRow(entry)}
@@ -375,96 +439,143 @@ export function ChatPanel() {
     );
   };
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-1.5 border-b border-line px-3 py-2">
-        <div className="relative min-w-0 flex-1">
-          <Search
-            size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
+  const renderNavSection = (label: string, entries: ChatOverviewEntry[]) =>
+    entries.length > 0 && (
+      <>
+        <SectionLabel>{label}</SectionLabel>
+        {entries.map((entry) => (
+          <NavRow
+            key={entry.id}
+            entry={entry}
+            title={titleOf(entry)}
+            online={dmOnline(entry)}
+            active={entry.id === activeId}
+            onOpen={() => openRow(entry)}
           />
-          <input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              if (!e.target.value.trim()) setResults(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void runSearch();
-            }}
-            placeholder="Szukaj wiadomości, zadań, plików…"
-            className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-7 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/50"
-          />
-          {query && (
-            <button
-              type="button"
-              onClick={() => {
-                setQuery("");
-                setResults(null);
-              }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-faint transition hover:text-ink"
-              aria-label="Wyczyść"
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowMentions((v) => !v)}
-          className={`shrink-0 rounded-lg border p-2 transition ${
-            showMentions
-              ? "border-accent/50 bg-accent/15 text-accent"
-              : "border-line text-ink-faint hover:border-line-strong hover:text-ink"
-          }`}
-          aria-label="Moje wzmianki"
-        >
-          <AtSign size={15} />
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowNew(true)}
-          className="shrink-0 rounded-lg bg-accent-grad p-2 text-white shadow-glow transition hover:brightness-110"
-          aria-label="Nowa rozmowa"
-        >
-          <Plus size={16} />
-        </button>
-      </div>
+        ))}
+      </>
+    );
 
-      {showMentions ? (
-        <MentionsList onOpen={openMention} />
-      ) : results !== null ? (
-        searching ? (
-          <div className="px-4 py-6 text-center text-xs text-ink-faint">Szukam…</div>
-        ) : (
-          <SearchResults results={results} onClose={() => setResults(null)} />
-        )
-      ) : (
-        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
+  const navList = (
+    <>
+      {overview.length === 0 && (
+        <div className="px-2 py-6 text-center text-[11px] leading-relaxed text-ink-faint">
+          Brak rozmów — kliknij <span className="text-ink-light">+</span>.
+        </div>
+      )}
+      {renderNavSection("Najczęstsze", frequent)}
+      {renderNavSection("Przypięte", pinned)}
+      {renderNavSection("Pozostałe", more)}
+      {discoverable.length > 0 && (
+        <>
+          <SectionLabel>Kanały publiczne</SectionLabel>
+          {discoverable.map((c) => (
+            <div key={c.id} className="flex items-center gap-1 px-1.5 py-1">
+              <Hash size={11} className="shrink-0 text-ink-faint" />
+              <span className="min-w-0 flex-1 truncate text-[12px] text-ink-light">
+                {c.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleJoin(c.id)}
+                className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-faint transition hover:text-ink"
+              >
+                Dołącz
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+    </>
+  );
+
+  const toolbar = (
+    <div className="flex items-center gap-1 border-b border-line px-1.5 py-1.5">
+      <div className="relative min-w-0 flex-1">
+        <Search
+          size={12}
+          className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-ink-faint"
+        />
+        <input
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            if (!e.target.value.trim()) setResults(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void runSearch();
+          }}
+          placeholder="Szukaj…"
+          className="w-full rounded-md border border-line bg-surface-raised py-1 pl-6 pr-6 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-accent/50"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setResults(null);
+            }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 text-ink-faint hover:text-ink"
+            aria-label="Wyczyść"
+          >
+            <X size={11} />
+          </button>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowMentions((v) => !v)}
+        className={`shrink-0 rounded-md border p-1.5 transition ${
+          showMentions
+            ? "border-accent/50 bg-accent/15 text-accent"
+            : "border-line text-ink-faint hover:text-ink"
+        }`}
+        aria-label="Moje wzmianki"
+      >
+        <AtSign size={13} />
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowNew(true)}
+        className="shrink-0 rounded-md bg-accent-grad p-1.5 text-white transition hover:brightness-110"
+        aria-label="Nowa rozmowa"
+      >
+        <Plus size={13} />
+      </button>
+    </div>
+  );
+
+  const navBody = showMentions ? (
+    <MentionsList onOpen={openMention} />
+  ) : results !== null ? (
+    searching ? (
+      <div className="px-3 py-4 text-center text-[11px] text-ink-faint">Szukam…</div>
+    ) : (
+      <SearchResults results={results} onClose={() => setResults(null)} />
+    )
+  ) : (
+    <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+      {isMobile ? (
+        <>
           {overview.length === 0 && (
             <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
               Nie masz jeszcze rozmów.
-              <br />
-              Zacznij od <span className="text-ink-light">+</span> — napisz do kogoś albo
-              załóż kanał (np. Dom, Budowa).
             </div>
           )}
-
           {pinned.length > 0 && (
             <>
               <div className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                 Ulubione
               </div>
-              {pinned.map(renderRow)}
-              {rest.length > 0 && (
+              {pinned.map(renderMobileRow)}
+              {unpinned.length > 0 && (
                 <div className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                   Rozmowy
                 </div>
               )}
             </>
           )}
-          {rest.map(renderRow)}
-
+          {unpinned.map(renderMobileRow)}
           {discoverable.length > 0 && (
             <>
               <div className="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
@@ -490,8 +601,50 @@ export function ChatPanel() {
               ))}
             </>
           )}
-        </div>
+        </>
+      ) : (
+        navList
       )}
+    </div>
+  );
+
+  if (isMobile) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {toolbar}
+        {navBody}
+        <NewConversationDialog open={showNew} onClose={() => setShowNew(false)} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0">
+      <aside className="flex min-h-0 w-[25%] min-w-[9rem] max-w-[14rem] flex-col border-r border-line bg-surface">
+        {toolbar}
+        {navBody}
+      </aside>
+
+      <aside className="flex min-h-0 w-[25%] min-w-[9rem] max-w-[16rem] flex-col border-r border-line bg-surface-raised/30">
+        <ChatContextColumn
+          conversationId={activeId}
+          profiles={profiles}
+          onOpenThread={(rootId) => void openThread(rootId)}
+          onJumpTo={(messageId) => {
+            if (activeId) void jumpToMessage(activeId, messageId);
+          }}
+        />
+      </aside>
+
+      <section className="min-h-0 min-w-0 flex-[2]">
+        {activeId ? (
+          <ConversationView conversationId={activeId} pane />
+        ) : (
+          <div className="flex h-full items-center justify-center px-6 text-center text-xs text-ink-faint">
+            Wybierz rozmowę z listy po lewej.
+          </div>
+        )}
+      </section>
 
       <NewConversationDialog open={showNew} onClose={() => setShowNew(false)} />
     </div>

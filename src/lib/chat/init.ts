@@ -2,10 +2,11 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { uid } from "@/lib/factory";
 import { useStore } from "@/state/store";
-import { onRouteChange } from "@/lib/navigation";
+import { onRouteChange, setRouteHash } from "@/lib/navigation";
 import * as api from "@/lib/chat/api";
 import { uploadAttachmentsForMessage } from "@/lib/chat/upload";
 import { useChatStore, switchChatPersistUser } from "@/lib/chat/store";
+import { mergeMessages } from "@/lib/chat/feed";
 import { firstUrl } from "@/lib/chat/markdown";
 import type {
   ChatItemLink,
@@ -100,10 +101,62 @@ export async function loadConversationMessages(conversationId: string) {
 
 export async function openConversation(conversationId: string) {
   const st = useChatStore.getState();
+  useStore.getState().setEditing(null);
+  st.setHubTab("chat");
+  st.setPanelMode("conversation");
+  st.setRegistryFocus(null);
+  st.setMediaConversationId(null);
   st.setActiveConversation(conversationId);
   markRead(conversationId);
   await loadConversationMessages(conversationId);
   void loadPinnedMessages(conversationId);
+}
+
+/** Desktop hub: otwórz decyzję/notatkę w prawym panelu. */
+export function openRegistryInPanel(focus: {
+  kind: "decision" | "note";
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  body: string;
+  createdBy: string;
+  at: string;
+}) {
+  const st = useChatStore.getState();
+  useStore.getState().setEditing(null);
+  st.setHubTab(focus.kind === "decision" ? "decisions" : "notes");
+  st.setRegistryFocus(focus);
+  st.setMediaConversationId(null);
+  st.setPanelMode(focus.kind === "decision" ? "decision" : "note");
+}
+
+/** Desktop hub: podgląd mediów rozmowy w prawym panelu. */
+export function openMediaInPanel(conversationId: string) {
+  const st = useChatStore.getState();
+  useStore.getState().setEditing(null);
+  st.setHubTab("media");
+  st.setRegistryFocus(null);
+  st.setActiveConversation(conversationId);
+  st.setMediaConversationId(conversationId);
+  st.setPanelMode("media");
+  markRead(conversationId);
+  void loadConversationMessages(conversationId);
+}
+
+/** Wróć do listy zadań w prawym panelu, zachowując kontekst hubu (aktywna rozmowa). */
+export function showTodoInPanel() {
+  useChatStore.getState().setPanelMode("todo");
+}
+
+/** Zamknij detal hubu w prawym panelu (twarde czyszczenie kontekstu). */
+export function closeChatDetailPanel() {
+  const st = useChatStore.getState();
+  st.setPanelMode("todo");
+  st.setRegistryFocus(null);
+  st.setMediaConversationId(null);
+  st.setActiveConversation(null);
+  st.setActiveThread(null);
+  setRouteHash({ view: "chat" });
 }
 
 export async function loadPinnedMessages(conversationId: string) {
@@ -128,6 +181,30 @@ export async function pinThreadMessage(msg: ChatMessage, pinned: boolean) {
   }
 }
 
+/** Zapisz nazwę wątku na rootcie (optimistic). */
+export async function saveThreadTitle(
+  msg: ChatMessage,
+  title: string,
+): Promise<{ error?: string }> {
+  const cleaned = title.trim().slice(0, 200);
+  if (!cleaned) return { error: "Podaj nazwę wątku." };
+  const rootId = msg.threadRootId ?? msg.id;
+  const st = useChatStore.getState();
+  const root =
+    (st.messagesByConv[msg.conversationId] ?? []).find((m) => m.id === rootId) ??
+    (st.threadByRoot[rootId] ?? []).find((m) => m.id === rootId) ??
+    msg;
+  const optimistic: ChatMessage = { ...root, threadTitle: cleaned, threadRootId: null };
+  st.markMessageState(optimistic);
+  const { error } = await api.setThreadTitle(rootId, cleaned);
+  if (error) {
+    console.warn("[chat] set thread title failed:", error);
+    st.markMessageState(root);
+    return { error };
+  }
+  return {};
+}
+
 export async function loadOlderMessages(conversationId: string) {
   const list = useChatStore.getState().messagesByConv[conversationId] ?? [];
   const oldest = list.find((m) => !m.sendState);
@@ -141,9 +218,37 @@ export async function loadOlderMessages(conversationId: string) {
 }
 
 export async function openThread(rootId: string) {
-  useChatStore.getState().setActiveThread(rootId);
+  const st = useChatStore.getState();
+  const convId = st.activeConversationId;
+  st.setActiveThread(rootId);
+
+  // Od razu seeduj cache z feedu — bez tego pierwsza odpowiedź nie ma gdzie
+  // wylądować w UI (patchEverywhere wymaga istniejącej listy wątku / tworzy
+  // ją dopiero po sendzie, a widok czytał pusty fallback).
+  const feed = [
+    ...(convId ? st.messagesByConv[convId] ?? [] : []),
+    ...(st.focusFeed?.conversationId === convId ? st.focusFeed.messages : []),
+  ];
+  const root = feed.find((m) => m.id === rootId);
+  const existing = st.threadByRoot[rootId];
+  if (!existing?.length) {
+    st.setThreadMessages(rootId, root ? [root] : []);
+  }
+
+  if (convId) {
+    setRouteHash({
+      view: "conversation",
+      conversationId: convId,
+      threadRootId: rootId,
+    });
+  }
+
   const msgs = await api.fetchThreadMessages(rootId);
-  if (msgs.length) useChatStore.getState().setThreadMessages(rootId, msgs);
+  const pending = (useChatStore.getState().threadByRoot[rootId] ?? []).filter(
+    (m) => Boolean(m.sendState),
+  );
+  const base = msgs.length > 0 ? msgs : root ? [root] : [];
+  useChatStore.getState().setThreadMessages(rootId, mergeMessages(base, pending));
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +281,7 @@ export function buildOutgoingMessage(opts: SendOptions, userId: string): ChatMes
     deletedAt: null,
     pinnedAt: null,
     pinnedBy: null,
+    threadTitle: null,
     links: [],
     attachments: [],
     reactions: [],
@@ -834,13 +940,22 @@ export function initChat() {
   // Deep-linki (#/czat/..., #/wpis/...).
   onRouteChange((route) => {
     if (route.view === "conversation") {
-      useChatStore.getState().setPanelMode("chat");
-      void openConversation(route.conversationId);
-      if (route.threadRootId) void openThread(route.threadRootId);
+      useChatStore.getState().setHubTab("chat");
+      useChatStore.getState().setPanelMode("conversation");
+      void openConversation(route.conversationId).then(() => {
+        if (route.threadRootId) void openThread(route.threadRootId);
+        else if (useChatStore.getState().activeThreadRootId) {
+          // Hash bez /watek/ → zamknij wątek (np. przycisk wstecz).
+          useChatStore.getState().setActiveThread(null);
+        }
+      });
     } else if (route.view === "chat") {
-      useChatStore.getState().setPanelMode("chat");
+      useChatStore.getState().setHubTab("chat");
+      useChatStore.getState().setPanelMode("todo");
+      useChatStore.getState().setRegistryFocus(null);
       useChatStore.getState().setActiveConversation(null);
     } else if (route.view === "item") {
+      useChatStore.getState().setPanelMode("todo");
       useStore.getState().setEditing(route.itemId);
     }
   });

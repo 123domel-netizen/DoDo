@@ -90,7 +90,9 @@ export function ThreadsSheet({
                 <div className="mt-0.5 line-clamp-2 break-words text-sm text-ink">
                   {root.deletedAt
                     ? "Wiadomość usunięta"
-                    : root.body || (root.kind === "gif" ? "GIF" : "(załącznik)")}
+                    : root.threadTitle?.trim() ||
+                      root.body ||
+                      (root.kind === "gif" ? "GIF" : "(załącznik)")}
                 </div>
               </button>
             ))}

@@ -118,6 +118,8 @@ export interface ChatMessage {
   /** Przypięcie wątku do rozmowy (wspólne dla wszystkich członków). */
   pinnedAt: string | null;
   pinnedBy: string | null;
+  /** Nazwa wątku (tylko root; null = użyj treści wiadomości). */
+  threadTitle: string | null;
   /** undefined = nieznane (np. event realtime bez zagnieżdżeń) — nie nadpisywać. */
   links?: ChatItemLink[];
   attachments?: ChatAttachment[];

@@ -93,6 +93,8 @@ export async function saveTextAsDecision(
   const { error } = await addDecision({ conversationId, messageId, body, createdBy: userId });
   if (error) return { error };
 
+  useChatStore.getState().bumpRegistryEpoch();
+
   sendChatMessage({
     conversationId,
     body: `📌 Zapisano decyzję: ${body.slice(0, 140)}`,
@@ -118,6 +120,8 @@ export async function saveTextAsNote(
 
   const { error } = await addNote({ conversationId, messageId, body, createdBy: userId });
   if (error) return { error };
+
+  useChatStore.getState().bumpRegistryEpoch();
 
   sendChatMessage({
     conversationId,

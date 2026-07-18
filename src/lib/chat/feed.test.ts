@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   applyFocusIncoming,
   applyMessageToOverview,
+  defaultThreadTitle,
   isMuted,
   markOverviewRead,
   mergeMessages,
   overviewTitle,
   reconcilePinnedList,
   sortOverview,
+  threadDisplayTitle,
   totalUnread,
   trimList,
   upsertMessageInList,
@@ -30,6 +32,7 @@ function msg(partial: Partial<ChatMessage>): ChatMessage {
     deletedAt: null,
     pinnedAt: null,
     pinnedBy: null,
+    threadTitle: null,
     ...partial,
   };
 }
@@ -341,5 +344,14 @@ describe("applyFocusIncoming (CHAT6: okno kontekstowe)", () => {
     ).toBeNull();
     expect(applyFocusIncoming(focusBase, msg({ id: "anchor" }))).toBeNull();
     expect(applyFocusIncoming(null, msg({ id: "n" }))).toBeNull();
+  });
+});
+
+describe("threadDisplayTitle", () => {
+  it("używa zapisanej nazwy, inaczej treści wiadomości", () => {
+    expect(defaultThreadTitle(msg({ body: "  hej   świecie  " }))).toBe("hej świecie");
+    expect(threadDisplayTitle(msg({ body: "root", threadTitle: "Nazwa" }))).toBe("Nazwa");
+    expect(threadDisplayTitle(msg({ body: "root", threadTitle: null }))).toBe("root");
+    expect(threadDisplayTitle(msg({ kind: "gif", body: "" }))).toBe("GIF");
   });
 });

@@ -43,8 +43,53 @@ interface ChatState {
   activeThreadRootId: string | null;
   /** Wiadomość do podświetlenia po skoku (cytat / wynik wyszukiwania). */
   flashMessageId: string | null;
-  /** Desktop: tryb prawego panelu. */
-  panelMode: "todo" | "chat";
+  /** Desktop: tryb prawego panelu (hub otwiera detal). */
+  panelMode: "todo" | "conversation" | "decision" | "note" | "media";
+  /** Desktop: aktywna zakładka hubu pod kalendarzem. */
+  hubTab:
+    | "today"
+    | "chat"
+    | "threads"
+    | "decisions"
+    | "notes"
+    | "media"
+    | "mentions"
+    | "search"
+    | "links";
+  /** Hub zajmuje więcej wysokości (kalendarz się kurczy). */
+  hubExpanded: boolean;
+  /** Hub: zawężaj listy do aktywnej grupy z GroupRail. */
+  hubMatchGroup: boolean;
+  /** Ukryte zakładki hubu (widoczność per użytkownik; filtr grupy dodatkowo zawęża treść). */
+  hubHiddenTabs: Array<
+    | "today"
+    | "chat"
+    | "threads"
+    | "decisions"
+    | "notes"
+    | "media"
+    | "mentions"
+    | "search"
+    | "links"
+  >;
+  /** Własne foldery rozmów w zakładce Czat. */
+  hubChatFolders: { id: string; name: string; conversationIds: string[] }[];
+  /** Zwińnięte sekcje listy czatu (pinned, frequent, more, channels, folder:id). */
+  hubCollapsedSections: Record<string, boolean>;
+  /** Bump po zapisie/usunięciu decyzji/notatki — odświeża listy hubu. */
+  registryEpoch: number;
+  /** Rozmowa, której media pokazać w prawym panelu. */
+  mediaConversationId: string | null;
+  /** Aktywna decyzja/notatka w prawym panelu. */
+  registryFocus: {
+    kind: "decision" | "note";
+    id: string;
+    conversationId: string;
+    messageId: string | null;
+    body: string;
+    createdBy: string;
+    at: string;
+  } | null;
 
   setUser: (userId: string | null) => void;
   setOverview: (overview: ChatOverviewEntry[]) => void;
@@ -77,7 +122,21 @@ interface ChatState {
   setActiveConversation: (id: string | null) => void;
   setActiveThread: (rootId: string | null) => void;
   markReadLocal: (conversationId: string, atIso: string) => void;
-  setPanelMode: (mode: "todo" | "chat") => void;
+  setPanelMode: (mode: ChatState["panelMode"]) => void;
+  setHubTab: (tab: ChatState["hubTab"]) => void;
+  setHubExpanded: (on: boolean) => void;
+  toggleHubExpanded: () => void;
+  setHubMatchGroup: (on: boolean) => void;
+  toggleHubTabHidden: (tab: ChatState["hubTab"]) => void;
+  setMediaConversationId: (id: string | null) => void;
+  bumpRegistryEpoch: () => void;
+  setRegistryFocus: (focus: ChatState["registryFocus"]) => void;
+  addHubChatFolder: (name: string) => string;
+  renameHubChatFolder: (id: string, name: string) => void;
+  removeHubChatFolder: (id: string) => void;
+  addConversationToHubFolder: (folderId: string, conversationId: string) => void;
+  removeConversationFromHubFolder: (folderId: string, conversationId: string) => void;
+  toggleHubSectionCollapsed: (sectionKey: string) => void;
   reset: () => void;
 }
 
@@ -168,12 +227,19 @@ function patchEverywhere(s: CacheSlices, msg: ChatMessage): Partial<CacheSlices>
       [msg.conversationId]: upsertMessageInList(feed, msg),
     };
   }
-  const rootId = msg.threadRootId ?? msg.id;
-  const thread = s.threadByRoot[rootId];
-  if (thread) {
+  // Odpowiedzi w wątku: zawsze utrzymuj cache wątku (nawet gdy dopiero
+  // otwieramy widok / fetch jeszcze nie wrócił) — inaczej optimistic send
+  // znika z UI.
+  if (msg.threadRootId) {
+    const thread = s.threadByRoot[msg.threadRootId] ?? [];
     out.threadByRoot = {
       ...s.threadByRoot,
-      [rootId]: upsertMessageInList(thread, msg),
+      [msg.threadRootId]: upsertMessageInList(thread, msg),
+    };
+  } else if (s.threadByRoot[msg.id]) {
+    out.threadByRoot = {
+      ...s.threadByRoot,
+      [msg.id]: upsertMessageInList(s.threadByRoot[msg.id], msg),
     };
   }
   if (
@@ -196,6 +262,15 @@ export const useChatStore = create<ChatState>()(
       hydrated: false,
       userId: null,
       panelMode: "todo",
+      hubTab: "chat",
+      hubExpanded: false,
+      hubMatchGroup: false,
+      hubHiddenTabs: [],
+      hubChatFolders: [],
+      hubCollapsedSections: {},
+      registryEpoch: 0,
+      mediaConversationId: null,
+      registryFocus: null,
       ...emptyState(),
 
       setUser: (userId) => set({ userId }),
@@ -386,7 +461,13 @@ export const useChatStore = create<ChatState>()(
       setFlashMessage: (id) => set({ flashMessageId: id }),
 
       setActiveConversation: (id) =>
-        set({ activeConversationId: id, activeThreadRootId: null, focusFeed: null }),
+        set((s) => ({
+          activeConversationId: id,
+          // Przy tej samej rozmowie nie zamykaj wątku (wyścig z openThread).
+          activeThreadRootId:
+            id !== null && s.activeConversationId === id ? s.activeThreadRootId : null,
+          focusFeed: id !== null && s.activeConversationId === id ? s.focusFeed : null,
+        })),
 
       setActiveThread: (rootId) => set({ activeThreadRootId: rootId }),
 
@@ -395,9 +476,115 @@ export const useChatStore = create<ChatState>()(
           overview: markOverviewRead(s.overview, conversationId, atIso),
         })),
 
-      setPanelMode: (mode) => set({ panelMode: mode }),
+      setPanelMode: (mode) =>
+        set({
+          panelMode: mode,
+          ...(mode === "todo"
+            ? { registryFocus: null, mediaConversationId: null }
+            : mode !== "media"
+              ? { mediaConversationId: null }
+              : {}),
+        }),
 
-      reset: () => set({ userId: null, ...emptyState() }),
+      setHubTab: (tab) => set({ hubTab: tab }),
+
+      setHubExpanded: (on) => set({ hubExpanded: on }),
+
+      toggleHubExpanded: () => set((s) => ({ hubExpanded: !s.hubExpanded })),
+
+      setHubMatchGroup: (on) => set({ hubMatchGroup: on }),
+
+      toggleHubTabHidden: (tab) =>
+        set((s) => {
+          const isHidden = s.hubHiddenTabs.includes(tab);
+          if (!isHidden) {
+            // Zostaw przynajmniej jedną widoczną zakładkę.
+            const totalTabs = 9;
+            if (totalTabs - s.hubHiddenTabs.length <= 1) return {};
+          }
+          const hidden = isHidden
+            ? s.hubHiddenTabs.filter((t) => t !== tab)
+            : [...s.hubHiddenTabs, tab];
+          return { hubHiddenTabs: hidden };
+        }),
+
+      setMediaConversationId: (id) => set({ mediaConversationId: id }),
+
+      bumpRegistryEpoch: () => set((s) => ({ registryEpoch: s.registryEpoch + 1 })),
+
+      setRegistryFocus: (focus) => set({ registryFocus: focus }),
+
+      addHubChatFolder: (name) => {
+        const id =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `folder-${Date.now()}`;
+        const trimmed = name.trim() || "Folder";
+        set((s) => ({
+          hubChatFolders: [
+            ...s.hubChatFolders,
+            { id, name: trimmed, conversationIds: [] },
+          ],
+        }));
+        return id;
+      },
+
+      renameHubChatFolder: (id, name) =>
+        set((s) => ({
+          hubChatFolders: s.hubChatFolders.map((f) =>
+            f.id === id ? { ...f, name: name.trim() || f.name } : f,
+          ),
+        })),
+
+      removeHubChatFolder: (id) =>
+        set((s) => ({
+          hubChatFolders: s.hubChatFolders.filter((f) => f.id !== id),
+        })),
+
+      addConversationToHubFolder: (folderId, conversationId) =>
+        set((s) => ({
+          hubChatFolders: s.hubChatFolders.map((f) => {
+            if (f.id !== folderId) return f;
+            if (f.conversationIds.includes(conversationId)) return f;
+            return { ...f, conversationIds: [...f.conversationIds, conversationId] };
+          }),
+        })),
+
+      removeConversationFromHubFolder: (folderId, conversationId) =>
+        set((s) => ({
+          hubChatFolders: s.hubChatFolders.map((f) =>
+            f.id !== folderId
+              ? f
+              : {
+                  ...f,
+                  conversationIds: f.conversationIds.filter((cid) => cid !== conversationId),
+                },
+          ),
+        })),
+
+      toggleHubSectionCollapsed: (sectionKey) =>
+        set((s) => ({
+          hubCollapsedSections: {
+            ...s.hubCollapsedSections,
+            [sectionKey]: !s.hubCollapsedSections[sectionKey],
+          },
+        })),
+
+      reset: () =>
+        set({
+          userId: null,
+          panelMode: "todo",
+          hubTab: "chat",
+          hubExpanded: false,
+          hubMatchGroup: false,
+          hubHiddenTabs: [],
+          hubChatFolders: [],
+          hubCollapsedSections: {},
+          registryEpoch: 0,
+          mediaConversationId: null,
+          registryFocus: null,
+          ...emptyState(),
+        }),
     }),
     {
       name: "kalendarz-todo-chat-v1-local",
@@ -418,8 +605,79 @@ export const useChatStore = create<ChatState>()(
         ),
         replyCounts: s.replyCounts,
         outbox: s.outbox,
-        panelMode: s.panelMode,
+        panelMode: s.panelMode === "media" ? "todo" : s.panelMode,
+        hubTab: s.hubTab,
+        hubExpanded: s.hubExpanded,
+        hubMatchGroup: s.hubMatchGroup,
+        hubHiddenTabs: s.hubHiddenTabs,
+        hubChatFolders: s.hubChatFolders,
+        hubCollapsedSections: s.hubCollapsedSections,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Record<string, unknown>;
+        let panelMode = (p.panelMode as string | undefined) ?? current.panelMode;
+        // Migracja ze starego "chat".
+        if (panelMode === "chat") panelMode = "conversation";
+        if (
+          panelMode !== "todo" &&
+          panelMode !== "conversation" &&
+          panelMode !== "decision" &&
+          panelMode !== "note" &&
+          panelMode !== "media"
+        ) {
+          panelMode = "todo";
+        }
+        const hubTabRaw = p.hubTab as string | undefined;
+        const hubTabs = [
+          "today",
+          "chat",
+          "threads",
+          "decisions",
+          "notes",
+          "media",
+          "mentions",
+          "search",
+          "links",
+        ] as const;
+        const hubTab = hubTabs.includes(hubTabRaw as (typeof hubTabs)[number])
+          ? (hubTabRaw as ChatState["hubTab"])
+          : current.hubTab;
+        const foldersRaw = p.hubChatFolders;
+        const hubChatFolders = Array.isArray(foldersRaw)
+          ? (foldersRaw as ChatState["hubChatFolders"]).filter(
+              (f) =>
+                f &&
+                typeof f.id === "string" &&
+                typeof f.name === "string" &&
+                Array.isArray(f.conversationIds),
+            )
+          : current.hubChatFolders;
+        const collapsedRaw = p.hubCollapsedSections;
+        const hubCollapsedSections =
+          collapsedRaw && typeof collapsedRaw === "object" && !Array.isArray(collapsedRaw)
+            ? (collapsedRaw as Record<string, boolean>)
+            : current.hubCollapsedSections;
+        const hiddenRaw = p.hubHiddenTabs;
+        const hubHiddenTabs = Array.isArray(hiddenRaw)
+          ? (hiddenRaw as ChatState["hubHiddenTabs"]).filter((t) =>
+              hubTabs.includes(t as (typeof hubTabs)[number]),
+            )
+          : current.hubHiddenTabs;
+        return {
+          ...current,
+          ...(p as Partial<ChatState>),
+          panelMode: panelMode as ChatState["panelMode"],
+          hubTab,
+          hubExpanded: Boolean(p.hubExpanded ?? current.hubExpanded),
+          hubMatchGroup: Boolean(p.hubMatchGroup ?? current.hubMatchGroup),
+          hubHiddenTabs,
+          hubChatFolders,
+          hubCollapsedSections,
+          registryFocus: null,
+          mediaConversationId: null,
+          registryEpoch: 0,
+        };
+      },
       onRehydrateStorage: () => () => {
         useChatStore.setState({ hydrated: true });
       },

@@ -17,6 +17,8 @@ interface ConversationMediaViewProps {
   conversationId: string;
   onClose: () => void;
   onJumpTo: (messageId: string) => void;
+  /** Bez portalu — osadzenie w prawym panelu. */
+  embedded?: boolean;
 }
 
 function PhotoTile({ att }: { att: ConversationAttachment }) {
@@ -55,6 +57,7 @@ export function ConversationMediaView({
   conversationId,
   onClose,
   onJumpTo,
+  embedded = false,
 }: ConversationMediaViewProps) {
   const [tab, setTab] = useState<MediaTab>("photos");
   const [attachments, setAttachments] = useState<ConversationAttachment[] | null>(null);
@@ -62,6 +65,8 @@ export function ConversationMediaView({
 
   useEffect(() => {
     let cancelled = false;
+    setAttachments(null);
+    setLinkMessages(null);
     void fetchConversationAttachments(conversationId).then((a) => {
       if (!cancelled) setAttachments(a);
     });
@@ -102,6 +107,120 @@ export function ConversationMediaView({
 
   const loading = attachments === null || linkMessages === null;
 
+  const body = (
+    <>
+      <div className={`mb-2 flex gap-1 rounded-xl border border-line bg-surface-raised p-1 ${embedded ? "mx-2 mt-2" : ""}`}>
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs transition ${
+              tab === t.id
+                ? "bg-surface-overlay font-medium text-ink shadow-pop"
+                : "text-ink-faint hover:text-ink"
+            }`}
+          >
+            <t.icon size={13} />
+            {t.label}
+            {t.count > 0 && <span className="text-[10px] text-ink-faint">{t.count}</span>}
+          </button>
+        ))}
+      </div>
+
+      <div className={`thin-scrollbar min-h-0 flex-1 overflow-y-auto ${embedded ? "px-2 pb-2" : ""}`}>
+        {loading && (
+          <div className="py-10 text-center text-xs text-ink-faint">Wczytywanie…</div>
+        )}
+
+        {!loading && tab === "photos" && (
+          photos.length ? (
+            <div className="grid grid-cols-3 gap-1.5">
+              {photos.map((att) => (
+                <PhotoTile key={att.id} att={att} />
+              ))}
+            </div>
+          ) : (
+            <div className="py-10 text-center text-xs text-ink-faint">Brak zdjęć.</div>
+          )
+        )}
+
+        {!loading && tab === "files" && (
+          files.length ? (
+            <div className="flex flex-col gap-1.5">
+              {files.map((att) => (
+                <button
+                  key={att.id}
+                  type="button"
+                  onClick={() =>
+                    void signedUrlFor(att.bucketPath).then(
+                      (u) => u && window.open(u, "_blank", "noopener"),
+                    )
+                  }
+                  className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-2 text-left transition hover:border-line-strong"
+                >
+                  <Download size={14} className="shrink-0 text-ink-faint" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs text-ink">{att.fileName}</span>
+                    <span className="text-[10px] text-ink-faint">
+                      {formatFileSize(att.sizeBytes)} · {formatMessageTime(att.createdAt)}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="py-10 text-center text-xs text-ink-faint">Brak plików.</div>
+          )
+        )}
+
+        {!loading && tab === "links" && (
+          links.length ? (
+            <div className="flex flex-col gap-1.5">
+              {links.map((l, i) => (
+                <div
+                  key={`${l.messageId}-${i}`}
+                  className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-2"
+                >
+                  <a
+                    href={l.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 flex-1"
+                  >
+                    <span className="block truncate text-xs text-accent underline decoration-accent/40 underline-offset-2">
+                      {l.url}
+                    </span>
+                    <span className="text-[10px] text-ink-faint">
+                      {formatMessageTime(l.createdAt)}
+                    </span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onJumpTo(l.messageId);
+                    }}
+                    className="shrink-0 rounded p-1 text-ink-faint transition hover:text-ink"
+                    aria-label="Pokaż w rozmowie"
+                  >
+                    <ExternalLink size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-10 text-center text-xs text-ink-faint">Brak linków.</div>
+          )
+        )}
+      </div>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="flex h-full min-h-0 flex-col">{body}</div>;
+  }
+
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
       <button
@@ -122,112 +241,7 @@ export function ConversationMediaView({
             <X size={16} />
           </button>
         </div>
-
-        <div className="mb-2 flex gap-1 rounded-xl border border-line bg-surface-raised p-1">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs transition ${
-                tab === t.id
-                  ? "bg-surface-overlay font-medium text-ink shadow-pop"
-                  : "text-ink-faint hover:text-ink"
-              }`}
-            >
-              <t.icon size={13} />
-              {t.label}
-              {t.count > 0 && <span className="text-[10px] text-ink-faint">{t.count}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
-          {loading && (
-            <div className="py-10 text-center text-xs text-ink-faint">Wczytywanie…</div>
-          )}
-
-          {!loading && tab === "photos" && (
-            photos.length ? (
-              <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
-                {photos.map((att) => (
-                  <PhotoTile key={att.id} att={att} />
-                ))}
-              </div>
-            ) : (
-              <div className="py-10 text-center text-xs text-ink-faint">Brak zdjęć.</div>
-            )
-          )}
-
-          {!loading && tab === "files" && (
-            files.length ? (
-              <div className="flex flex-col gap-1.5">
-                {files.map((att) => (
-                  <button
-                    key={att.id}
-                    type="button"
-                    onClick={() =>
-                      void signedUrlFor(att.bucketPath).then(
-                        (u) => u && window.open(u, "_blank", "noopener"),
-                      )
-                    }
-                    className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-2 text-left transition hover:border-line-strong"
-                  >
-                    <Download size={14} className="shrink-0 text-ink-faint" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs text-ink">{att.fileName}</span>
-                      <span className="text-[10px] text-ink-faint">
-                        {formatFileSize(att.sizeBytes)} · {formatMessageTime(att.createdAt)}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="py-10 text-center text-xs text-ink-faint">Brak plików.</div>
-            )
-          )}
-
-          {!loading && tab === "links" && (
-            links.length ? (
-              <div className="flex flex-col gap-1.5">
-                {links.map((l, i) => (
-                  <div
-                    key={`${l.messageId}-${i}`}
-                    className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-2"
-                  >
-                    <a
-                      href={l.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="min-w-0 flex-1"
-                    >
-                      <span className="block truncate text-xs text-accent underline decoration-accent/40 underline-offset-2">
-                        {l.url}
-                      </span>
-                      <span className="text-[10px] text-ink-faint">
-                        {formatMessageTime(l.createdAt)}
-                      </span>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClose();
-                        onJumpTo(l.messageId);
-                      }}
-                      className="shrink-0 rounded p-1 text-ink-faint transition hover:text-ink"
-                      aria-label="Pokaż w rozmowie"
-                    >
-                      <ExternalLink size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="py-10 text-center text-xs text-ink-faint">Brak linków.</div>
-            )
-          )}
-        </div>
+        {body}
       </div>
     </div>,
     document.body,

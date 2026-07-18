@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { isMuted, overviewTitle } from "@/lib/chat/feed";
+import { isMuted, mergeMessages, overviewTitle, threadDisplayTitle } from "@/lib/chat/feed";
 import {
   MUTE_PRESETS,
   deleteChatMessage,
@@ -38,6 +38,7 @@ import {
   pinConversation,
   pinThreadMessage,
   retryFailedMessage,
+  saveThreadTitle,
   returnToLatest,
   scheduleOverviewRefresh,
   sendChatMessage,
@@ -67,6 +68,7 @@ import {
   type TypingHandle,
 } from "@/lib/chat/typing";
 import type { ChatMessage, ChatProfile } from "@/lib/chat/types";
+import { setRouteHash } from "@/lib/navigation";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { MessageComposer, type ReplyTarget } from "@/components/chat/MessageComposer";
 import {
@@ -78,12 +80,18 @@ import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
 import { RegistryView, type RegistryMode } from "@/components/chat/RegistryView";
 import { PinnedThreadsBar } from "@/components/chat/PinnedThreadsBar";
 import { ThreadsSheet } from "@/components/chat/ThreadsSheet";
+import { NameThreadDialog } from "@/components/chat/NameThreadDialog";
 
 interface ConversationViewProps {
   conversationId: string;
   onBack?: () => void;
   /** Tryb osadzony (dyskusja itemu): bez nagłówka i wątków, mniejsza wysokość. */
   embedded?: boolean;
+  /**
+   * Desktop 3-kolumnowy: bez przycisku wstecz do listy, bez przycisków
+   * Decyzje/Notatki/Wątki w nagłówku (są w środkowej kolumnie).
+   */
+  pane?: boolean;
 }
 
 function quoteSnippet(msg: ChatMessage): string {
@@ -203,7 +211,7 @@ function MessageFeed({
         if (el.scrollTop < 150) triggerOlder();
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) triggerNewer();
       }}
-      className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-2"
+      className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-1"
     >
       {hasOlder && onLoadOlder && (
         <div className="flex justify-center pb-2">
@@ -268,6 +276,7 @@ export function ConversationView({
   conversationId,
   onBack,
   embedded = false,
+  pane = false,
 }: ConversationViewProps) {
   const myUserId = useChatStore((s) => s.userId);
   const overview = useChatStore((s) => s.overview);
@@ -289,6 +298,7 @@ export function ConversationView({
     msg: ChatMessage;
     anchor: DOMRect;
   } | null>(null);
+  const [nameThreadMsg, setNameThreadMsg] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<{ id: string; body: string } | null>(null);
   const [replyTo, setReplyTo] = useState<(ReplyTarget & { threadRootId: string | null }) | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -499,9 +509,19 @@ export function ConversationView({
         case "pinThread":
           void pinThreadMessage(msg, !msg.pinnedAt);
           break;
-        case "openThread":
-          void openThread(msg.threadRootId ?? msg.id);
+        case "openThread": {
+          const rootId = msg.threadRootId ?? msg.id;
+          const root =
+            displayedFeed.find((m) => m.id === rootId) ??
+            feed.find((m) => m.id === rootId) ??
+            (msg.id === rootId ? msg : null);
+          if (root && !root.threadTitle?.trim()) {
+            setNameThreadMsg(root);
+          } else {
+            void openThread(rootId);
+          }
           break;
+        }
         case "copy":
           void navigator.clipboard?.writeText(msg.body);
           break;
@@ -516,7 +536,7 @@ export function ConversationView({
           break;
       }
     },
-    [profiles],
+    [profiles, displayedFeed, feed],
   );
 
   const handleSaveEdit = useCallback(
@@ -563,19 +583,41 @@ export function ConversationView({
   const headerIconBtn =
     "rounded-lg p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink";
 
+  const nameThreadDialog = nameThreadMsg ? (
+    <NameThreadDialog
+      msg={nameThreadMsg}
+      onCancel={() => setNameThreadMsg(null)}
+      onConfirm={(named) => {
+        const root = nameThreadMsg;
+        setNameThreadMsg(null);
+        void saveThreadTitle(root, named).then(({ error }) => {
+          if (error) alert(error);
+        });
+        void openThread(root.id);
+      }}
+    />
+  ) : null;
+
   // ── Widok wątku ──────────────────────────────────────────────────────────
   if (threadRootId) {
     const rootFromFeed =
       displayedFeed.find((m) => m.id === threadRootId) ??
       feed.find((m) => m.id === threadRootId);
-    const thread =
-      threadMessages ?? (rootFromFeed ? [rootFromFeed] : ([] as ChatMessage[]));
+    // Scal root z cache'em — pusty [] nie może zasłonić wiadomości startowej.
+    const thread = mergeMessages(
+      rootFromFeed ? [rootFromFeed] : [],
+      threadMessages ?? [],
+    );
+    const rootMsg = thread.find((m) => m.id === threadRootId) ?? rootFromFeed;
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex items-center gap-2 border-b border-line px-2 py-2">
           <button
             type="button"
-            onClick={() => setActiveThread(null)}
+            onClick={() => {
+              setActiveThread(null);
+              setRouteHash({ view: "conversation", conversationId });
+            }}
             className={headerIconBtn}
             aria-label="Wróć do rozmowy"
           >
@@ -583,7 +625,9 @@ export function ConversationView({
           </button>
           <MessageSquare size={15} className="text-accent" />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-ink">Wątek</div>
+            <div className="truncate text-sm font-semibold text-ink">
+              {threadDisplayTitle(rootMsg)}
+            </div>
             <div className="truncate text-[11px] text-ink-faint">{title}</div>
           </div>
         </div>
@@ -621,6 +665,7 @@ export function ConversationView({
           profiles={profiles}
           onClose={() => setHistoryMsg(null)}
         />
+        {nameThreadDialog}
       </div>
     );
   }
@@ -629,8 +674,8 @@ export function ConversationView({
   return (
     <div className={`flex min-h-0 flex-col ${embedded ? "" : "h-full"}`}>
       {!embedded && (
-        <div className="relative flex items-center gap-1.5 border-b border-line px-2 py-2">
-          {onBack && (
+        <div className="relative flex items-center gap-1.5 border-b border-line px-2 py-1.5">
+          {onBack && !pane && (
             <button
               type="button"
               onClick={onBack}
@@ -682,24 +727,28 @@ export function ConversationView({
               >
                 <FolderOpen size={16} />
               </button>
-              <button
-                type="button"
-                onClick={() => setRegistryMode("decisions")}
-                className={headerIconBtn}
-                aria-label="Decyzje"
-                title="Decyzje"
-              >
-                <Gavel size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setRegistryMode("notes")}
-                className={headerIconBtn}
-                aria-label="Notatki"
-                title="Notatki"
-              >
-                <StickyNote size={16} />
-              </button>
+              {!pane && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setRegistryMode("decisions")}
+                    className={headerIconBtn}
+                    aria-label="Decyzje"
+                    title="Decyzje"
+                  >
+                    <Gavel size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegistryMode("notes")}
+                    className={headerIconBtn}
+                    aria-label="Notatki"
+                    title="Notatki"
+                  >
+                    <StickyNote size={16} />
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -820,7 +869,7 @@ export function ConversationView({
         </div>
       )}
 
-      {!embedded && (
+      {!embedded && !pane && (
         <PinnedThreadsBar
           conversationId={conversationId}
           profiles={profiles}
@@ -918,6 +967,7 @@ export function ConversationView({
           onOpenThread={(rootId) => void openThread(rootId)}
         />
       )}
+      {nameThreadDialog}
     </div>
   );
 }

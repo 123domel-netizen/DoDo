@@ -183,6 +183,25 @@ export function totalUnread(overview: ChatOverviewEntry[]): number {
   );
 }
 
+/**
+ * Hub: zawężenie do dyskusji wpisów z aktywnej grupy (GroupRail).
+ * Kanały i DM są ukrywane, gdy filtr jest włączony i grupa wybrana.
+ */
+export function filterOverviewForHubGroup(
+  overview: ChatOverviewEntry[],
+  opts: {
+    matchGroup: boolean;
+    activeGroupFilter: string | null;
+    itemGroupId: (itemId: string) => string | null | undefined;
+  },
+): ChatOverviewEntry[] {
+  if (!opts.matchGroup || !opts.activeGroupFilter) return overview;
+  return overview.filter((e) => {
+    if (e.kind !== "item" || !e.itemId) return false;
+    return opts.itemGroupId(e.itemId) === opts.activeGroupFilter;
+  });
+}
+
 /** Czy rozmowa jest aktualnie wyciszona ("infinity" = na zawsze). */
 export function isMuted(entry: ChatOverviewEntry, now: Date = new Date()): boolean {
   if (!entry.myMutedUntil) return false;
@@ -215,4 +234,24 @@ export function overviewTitle(
   const others = entry.members.filter((m) => m.userId !== myUserId);
   if (!others.length) return "Notatki (ja)";
   return others.map((m) => m.displayName || "Bez nazwy").join(", ");
+}
+
+/** Domyślna nazwa wątku z treści wiadomości-rootu (do formularza). */
+export function defaultThreadTitle(msg: ChatMessage): string {
+  if (msg.kind === "voice") return "Wiadomość głosowa";
+  if (msg.kind === "gif") return "GIF";
+  if (msg.kind === "poll") {
+    const q = msg.body.trim().replace(/\s+/g, " ");
+    return (q || "Ankieta").slice(0, 120);
+  }
+  const t = msg.body.trim().replace(/\s+/g, " ");
+  return (t || "Wątek").slice(0, 120);
+}
+
+/** Tytuł wątku do UI: zapisana nazwa albo treść rootu. */
+export function threadDisplayTitle(root: ChatMessage | null | undefined): string {
+  if (!root || root.deletedAt) return "Wątek";
+  const named = root.threadTitle?.trim();
+  if (named) return named;
+  return defaultThreadTitle(root);
 }
