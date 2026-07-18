@@ -4,6 +4,7 @@ import { CalendarView } from "@/components/calendar/CalendarView";
 import { SidePanel } from "@/components/SidePanel";
 import { GroupRail } from "@/components/groups/GroupRail";
 import { AuthGate } from "@/components/AuthGate";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { useStore } from "@/state/store";
@@ -61,8 +62,9 @@ export default function App() {
   }
 
   return (
-    <AuthGate>
-      <GroupSelectPrompt />
+    <ErrorBoundary>
+      <AuthGate>
+        <GroupSelectPrompt />
       {isMobile ? (
         <MobileShell />
       ) : (
@@ -83,17 +85,19 @@ export default function App() {
                     hubExpanded ? "flex-[5]" : "flex-[3]"
                   }`}
                 >
-                  <Suspense
-                    fallback={
-                      <div className="flex h-full items-center justify-center text-xs text-ink-faint">
-                        Ładowanie hubu…
+                  <ErrorBoundary label="hub" compact>
+                    <Suspense
+                      fallback={
+                        <div className="flex h-full items-center justify-center text-xs text-ink-faint">
+                          Ładowanie hubu…
+                        </div>
+                      }
+                    >
+                      <div className="h-full min-h-0">
+                        <WorkspaceHub />
                       </div>
-                    }
-                  >
-                    <div className="h-full min-h-0">
-                      <WorkspaceHub />
-                    </div>
-                  </Suspense>
+                    </Suspense>
+                  </ErrorBoundary>
                 </div>
               )}
             </main>
@@ -107,6 +111,7 @@ export default function App() {
           </div>
         </div>
       )}
-    </AuthGate>
+      </AuthGate>
+    </ErrorBoundary>
   );
 }
