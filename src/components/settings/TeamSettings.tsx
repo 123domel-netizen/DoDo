@@ -30,7 +30,7 @@ export function TeamSettings() {
   if (!cloudEnabled) {
     return (
       <p className="text-[11px] leading-snug text-ink-faint">
-        Zespół wymaga konta w chmurze (Supabase).
+        Kontakty wymagają konta w chmurze (Supabase).
       </p>
     );
   }
@@ -91,7 +91,7 @@ export function TeamSettings() {
                 type="button"
                 onClick={() => void remove(m.id)}
                 className="shrink-0 rounded-lg p-1.5 text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
-                title="Usuń z zespołu"
+                title="Usuń z kontaktów"
               >
                 <Trash2 size={14} />
               </button>
@@ -126,7 +126,7 @@ export function TeamSettings() {
 
       {error && <p className="text-[11px] text-red-400">{error}</p>}
       {teamMembers.length === 0 && !error && (
-        <p className="text-[11px] text-ink-faint">Brak osób w zespole.</p>
+        <p className="text-[11px] text-ink-faint">Brak kontaktów.</p>
       )}
     </div>
   );

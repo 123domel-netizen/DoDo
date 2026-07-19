@@ -118,7 +118,7 @@ export function NewConversationDialog({ open, onClose }: NewConversationDialogPr
         <div className="thin-scrollbar mb-3 max-h-56 overflow-y-auto rounded-lg border border-line bg-surface-raised/50">
           {people.length === 0 && (
             <div className="px-3 py-4 text-center text-xs text-ink-faint">
-              Brak innych użytkowników. Zaproś osoby w Ustawienia → Zespół.
+              Brak innych użytkowników. Zaproś osoby w Ustawienia → Kontakty.
             </div>
           )}
           {people.map((p) => (

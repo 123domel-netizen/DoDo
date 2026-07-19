@@ -1075,7 +1075,7 @@ function TeamParticipantsEditor({
       ) : (
         <p className="text-xs text-ink-faint">
           {teamMembers.length === 0
-            ? "Dodaj osoby w ustawieniach → Zespół."
+            ? "Dodaj osoby w ustawieniach → Kontakty."
             : "Wszyscy członkowie zespołu są już dodani."}
         </p>
       )}

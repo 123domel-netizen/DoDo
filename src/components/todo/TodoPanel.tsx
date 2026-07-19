@@ -37,7 +37,7 @@ export function TodoPanel() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
   const [tab, setTab] = useState<SideTab>("tasks");
-  // Mobile: dolne menu już ma Dziś / Kalendarz / Zadania — tu tylko lista zadań.
+  // Mobile: dolne menu już ma Dashboard / Kalendarz / Zadania — tu tylko lista zadań.
   const activeTab: SideTab = isMobile ? "tasks" : tab;
 
   const groups = useMemo(() => {
@@ -173,7 +173,7 @@ export function TodoPanel() {
               active={activeTab === "today"}
               onClick={() => setTab("today")}
               icon={<Sun size={16} />}
-              label="Dziś"
+              label="Dashboard"
             />
           </div>
         </div>

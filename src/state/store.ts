@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings, TeamMember, UserTag } from "@/types";
+import type { MyOrg } from "@/lib/orgs";
 import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
@@ -37,6 +38,14 @@ interface AppState {
   activeGroupFilter: string | null;
   hydrated: boolean;
   teamMembers: TeamMember[];
+  /** App-level admin (panel Administracja). */
+  isAppAdmin: boolean;
+  /** Orgi użytkownika (zespoły z planami). */
+  myOrgs: MyOrg[];
+  /** Aktywny zespół w UI (gdy >1). */
+  activeOrgId: string | null;
+  /** Komunikat po auto-accept zaproszeń przy logowaniu. */
+  orgInviteNotice: string | null;
   authUserId: string | null;
   authUserEmail: string | null;
   /** Słownik tagów bieżącego użytkownika. */
@@ -78,6 +87,15 @@ interface AppState {
   closeEditor: () => void;
 
   setTeamMembers: (members: TeamMember[]) => void;
+  setOrgBootstrap: (payload: {
+    isAppAdmin: boolean;
+    myOrgs: MyOrg[];
+    activeOrgId?: string | null;
+    acceptedInvites?: number;
+  }) => void;
+  setActiveOrgId: (id: string | null) => void;
+  setMyOrgs: (orgs: MyOrg[]) => void;
+  clearOrgInviteNotice: () => void;
   setAuthUser: (id: string | null, email: string | null) => void;
   dismissGroupPrompt: (itemId: string) => void;
   clearGroupPrompt: () => void;
@@ -256,6 +274,10 @@ export function resetLocalUserState() {
     draft: null,
     activeGroupFilter: null,
     teamMembers: [],
+    isAppAdmin: false,
+    myOrgs: [],
+    activeOrgId: null,
+    orgInviteNotice: null,
     groupPromptItemId: null,
     tags: {},
     myTagIdsByItem: {},
@@ -291,6 +313,10 @@ export const useStore = create<AppState>()(
       activeGroupFilter: null,
       hydrated: false,
       teamMembers: [],
+      isAppAdmin: false,
+      myOrgs: [],
+      activeOrgId: null,
+      orgInviteNotice: null,
       authUserId: null,
       authUserEmail: null,
       groupPromptItemId: null,
@@ -505,6 +531,37 @@ export const useStore = create<AppState>()(
         }),
 
       setTeamMembers: (members) => set({ teamMembers: members }),
+      setOrgBootstrap: ({ isAppAdmin, myOrgs, activeOrgId, acceptedInvites }) =>
+        set((s) => {
+          const preferred =
+            activeOrgId !== undefined
+              ? activeOrgId
+              : s.activeOrgId && myOrgs.some((o) => o.id === s.activeOrgId)
+                ? s.activeOrgId
+                : (myOrgs[0]?.id ?? null);
+          const n = acceptedInvites ?? 0;
+          return {
+            isAppAdmin,
+            myOrgs,
+            activeOrgId: preferred,
+            orgInviteNotice:
+              n > 0
+                ? n === 1
+                  ? "Dołączono do zespołu na podstawie zaproszenia."
+                  : `Dołączono do ${n} zespołów na podstawie zaproszeń.`
+                : s.orgInviteNotice,
+          };
+        }),
+      setActiveOrgId: (id) => set({ activeOrgId: id }),
+      setMyOrgs: (orgs) =>
+        set((s) => ({
+          myOrgs: orgs,
+          activeOrgId:
+            s.activeOrgId && orgs.some((o) => o.id === s.activeOrgId)
+              ? s.activeOrgId
+              : (orgs[0]?.id ?? null),
+        })),
+      clearOrgInviteNotice: () => set({ orgInviteNotice: null }),
       setAuthUser: (id, email) => set({ authUserId: id, authUserEmail: email }),
       dismissGroupPrompt: (itemId) =>
         set((s) => {

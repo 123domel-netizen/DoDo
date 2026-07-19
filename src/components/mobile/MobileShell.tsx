@@ -48,6 +48,8 @@ import { enableNotificationsFlow } from "@/lib/push";
 import { cloudEnabled } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
 import { TeamSettings } from "@/components/settings/TeamSettings";
+import { OrgSettings } from "@/components/settings/OrgSettings";
+import { AppAdminSettings } from "@/components/settings/AppAdminSettings";
 import { TagsSettings } from "@/components/settings/TagsSettings";
 import { SyncSettings } from "@/components/settings/SyncSettings";
 import { useChatStore } from "@/lib/chat/store";
@@ -93,7 +95,10 @@ export function MobileShell() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [mobileView, setMobileView] = useState<MobileCalendarMode>("day");
   const [sheet, setSheet] = useState<boolean>(false);
-  const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags" | "sync">("view");
+  const [settingsTab, setSettingsTab] = useState<
+    "view" | "org" | "contacts" | "tags" | "sync" | "admin"
+  >("view");
+  const isAppAdmin = useStore((s) => s.isAppAdmin);
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
 
@@ -306,7 +311,7 @@ export function MobileShell() {
         )}
       </main>
 
-      {/* Dolne menu: Dziś · Kalendarz · Zadania · Czat (zawsze widoczne) */}
+      {/* Dolne menu: Dashboard · Kalendarz · Zadania · Czat (zawsze widoczne) */}
       <nav
         className="z-30 flex shrink-0 items-stretch border-t border-line bg-surface"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
@@ -316,7 +321,7 @@ export function MobileShell() {
           active={tab === "dashboard"}
           onSelect={() => setTab("dashboard")}
           icon={<LayoutDashboard size={22} strokeWidth={tab === "dashboard" ? 2.25 : 1.75} />}
-          label="Dziś"
+          label="Dashboard"
         />
         <BottomTab
           active={tab === "calendar"}
@@ -384,53 +389,42 @@ export function MobileShell() {
               </button>
             </div>
 
-            <div className="mb-3 flex gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
-              <button
-                type="button"
-                onClick={() => setSettingsTab("view")}
-                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  settingsTab === "view" ? "bg-accent text-white" : "text-ink-light hover:text-ink"
-                }`}
-              >
-                Widok
-              </button>
-              <button
-                type="button"
-                onClick={() => setSettingsTab("team")}
-                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  settingsTab === "team" ? "bg-accent text-white" : "text-ink-light hover:text-ink"
-                }`}
-              >
-                Zespół
-              </button>
-              <button
-                type="button"
-                onClick={() => setSettingsTab("tags")}
-                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  settingsTab === "tags" ? "bg-accent text-white" : "text-ink-light hover:text-ink"
-                }`}
-              >
-                Tagi
-              </button>
-              {cloudEnabled && (
+            <div className="mb-3 flex flex-wrap gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
+              {(
+                [
+                  { id: "view" as const, label: "Widok" },
+                  { id: "org" as const, label: "Zespół" },
+                  { id: "contacts" as const, label: "Kontakty" },
+                  { id: "tags" as const, label: "Tagi" },
+                  ...(cloudEnabled ? [{ id: "sync" as const, label: "Sync" }] : []),
+                  ...(isAppAdmin ? [{ id: "admin" as const, label: "Admin" }] : []),
+                ] as { id: typeof settingsTab; label: string }[]
+              ).map((tab) => (
                 <button
+                  key={tab.id}
                   type="button"
-                  onClick={() => setSettingsTab("sync")}
-                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                    settingsTab === "sync" ? "bg-accent text-white" : "text-ink-light hover:text-ink"
+                  onClick={() => setSettingsTab(tab.id)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                    settingsTab === tab.id
+                      ? "bg-accent text-white"
+                      : "text-ink-light hover:text-ink"
                   }`}
                 >
-                  Sync
+                  {tab.label}
                 </button>
-              )}
+              ))}
             </div>
 
             {settingsTab === "view" ? (
               <ViewSettings />
-            ) : settingsTab === "team" ? (
+            ) : settingsTab === "org" ? (
+              <OrgSettings />
+            ) : settingsTab === "contacts" ? (
               <TeamSettings />
             ) : settingsTab === "tags" ? (
               <TagsSettings />
+            ) : settingsTab === "admin" ? (
+              <AppAdminSettings />
             ) : (
               <SyncSettings />
             )}

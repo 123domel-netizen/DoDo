@@ -20,6 +20,8 @@ import { Logo } from "@/components/brand/Logo";
 import { ViewSettings } from "@/components/settings/ViewSettings";
 import { TagsSettings } from "@/components/settings/TagsSettings";
 import { TeamSettings } from "@/components/settings/TeamSettings";
+import { OrgSettings } from "@/components/settings/OrgSettings";
+import { AppAdminSettings } from "@/components/settings/AppAdminSettings";
 import { SyncSettings } from "@/components/settings/SyncSettings";
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
@@ -29,6 +31,8 @@ const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "month", label: "Miesiąc" },
 ];
 
+type SettingsTab = "view" | "org" | "contacts" | "tags" | "sync" | "admin";
+
 interface ToolbarProps {
   todoOpen: boolean;
   onToggleTodo: () => void;
@@ -37,8 +41,9 @@ interface ToolbarProps {
 export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
+  const isAppAdmin = useStore((s) => s.isAppAdmin);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"view" | "team" | "tags" | "sync">("view");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("view");
 
   const anchor = new Date(settings.anchorDate);
 
@@ -74,6 +79,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
       </div>
 
       <button
+        type="button"
         onClick={goToday}
         className="rounded-lg border border-line bg-surface-raised px-2.5 py-1 text-sm text-ink transition hover:border-line-strong"
       >
@@ -82,6 +88,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
 
       <div className="flex items-center">
         <button
+          type="button"
           onClick={() => shift(-1)}
           className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
           aria-label="Poprzedni"
@@ -89,6 +96,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
           <ChevronLeft size={18} />
         </button>
         <button
+          type="button"
           onClick={() => shift(1)}
           className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
           aria-label="Następny"
@@ -106,6 +114,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
           {VIEWS.map((v) => (
             <button
               key={v.key}
+              type="button"
               onClick={() => setSettings({ view: v.key })}
               className={`rounded-md px-2.5 py-1 text-sm transition ${
                 settings.view === v.key
@@ -151,61 +160,42 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
       </div>
 
       {settingsOpen && (
-        <div className="absolute right-3 top-full z-40 mt-2 w-80 max-h-[min(70vh,520px)] overflow-y-auto thin-scrollbar rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
-          <div className="mb-3 flex gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
-            <button
-              type="button"
-              onClick={() => setSettingsTab("view")}
-              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
-                settingsTab === "view"
-                  ? "bg-accent text-white shadow-glow"
-                  : "text-ink-light hover:text-ink"
-              }`}
-            >
-              Widok
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsTab("team")}
-              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
-                settingsTab === "team"
-                  ? "bg-accent text-white shadow-glow"
-                  : "text-ink-light hover:text-ink"
-              }`}
-            >
-              Zespół
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsTab("tags")}
-              className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
-                settingsTab === "tags"
-                  ? "bg-accent text-white shadow-glow"
-                  : "text-ink-light hover:text-ink"
-              }`}
-            >
-              Tagi
-            </button>
-            {cloudEnabled && (
+        <div className="absolute right-3 top-full z-40 mt-2 w-[22rem] max-h-[min(70vh,560px)] overflow-y-auto thin-scrollbar rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
+          <div className="mb-3 flex flex-wrap gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
+            {(
+              [
+                { id: "view", label: "Widok" },
+                { id: "org", label: "Zespół" },
+                { id: "contacts", label: "Kontakty" },
+                { id: "tags", label: "Tagi" },
+                ...(cloudEnabled ? [{ id: "sync" as const, label: "Sync" }] : []),
+                ...(isAppAdmin ? [{ id: "admin" as const, label: "Admin" }] : []),
+              ] as { id: SettingsTab; label: string }[]
+            ).map((tab) => (
               <button
+                key={tab.id}
                 type="button"
-                onClick={() => setSettingsTab("sync")}
-                className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
-                  settingsTab === "sync"
+                onClick={() => setSettingsTab(tab.id)}
+                className={`rounded-md px-2 py-1 text-xs font-medium transition ${
+                  settingsTab === tab.id
                     ? "bg-accent text-white shadow-glow"
                     : "text-ink-light hover:text-ink"
                 }`}
               >
-                Sync
+                {tab.label}
               </button>
-            )}
+            ))}
           </div>
           {settingsTab === "view" ? (
             <ViewSettings />
-          ) : settingsTab === "team" ? (
+          ) : settingsTab === "org" ? (
+            <OrgSettings />
+          ) : settingsTab === "contacts" ? (
             <TeamSettings />
           ) : settingsTab === "tags" ? (
             <TagsSettings />
+          ) : settingsTab === "admin" ? (
+            <AppAdminSettings />
           ) : (
             <SyncSettings />
           )}

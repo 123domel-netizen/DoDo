@@ -19,6 +19,7 @@ import type { Group, Item, UserTag } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { fetchTeamMembers } from "@/lib/team";
+import { bootstrapOrgs } from "@/lib/orgs";
 import {
   clearDirtyItems,
   clearDirtyParticipants,
@@ -749,6 +750,8 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
 
     const team = await fetchTeamMembers();
     useStore.getState().setTeamMembers(team);
+    const orgs = await bootstrapOrgs();
+    useStore.getState().setOrgBootstrap(orgs);
 
     lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
     lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
@@ -810,6 +813,10 @@ export async function handleAuthUserChange(nextUserId: string | null) {
   try {
     const team = await fetchTeamMembers();
     useStore.getState().setTeamMembers(team);
+
+    // Accept pending org invites before loading membership list.
+    const orgs = await bootstrapOrgs();
+    useStore.getState().setOrgBootstrap(orgs);
 
     // Grupy najpierw — items.group_id ma klucz obcy do groups(id).
     await pullUserTags();

@@ -1,0 +1,22 @@
+-- Checklist ręczny / SQL dla RLS i race (nie uruchamiany automatycznie w CI).
+-- Po wdrożeniu 0028_orgs_plans.sql:
+--
+-- 1) App admin seed
+--    select * from app_admins a
+--    join auth.users u on u.id = a.user_id
+--    where lower(u.email) = 'lukaszewicz.dominik@gmail.com';
+--
+-- 2) Zwykły user NIE może UPDATE orgs.seat_limit / plan_code
+--    (brak policy UPDATE — tylko RPC app_set_org_plan).
+--
+-- 3) org_invite race: dwa równoległe wywołania przy 1 wolnym miejscu
+--    → tylko jedno sukces, drugie 'seat limit reached' (FOR UPDATE na orgs).
+--
+-- 4) Downgrade: app_set_org_plan do mniejszego limitu przy usage > limit
+--    → członkowie zostają; org_can_invite = false; overLimit w org_get_detail.
+--
+-- 5) app_set_org_admin: org zawsze ma dokładnie jednego admina (unique partial index).
+--
+-- 6) Panel Admin: is_app_admin() true tylko dla wierszy w app_admins.
+--
+-- 7) Org admin nie wywołuje app_set_org_plan (forbidden).
