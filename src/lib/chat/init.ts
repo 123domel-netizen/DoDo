@@ -4,10 +4,11 @@ import { uid } from "@/lib/factory";
 import { useStore } from "@/state/store";
 import { onRouteChange, setRouteHash } from "@/lib/navigation";
 import * as api from "@/lib/chat/api";
-import { uploadAttachmentsForMessage } from "@/lib/chat/upload";
+import { uploadAttachmentsForMessage, uploadChannelIcon } from "@/lib/chat/upload";
 import { useChatStore, switchChatPersistUser } from "@/lib/chat/store";
 import { mergeMessages } from "@/lib/chat/feed";
 import { firstUrl } from "@/lib/chat/markdown";
+import { rememberRecentThread } from "@/lib/chat/recentThreads";
 import type {
   ChatItemLink,
   ChatMessage,
@@ -118,14 +119,28 @@ export function openRegistryInPanel(focus: {
   id: string;
   conversationId: string;
   messageId: string | null;
+  title?: string;
   body: string;
+  note?: string;
   createdBy: string;
   at: string;
+  groupId?: string | null;
+  tagIds?: string[];
 }) {
   const st = useChatStore.getState();
   useStore.getState().setEditing(null);
   st.setHubTab(focus.kind === "decision" ? "decisions" : "notes");
-  st.setRegistryFocus(focus);
+  st.setRegistryFocus({
+    ...focus,
+    title:
+      focus.title?.trim() ||
+      (focus.kind === "note"
+        ? focus.body.trim().split(/\n/)[0]?.trim().slice(0, 120) || "Notatka"
+        : ""),
+    note: focus.note ?? "",
+    groupId: focus.groupId ?? null,
+    tagIds: focus.tagIds ?? [],
+  });
   st.setMediaConversationId(null);
   st.setPanelMode(focus.kind === "decision" ? "decision" : "note");
 }
@@ -205,6 +220,51 @@ export async function saveThreadTitle(
   return {};
 }
 
+export async function archiveThread(
+  msg: ChatMessage,
+  archived: boolean,
+): Promise<{ error?: string }> {
+  const rootId = msg.threadRootId ?? msg.id;
+  const st = useChatStore.getState();
+  const root =
+    (st.messagesByConv[msg.conversationId] ?? []).find((m) => m.id === rootId) ??
+    msg;
+  const optimistic: ChatMessage = {
+    ...root,
+    threadArchivedAt: archived ? new Date().toISOString() : null,
+  };
+  st.markMessageState(optimistic);
+  const { error } = await api.setThreadArchived(rootId, archived);
+  if (error) {
+    st.markMessageState(root);
+    return { error };
+  }
+  return {};
+}
+
+/** Usuń pusty wątek z listy (nazwa/pin) — wiadomość w czacie zostaje. */
+export async function dissolveThread(msg: ChatMessage): Promise<{ error?: string }> {
+  const rootId = msg.threadRootId ?? msg.id;
+  const st = useChatStore.getState();
+  const root =
+    (st.messagesByConv[msg.conversationId] ?? []).find((m) => m.id === rootId) ??
+    msg;
+  const optimistic: ChatMessage = {
+    ...root,
+    threadTitle: null,
+    pinnedAt: null,
+    pinnedBy: null,
+    threadArchivedAt: null,
+  };
+  st.markMessageState(optimistic);
+  const { error } = await api.dissolveEmptyThread(rootId);
+  if (error) {
+    st.markMessageState(root);
+    return { error };
+  }
+  return {};
+}
+
 export async function loadOlderMessages(conversationId: string) {
   const list = useChatStore.getState().messagesByConv[conversationId] ?? [];
   const oldest = list.find((m) => !m.sendState);
@@ -241,6 +301,14 @@ export async function openThread(rootId: string) {
       conversationId: convId,
       threadRootId: rootId,
     });
+    rememberRecentThread(
+      root ?? {
+        id: rootId,
+        conversationId: convId,
+        title: "Wątek",
+      },
+    );
+    useChatStore.getState().markThreadSeen(rootId);
   }
 
   const msgs = await api.fetchThreadMessages(rootId);
@@ -249,6 +317,11 @@ export async function openThread(rootId: string) {
   );
   const base = msgs.length > 0 ? msgs : root ? [root] : [];
   useChatStore.getState().setThreadMessages(rootId, mergeMessages(base, pending));
+  const resolvedRoot = base.find((m) => m.id === rootId);
+  if (resolvedRoot) {
+    rememberRecentThread(resolvedRoot);
+    useChatStore.getState().markThreadSeen(rootId);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +355,7 @@ export function buildOutgoingMessage(opts: SendOptions, userId: string): ChatMes
     pinnedAt: null,
     pinnedBy: null,
     threadTitle: null,
+    threadArchivedAt: null,
     links: [],
     attachments: [],
     reactions: [],
@@ -505,17 +579,44 @@ export async function editChatMessage(
 export async function toggleReaction(msg: ChatMessage, emoji: string) {
   const st = useChatStore.getState();
   if (!st.userId || msg.sendState) return;
-  const reaction: ChatReaction = { messageId: msg.id, userId: st.userId, emoji };
-  const mine = (msg.reactions ?? []).some(
-    (r) => r.userId === st.userId && r.emoji === emoji,
-  );
-  st.applyReactionChange(reaction, mine);
-  const { error } = mine
-    ? await api.removeReaction(reaction)
-    : await api.addReaction(reaction);
+  const userId = st.userId;
+  const reaction: ChatReaction = { messageId: msg.id, userId, emoji };
+  const myReactions = (msg.reactions ?? []).filter((r) => r.userId === userId);
+  const mineSame = myReactions.some((r) => r.emoji === emoji);
+  const mineOthers = myReactions.filter((r) => r.emoji !== emoji);
+
+  if (mineSame) {
+    // Ponowne kliknięcie tej samej emotki = cofnięcie.
+    st.applyReactionChange(reaction, true);
+    const { error } = await api.removeReaction(reaction);
+    if (error) {
+      console.warn("[chat] reaction failed:", error);
+      st.applyReactionChange(reaction, false);
+    }
+    return;
+  }
+
+  // Jedna reakcja na użytkownika: usuń poprzednie, dodaj nową.
+  for (const prev of mineOthers) {
+    st.applyReactionChange(prev, true);
+  }
+  st.applyReactionChange(reaction, false);
+
+  if (mineOthers.length > 0) {
+    const { error: clearErr } = await api.removeMyReactionsOnMessage(msg.id, userId);
+    if (clearErr) {
+      console.warn("[chat] reaction clear failed:", clearErr);
+      for (const prev of mineOthers) st.applyReactionChange(prev, false);
+      st.applyReactionChange(reaction, true);
+      return;
+    }
+  }
+
+  const { error } = await api.addReaction(reaction);
   if (error) {
     console.warn("[chat] reaction failed:", error);
-    st.applyReactionChange(reaction, !mine);
+    st.applyReactionChange(reaction, true);
+    for (const prev of mineOthers) st.applyReactionChange(prev, false);
   }
 }
 
@@ -716,6 +817,51 @@ export async function createChannel(
   }
   await refreshOverview();
   return id;
+}
+
+export async function inviteMember(
+  conversationId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  const { error } = await api.inviteToConversation(conversationId, userId);
+  if (!error) await refreshOverview();
+  return { error };
+}
+
+export async function removeMember(
+  conversationId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  const { error } = await api.removeFromConversation(conversationId, userId);
+  if (!error) await refreshOverview();
+  return { error };
+}
+
+export async function setChannelMemberRole(
+  conversationId: string,
+  userId: string,
+  role: "admin" | "member",
+): Promise<{ error?: string }> {
+  const { error } = await api.setMemberRole(conversationId, userId, role);
+  if (!error) await refreshOverview();
+  return { error };
+}
+
+export async function setChannelIcon(
+  conversationId: string,
+  file: File | null,
+): Promise<{ error?: string }> {
+  if (file) {
+    const { path, error } = await uploadChannelIcon(conversationId, file);
+    if (error || !path) return { error: error ?? "Upload nieudany." };
+    const { error: updErr } = await api.updateConversationIcon(conversationId, path);
+    if (updErr) return { error: updErr };
+  } else {
+    const { error } = await api.updateConversationIcon(conversationId, null);
+    if (error) return { error };
+  }
+  await refreshOverview();
+  return {};
 }
 
 // ---------------------------------------------------------------------------

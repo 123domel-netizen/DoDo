@@ -75,4 +75,4 @@ export function groupReactions(
   return order.map((e) => map.get(e)!);
 }
 
-export const QUICK_REACTIONS = ["👍", "❤️", "😂", "👀", "✅", "🎉"];
+export const QUICK_REACTIONS = ["👍", "👎", "😂", "❤️", "👀", "✅"];

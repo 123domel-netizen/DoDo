@@ -212,8 +212,11 @@ export function HubTodayInbox() {
                   conversationId: d.conversationId,
                   messageId: d.messageId,
                   body: d.body,
+                  note: d.note,
                   createdBy: d.createdBy,
                   at: d.decidedAt,
+                  groupId: d.groupId,
+                  tagIds: d.tagIds,
                 })
               }
               className="flex w-full flex-col gap-0.5 rounded-md px-1.5 py-1.5 text-left transition hover:bg-surface-raised"

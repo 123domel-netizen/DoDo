@@ -147,6 +147,8 @@ export interface Item {
   personalReminders?: Reminder[];
   /** Id tagów właściciela (payload); uczestnik używa myTagIdsByItem w store. */
   tagIds?: string[];
+  /** Przypięcie jak priorytet — ISO datetime; null/undefined = nieprzypięte. */
+  pinnedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -199,8 +201,13 @@ export interface Settings {
   anchorDate: string;
   /** Weekday (0=Sun..6=Sat) the 9-day view starts on. Default 5 (Friday). */
   nineDayStartWeekday: number;
-  /** Pixels per hour in the timed grid. */
+  /** Pixels per hour in the timed grid (używane gdy hourHeightAuto=false). */
   hourHeight: number;
+  /**
+   * true = wysokość godziny dopasowana do panelu kalendarza (100% do hubu).
+   * false = ręczna wartość hourHeight.
+   */
+  hourHeightAuto: boolean;
   /** Bump to run one-time settings migrations. */
   settingsVersion?: number;
 }

@@ -13,11 +13,8 @@ import {
   CornerUpLeft,
   Gavel,
   History,
-  ListChecks,
   MessageSquare,
   Pencil,
-  Pin,
-  PinOff,
   StickyNote,
   Trash2,
 } from "lucide-react";
@@ -230,13 +227,6 @@ export function MessageActionsSheet({
               onClick={() => act("openThread")}
             />
           )}
-          {!msg.threadRootId && msg.kind !== "system" && (
-            <ActionRow
-              icon={msg.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
-              label={msg.pinnedAt ? "Odepnij wątek" : "Przypnij wątek"}
-              onClick={() => act("pinThread")}
-            />
-          )}
 
           {isTextual && (
             <>
@@ -250,11 +240,6 @@ export function MessageActionsSheet({
                 icon={<CalendarPlus size={14} />}
                 label="Utwórz wydarzenie"
                 onClick={() => act("createEvent")}
-              />
-              <ActionRow
-                icon={<ListChecks size={14} />}
-                label="Utwórz checklistę"
-                onClick={() => act("createChecklist")}
               />
               <ActionRow
                 icon={<Gavel size={14} />}

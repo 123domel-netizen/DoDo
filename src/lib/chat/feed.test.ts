@@ -8,6 +8,7 @@ import {
   mergeMessages,
   overviewTitle,
   reconcilePinnedList,
+  sortFavoritesAndNew,
   sortOverview,
   threadDisplayTitle,
   totalUnread,
@@ -33,6 +34,7 @@ function msg(partial: Partial<ChatMessage>): ChatMessage {
     pinnedAt: null,
     pinnedBy: null,
     threadTitle: null,
+    threadArchivedAt: null,
     ...partial,
   };
 }
@@ -48,6 +50,7 @@ function entry(partial: Partial<ChatOverviewEntry>): ChatOverviewEntry {
     createdBy: "u1",
     lastMessageAt: "2026-07-17T09:00:00.000Z",
     createdAt: "2026-07-01T00:00:00.000Z",
+    iconUrl: null,
     myLastReadAt: "2026-07-17T09:00:00.000Z",
     myNotify: "all",
     myRole: "member",
@@ -214,6 +217,38 @@ describe("isMuted / sortOverview", () => {
       entry({ id: "c", lastMessageAt: "2026-07-17T09:00:00.000Z" }),
     ];
     expect(sortOverview(list).map((c) => c.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("sortFavoritesAndNew: unread → pin → aktywność w miesiącu", () => {
+    const now = new Date("2026-07-17T12:00:00.000Z");
+    const list = [
+      entry({ id: "old", lastMessageAt: "2026-05-01T08:00:00.000Z" }),
+      entry({ id: "active", lastMessageAt: "2026-07-10T08:00:00.000Z" }),
+      entry({
+        id: "pin",
+        lastMessageAt: "2026-07-01T08:00:00.000Z",
+        myPinnedAt: "2026-07-01T00:00:00.000Z",
+      }),
+      entry({
+        id: "unread",
+        lastMessageAt: "2026-07-16T08:00:00.000Z",
+        unreadCount: 2,
+      }),
+      entry({
+        id: "hot",
+        lastMessageAt: "2026-07-15T08:00:00.000Z",
+      }),
+    ];
+    expect(sortFavoritesAndNew(list, now).map((c) => c.id)).toEqual([
+      "unread",
+      "pin",
+      "hot",
+      "active",
+      "old",
+    ]);
+    expect(
+      sortFavoritesAndNew(list, now, { hot: 40, active: 5, pin: 1 }).map((c) => c.id),
+    ).toEqual(["unread", "pin", "hot", "active", "old"]);
   });
 });
 

@@ -1,9 +1,10 @@
 import type { Item } from "@/types";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { addDecision, addNote, createItemLink } from "@/lib/chat/api";
+import { addDecision, addNote, createItemLink, upsertRegistryLabels } from "@/lib/chat/api";
 import { sendChatMessage } from "@/lib/chat/init";
 import { draftFromMessage, type ConvertTarget } from "@/lib/chat/convertDraft";
+import { groupIdForNewItem } from "@/lib/groups";
 import type { ChatDecision, ChatMessage, ChatNote } from "@/lib/chat/types";
 
 /**
@@ -90,8 +91,19 @@ export async function saveTextAsDecision(
   const body = text.trim();
   if (!body) return { error: "Pusta treść nie może być decyzją." };
 
-  const { error } = await addDecision({ conversationId, messageId, body, createdBy: userId });
+  const { decision, error } = await addDecision({
+    conversationId,
+    messageId,
+    body,
+    createdBy: userId,
+  });
   if (error) return { error };
+  if (!decision) return { error: "Nie udało się zapisać decyzji." };
+
+  await upsertRegistryLabels("decision", decision.id, {
+    groupId: groupIdForNewItem(),
+    tagIds: [],
+  });
 
   useChatStore.getState().bumpRegistryEpoch();
 
@@ -99,6 +111,7 @@ export async function saveTextAsDecision(
     conversationId,
     body: `📌 Zapisano decyzję: ${body.slice(0, 140)}`,
     kind: "system",
+    payload: { registry: { kind: "decision", id: decision.id } },
   });
   return {};
 }
@@ -118,8 +131,20 @@ export async function saveTextAsNote(
   const body = text.trim();
   if (!body) return { error: "Pusta treść nie może być notatką." };
 
-  const { error } = await addNote({ conversationId, messageId, body, createdBy: userId });
+  const { note, error } = await addNote({
+    conversationId,
+    messageId,
+    title: body.split(/\n/)[0]?.trim().slice(0, 120) || "Notatka",
+    body,
+    createdBy: userId,
+  });
   if (error) return { error };
+  if (!note) return { error: "Nie udało się zapisać notatki." };
+
+  await upsertRegistryLabels("note", note.id, {
+    groupId: groupIdForNewItem(),
+    tagIds: [],
+  });
 
   useChatStore.getState().bumpRegistryEpoch();
 
@@ -127,18 +152,21 @@ export async function saveTextAsNote(
     conversationId,
     body: `📝 Zapisano notatkę: ${body.slice(0, 140)}`,
     kind: "system",
+    payload: { registry: { kind: "note", id: note.id } },
   });
   return {};
 }
 
 /** Notatka → decyzja (zachowuje link do wiadomości źródłowej, jeśli był). */
 export async function noteToDecision(note: ChatNote): Promise<{ error?: string }> {
-  return saveTextAsDecision(note.conversationId, note.body, note.messageId);
+  const text = [note.title.trim(), note.body.trim()].filter(Boolean).join("\n");
+  return saveTextAsDecision(note.conversationId, text || note.body, note.messageId);
 }
 
 /** Decyzja → notatka. */
 export async function decisionToNote(decision: ChatDecision): Promise<{ error?: string }> {
-  return saveTextAsNote(decision.conversationId, decision.body, decision.messageId);
+  const text = [decision.body.trim(), decision.note.trim()].filter(Boolean).join("\n\n");
+  return saveTextAsNote(decision.conversationId, text || decision.body, decision.messageId);
 }
 
 /**

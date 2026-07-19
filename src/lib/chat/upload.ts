@@ -202,6 +202,32 @@ export async function signedUrlFor(path: string): Promise<string | null> {
   return data.signedUrl;
 }
 
+/** Ikona kanału: `{conversationId}/_icon/{uuid}.webp` */
+export async function uploadChannelIcon(
+  conversationId: string,
+  file: File,
+): Promise<{ path?: string; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  if (!/^image\//i.test(file.type)) return { error: "Wybierz plik obrazu." };
+  if (file.size > MAX_CHAT_FILE_BYTES) return { error: "Plik przekracza 25 MB." };
+
+  const prepared = await prepareUpload(file);
+  const path = `${conversationId}/_icon/${uid()}`;
+  const { error } = await supabase.storage
+    .from(CHAT_BUCKET)
+    .upload(path, prepared.data, {
+      contentType: prepared.mimeType,
+      upsert: true,
+    });
+  if (error) return { error: error.message };
+  urlCache.delete(path);
+  return { path };
+}
+
+export function invalidateSignedUrl(path: string) {
+  urlCache.delete(path);
+}
+
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

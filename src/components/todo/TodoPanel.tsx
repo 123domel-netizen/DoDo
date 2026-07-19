@@ -5,13 +5,14 @@ import {
   CheckSquare,
   ListChecks,
   Paperclip,
+  Pin,
   Plus,
   Sun,
   Users,
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { Item } from "@/types";
-import { fmt, fmtRange, tint } from "@/lib/format";
+import { fmt, fmtRange } from "@/lib/format";
 import { allDayCalendarDate } from "@/lib/allDay";
 import { groupIdForNewItem, findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
 import { isSharedItem, SHARE_CALENDAR_COLOR } from "@/lib/share";
@@ -22,10 +23,12 @@ import { expandItemsForRange, hasRecurrence, itemsForUpcomingEventsList } from "
 import { baseItemId } from "@/lib/itemId";
 import { itemSupportsTodoDone } from "@/lib/items";
 import { TodayDashboardPanel } from "@/components/dashboard/TodayDashboardPanel";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 
 type SideTab = "tasks" | "events" | "today";
 
 export function TodoPanel() {
+  const isMobile = useIsMobile();
   const itemsMap = useStore((s) => s.items);
   const groupsArr = useStore((s) => s.groups);
   const activeGroupFilter = useStore((s) => s.activeGroupFilter);
@@ -34,6 +37,8 @@ export function TodoPanel() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
   const [tab, setTab] = useState<SideTab>("tasks");
+  // Mobile: dolne menu już ma Dziś / Kalendarz / Zadania — tu tylko lista zadań.
+  const activeTab: SideTab = isMobile ? "tasks" : tab;
 
   const groups = useMemo(() => {
     const m: Record<string, { name: string; color: string }> = {};
@@ -55,6 +60,9 @@ export function TodoPanel() {
 
     if (inArchiveView) {
       return base.sort((a, b) => {
+        const ap = a.pinnedAt ? 1 : 0;
+        const bp = b.pinnedAt ? 1 : 0;
+        if (ap !== bp) return bp - ap;
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       });
     }
@@ -73,6 +81,10 @@ export function TodoPanel() {
     }
 
     return expanded.sort((a, b) => {
+      const ap = a.pinnedAt ? 1 : 0;
+      const bp = b.pinnedAt ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      if (a.pinnedAt && b.pinnedAt) return b.pinnedAt.localeCompare(a.pinnedAt);
       if (a.done !== b.done) return a.done ? 1 : -1;
       if (!a.hasDueDate && !b.hasDueDate) return 0;
       if (!a.hasDueDate) return 1;
@@ -131,9 +143,9 @@ export function TodoPanel() {
     return n;
   }, [todos]);
   const counterLabel =
-    tab === "events"
+    activeTab === "events"
       ? `${upcomingEvents.length} nadchodzących`
-      : tab === "tasks"
+      : activeTab === "tasks"
         ? inArchiveView
           ? `${todos.length} zakończonych`
           : `${activeTasks} aktywnych`
@@ -142,30 +154,32 @@ export function TodoPanel() {
   return (
     <div className="flex h-full flex-col bg-surface/95">
       <div className="pointer-events-none h-0.5 shrink-0 bg-gradient-to-r from-accent/30 via-accent/10 to-transparent" />
-      <div className="border-b border-line/80 bg-surface-raised/40 px-3 py-2">
-        <div className="flex min-w-0 items-stretch gap-1 rounded-xl border border-line bg-surface-raised p-1">
-          <PanelTab
-            active={tab === "tasks"}
-            onClick={() => setTab("tasks")}
-            icon={<ListChecks size={16} />}
-            label="Zadania"
-          />
-          <PanelTab
-            active={tab === "events"}
-            onClick={() => setTab("events")}
-            icon={<CalendarClock size={16} />}
-            label="Wydarzenia"
-          />
-          <PanelTab
-            active={tab === "today"}
-            onClick={() => setTab("today")}
-            icon={<Sun size={16} />}
-            label="Dziś"
-          />
+      {!isMobile && (
+        <div className="border-b border-line/80 bg-surface-raised/40 px-3 py-2">
+          <div className="flex min-w-0 items-stretch gap-1 rounded-xl border border-line bg-surface-raised p-1">
+            <PanelTab
+              active={activeTab === "tasks"}
+              onClick={() => setTab("tasks")}
+              icon={<ListChecks size={16} />}
+              label="Zadania"
+            />
+            <PanelTab
+              active={activeTab === "events"}
+              onClick={() => setTab("events")}
+              icon={<CalendarClock size={16} />}
+              label="Wydarzenia"
+            />
+            <PanelTab
+              active={activeTab === "today"}
+              onClick={() => setTab("today")}
+              icon={<Sun size={16} />}
+              label="Dziś"
+            />
+          </div>
         </div>
-      </div>
+      )}
 
-      {tab === "tasks" && (
+      {activeTab === "tasks" && (
         <PanelActionBar
           addLabel="Dodaj zadanie"
           onAdd={inArchiveView ? undefined : openTaskDraft}
@@ -173,7 +187,7 @@ export function TodoPanel() {
         />
       )}
 
-      {tab === "events" && (
+      {activeTab === "events" && (
         <PanelActionBar
           addLabel="Dodaj wydarzenie"
           onAdd={openEventDraft}
@@ -181,13 +195,13 @@ export function TodoPanel() {
         />
       )}
 
-      {tab === "today" ? (
+      {activeTab === "today" ? (
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <TodayDashboardPanel />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 overflow-y-auto overflow-x-hidden thin-scrollbar p-2">
-          {tab === "tasks" ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden thin-scrollbar p-2">
+          {activeTab === "tasks" ? (
           <>
             {todos.length === 0 && (
               <div className="px-2 py-6 text-center text-sm text-ink-faint">
@@ -196,7 +210,7 @@ export function TodoPanel() {
                   : "Brak zadań. Użyj „Dodaj zadanie” powyżej."}
               </div>
             )}
-            <div className="space-y-1">
+            <div className="w-full space-y-1">
               {todos.map((it) => (
                 <TodoRow
                   key={it.id}
@@ -229,7 +243,7 @@ export function TodoPanel() {
                 Brak nadchodzących wydarzeń.
               </div>
             )}
-            <div className="space-y-1">
+            <div className="w-full space-y-1">
               {upcomingEvents.map((it) => (
                 <EventRow
                   key={it.id}
@@ -284,20 +298,18 @@ function PanelActionBar({
   counterLabel: string;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 border-b border-line px-3 py-2">
-      {onAdd ? (
+    <div className="flex min-w-0 items-center gap-2 border-b border-line px-3 py-1.5">
+      <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">{counterLabel}</span>
+      {onAdd && (
         <button
           type="button"
           onClick={onAdd}
-          className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent-grad px-3 py-1.5 text-sm font-semibold text-white shadow-glow transition hover:brightness-110"
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-accent-grad px-2.5 py-1.5 text-xs font-semibold text-white shadow-glow transition hover:brightness-110"
         >
-          <Plus size={16} strokeWidth={2.25} />
+          <Plus size={14} strokeWidth={2.5} />
           {addLabel}
         </button>
-      ) : (
-        <span className="min-h-9" />
       )}
-      <span className="ml-auto shrink-0 text-xs text-ink-faint">{counterLabel}</span>
     </div>
   );
 }
@@ -393,12 +405,14 @@ export function TodoRow({
   onOpen: () => void;
   onConvert: () => void;
 }) {
+  const patchItem = useStore((s) => s.patchItem);
   const due = new Date(item.end);
   const overdue = item.hasDueDate && !item.done && isPast(due) && !isToday(due);
   const checklistDone = item.checklist.filter((c) => c.done).length;
   const shared = isSharedItem(item);
   const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#9b9a97");
   const reminderCount = effectiveReminders(item).length;
+  const pinned = Boolean(item.pinnedAt);
   const showMeta =
     item.hasDueDate ||
     shared ||
@@ -408,11 +422,27 @@ export function TodoRow({
     item.participants.length > 0 ||
     item.attachments.length > 0;
 
+  const togglePin = () => {
+    if (shared) return;
+    patchItem(baseItemId(item.id), {
+      pinnedAt: pinned ? null : new Date().toISOString(),
+    });
+  };
+
+  const toggleCalendar = () => {
+    if (shared) return;
+    if (item.showInCalendar) {
+      patchItem(baseItemId(item.id), { showInCalendar: false });
+    } else {
+      onConvert();
+    }
+  };
+
   return (
     <div
-      className={`group flex gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
+      className={`group flex w-full gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
-      }`}
+      } ${pinned && !item.done ? "bg-accent/[0.06]" : ""}`}
       style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
     >
       {itemSupportsTodoDone(item) ? (
@@ -473,15 +503,37 @@ export function TodoRow({
           </div>
         )}
       </div>
-      {!item.showInCalendar && (
-        <button
-          onClick={onConvert}
-          title="Zmień na wydarzenie (pokaż w kalendarzu)"
-          className="self-start rounded-md px-1.5 py-0.5 text-[11px] text-ink-light opacity-0 transition hover:text-ink group-hover:opacity-100"
-          style={{ background: tint(color, 0.12) }}
-        >
-          → kalendarz
-        </button>
+      {!shared && (
+        <div className="flex shrink-0 items-start gap-0.5 self-center">
+          <button
+            type="button"
+            onClick={togglePin}
+            title={pinned ? "Odepnij" : "Przypnij na górę"}
+            aria-label={pinned ? "Odepnij" : "Przypnij na górę"}
+            aria-pressed={pinned}
+            className={`rounded-md p-1 transition hover:bg-surface-raised ${
+              pinned ? "text-accent" : "text-ink-faint/45 hover:text-ink-faint"
+            }`}
+          >
+            <Pin size={15} className={pinned ? "fill-accent" : ""} strokeWidth={pinned ? 2.25 : 1.75} />
+          </button>
+          <button
+            type="button"
+            onClick={toggleCalendar}
+            title={item.showInCalendar ? "Ukryj w kalendarzu" : "Pokaż w kalendarzu"}
+            aria-label={item.showInCalendar ? "Ukryj w kalendarzu" : "Pokaż w kalendarzu"}
+            aria-pressed={item.showInCalendar}
+            className={`rounded-md p-1 transition hover:bg-surface-raised ${
+              item.showInCalendar ? "text-accent" : "text-ink-faint/45 hover:text-ink-faint"
+            }`}
+          >
+            <CalendarClock
+              size={15}
+              className={item.showInCalendar ? "fill-accent/25" : ""}
+              strokeWidth={item.showInCalendar ? 2.25 : 1.75}
+            />
+          </button>
+        </div>
       )}
     </div>
   );

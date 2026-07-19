@@ -7,6 +7,7 @@ import {
   Paperclip,
   Plus,
   Send,
+  Smile,
   Trash2,
   X,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
 } from "@/lib/chat/voice";
 import { PollCreateDialog } from "@/components/chat/PollCreateDialog";
 import { GifPicker } from "@/components/chat/GifPicker";
+import { EmojiPicker } from "@/components/chat/EmojiPicker";
 
 export interface ReplyTarget {
   id: string;
@@ -83,6 +85,7 @@ export function MessageComposer({
   const [plusOpen, setPlusOpen] = useState(false);
   const [pollOpen, setPollOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordSec, setRecordSec] = useState(0);
   const recorderRef = useRef<ActiveRecorder | null>(null);
@@ -144,6 +147,21 @@ export function MessageComposer({
     requestAnimationFrame(() => {
       ta.focus();
       ta.setSelectionRange(next.caret, next.caret);
+      autoGrow();
+    });
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const ta = taRef.current;
+    const start = ta?.selectionStart ?? body.length;
+    const end = ta?.selectionEnd ?? start;
+    const next = body.slice(0, start) + emoji + body.slice(end);
+    const caret = start + emoji.length;
+    setBody(next);
+    requestAnimationFrame(() => {
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(caret, caret);
       autoGrow();
     });
   };
@@ -316,17 +334,72 @@ export function MessageComposer({
           </button>
         </div>
       ) : (
-        <div className="flex items-end gap-1.5">
+        <div className="flex items-end gap-1">
+          <div className="relative shrink-0 self-center">
+            <button
+              type="button"
+              onClick={() => setEmojiOpen((v) => !v)}
+              disabled={disabled}
+              className="rounded-full p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
+              aria-label="Emotikony"
+              aria-expanded={emojiOpen}
+            >
+              <Smile size={22} strokeWidth={1.75} />
+            </button>
+            <EmojiPicker
+              open={emojiOpen}
+              onClose={() => setEmojiOpen(false)}
+              onPick={insertEmoji}
+            />
+          </div>
+
+          <textarea
+            ref={taRef}
+            value={body}
+            disabled={disabled}
+            rows={1}
+            placeholder={disabled ? "Rozmowa zarchiwizowana" : placeholder}
+            onChange={(e) => {
+              setBody(e.target.value);
+              autoGrow();
+              refreshMention();
+              if (!editing && e.target.value.trim()) onTyping?.();
+            }}
+            onKeyUp={refreshMention}
+            onClick={refreshMention}
+            onBlur={() => setTimeout(() => setMention(null), 200)}
+            onKeyDown={(e) => {
+              if (suggestions.length > 0 && e.key === "Escape") {
+                setMention(null);
+                return;
+              }
+              if (
+                suggestions.length > 0 &&
+                (e.key === "Enter" || e.key === "Tab") &&
+                !e.shiftKey
+              ) {
+                e.preventDefault();
+                pickMention(suggestions[0]);
+                return;
+              }
+              if (!isMobile && e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+            className="min-h-[40px] max-h-[132px] flex-1 resize-none rounded-[1.25rem] border border-line bg-surface-raised px-3.5 py-2.5 text-sm leading-snug text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/40 disabled:opacity-50"
+          />
+
           {(onSendPoll || onSendGif) && !editing && (
-            <div className="relative shrink-0">
+            <div className="relative shrink-0 self-center">
               <button
                 type="button"
                 onClick={() => setPlusOpen((v) => !v)}
                 disabled={disabled}
-                className="rounded-lg p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
+                className="rounded-full p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
                 aria-label="Więcej opcji"
               >
-                <Plus size={17} />
+                <Plus size={22} strokeWidth={1.75} />
               </button>
               {plusOpen && (
                 <>
@@ -336,7 +409,7 @@ export function MessageComposer({
                     aria-label="Zamknij menu"
                     onClick={() => setPlusOpen(false)}
                   />
-                  <div className="absolute bottom-full left-0 z-50 mb-1 w-40 rounded-xl border border-line bg-surface-overlay p-1 shadow-pop">
+                  <div className="absolute bottom-full right-0 z-50 mb-1 w-40 rounded-xl border border-line bg-surface-overlay p-1 shadow-pop">
                     {onSendPoll && (
                       <button
                         type="button"
@@ -383,67 +456,30 @@ export function MessageComposer({
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={disabled}
-                className="shrink-0 rounded-lg p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
+                className="shrink-0 self-center rounded-full p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
                 aria-label="Dodaj załącznik"
               >
-                <Paperclip size={17} />
+                <Paperclip size={20} strokeWidth={1.75} />
               </button>
             </>
           )}
-
-          <textarea
-            ref={taRef}
-            value={body}
-            disabled={disabled}
-            rows={1}
-            placeholder={disabled ? "Rozmowa zarchiwizowana" : placeholder}
-            onChange={(e) => {
-              setBody(e.target.value);
-              autoGrow();
-              refreshMention();
-              if (!editing && e.target.value.trim()) onTyping?.();
-            }}
-            onKeyUp={refreshMention}
-            onClick={refreshMention}
-            onBlur={() => setTimeout(() => setMention(null), 200)}
-            onKeyDown={(e) => {
-              if (suggestions.length > 0 && e.key === "Escape") {
-                setMention(null);
-                return;
-              }
-              if (
-                suggestions.length > 0 &&
-                (e.key === "Enter" || e.key === "Tab") &&
-                !e.shiftKey
-              ) {
-                e.preventDefault();
-                pickMention(suggestions[0]);
-                return;
-              }
-              if (!isMobile && e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-            className="min-h-[38px] flex-1 resize-none rounded-xl border border-line bg-surface-raised px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/50 disabled:opacity-50"
-          />
 
           {showMic ? (
             <button
               type="button"
               onClick={() => void startRecording()}
               disabled={disabled}
-              className="shrink-0 rounded-xl border border-line bg-surface-raised p-2.5 text-ink-light transition hover:border-line-strong hover:text-ink disabled:opacity-40"
+              className="shrink-0 self-center rounded-full p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
               aria-label="Nagraj wiadomość głosową"
             >
-              <Mic size={16} />
+              <Mic size={22} strokeWidth={1.75} />
             </button>
           ) : (
             <button
               type="button"
               onClick={() => void submit()}
               disabled={disabled || sending || (!body.trim() && files.length === 0)}
-              className="shrink-0 rounded-xl bg-accent-grad p-2.5 text-white shadow-glow transition hover:brightness-110 disabled:opacity-40 disabled:shadow-none"
+              className="shrink-0 self-center rounded-full bg-accent-grad p-2.5 text-white shadow-glow transition hover:brightness-110 disabled:opacity-40 disabled:shadow-none"
               aria-label={editing ? "Zapisz" : "Wyślij"}
             >
               <Send size={16} />

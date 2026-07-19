@@ -10,6 +10,7 @@ import {
   trimList,
   upsertMessageInList,
 } from "@/lib/chat/feed";
+import { threadSeenAtMap } from "@/lib/chat/recentThreads";
 import type {
   ChatAttachment,
   ChatItemLink,
@@ -33,6 +34,10 @@ interface ChatState {
   messagesByConv: Record<string, ChatMessage[]>;
   hasMoreByConv: Record<string, boolean>;
   replyCounts: Record<string, number>;
+  /** Ostatnia odpowiedź w wątku (do wyróżnienia nieodczytanych). */
+  threadLastReply: Record<string, { at: string; authorUserId: string }>;
+  /** Lokalne „otwarto wątek” (ms) — sync z recentThreads. */
+  threadSeenAt: Record<string, number>;
   threadByRoot: Record<string, ChatMessage[]>;
   /** Przypięte wątki per rozmowa (porządek: najnowsze przypięcie pierwsze). */
   pinnedByConv: Record<string, ChatMessage[]>;
@@ -46,32 +51,13 @@ interface ChatState {
   /** Desktop: tryb prawego panelu (hub otwiera detal). */
   panelMode: "todo" | "conversation" | "decision" | "note" | "media";
   /** Desktop: aktywna zakładka hubu pod kalendarzem. */
-  hubTab:
-    | "today"
-    | "chat"
-    | "threads"
-    | "decisions"
-    | "notes"
-    | "media"
-    | "mentions"
-    | "search"
-    | "links";
+  hubTab: "chat" | "decisions" | "notes" | "media" | "search";
   /** Hub zajmuje więcej wysokości (kalendarz się kurczy). */
   hubExpanded: boolean;
   /** Hub: zawężaj listy do aktywnej grupy z GroupRail. */
   hubMatchGroup: boolean;
   /** Ukryte zakładki hubu (widoczność per użytkownik; filtr grupy dodatkowo zawęża treść). */
-  hubHiddenTabs: Array<
-    | "today"
-    | "chat"
-    | "threads"
-    | "decisions"
-    | "notes"
-    | "media"
-    | "mentions"
-    | "search"
-    | "links"
-  >;
+  hubHiddenTabs: Array<"chat" | "decisions" | "notes" | "media" | "search">;
   /** Własne foldery rozmów w zakładce Czat. */
   hubChatFolders: { id: string; name: string; conversationIds: string[] }[];
   /** Zwińnięte sekcje listy czatu (pinned, frequent, more, channels, folder:id). */
@@ -86,9 +72,16 @@ interface ChatState {
     id: string;
     conversationId: string;
     messageId: string | null;
+    title: string;
     body: string;
+    /** Notatka do decyzji (tylko kind=decision). */
+    note: string;
     createdBy: string;
     at: string;
+    /** Prywatna etykieta grupy bieżącego użytkownika. */
+    groupId: string | null;
+    /** Prywatne tagi bieżącego użytkownika. */
+    tagIds: string[];
   } | null;
 
   setUser: (userId: string | null) => void;
@@ -101,7 +94,10 @@ interface ChatState {
   ) => void;
   applyIncomingMessage: (msg: ChatMessage, documentVisible: boolean) => boolean;
   setThreadMessages: (rootId: string, messages: ChatMessage[]) => void;
-  setReplyCounts: (counts: Record<string, number>) => void;
+  setReplyCounts: (
+    peeks: Record<string, number | { count: number; lastAt: string; lastAuthorUserId: string }>,
+  ) => void;
+  markThreadSeen: (rootId: string, atMs?: number) => void;
   setPinnedMessages: (conversationId: string, messages: ChatMessage[]) => void;
   setFocusFeed: (feed: FocusFeed | null) => void;
   prependFocusMessages: (messages: ChatMessage[], hasOlder: boolean) => void;
@@ -147,6 +143,8 @@ function emptyState() {
     messagesByConv: {} as Record<string, ChatMessage[]>,
     hasMoreByConv: {} as Record<string, boolean>,
     replyCounts: {} as Record<string, number>,
+    threadLastReply: {} as Record<string, { at: string; authorUserId: string }>,
+    threadSeenAt: threadSeenAtMap(),
     threadByRoot: {} as Record<string, ChatMessage[]>,
     pinnedByConv: {} as Record<string, ChatMessage[]>,
     focusFeed: null as FocusFeed | null,
@@ -314,24 +312,73 @@ export const useChatStore = create<ChatState>()(
               }
             : s.replyCounts;
 
+        const threadLastReply =
+          msg.threadRootId && !msg.deletedAt
+            ? (() => {
+                const prev = s.threadLastReply[msg.threadRootId];
+                if (prev && msg.createdAt < prev.at) return s.threadLastReply;
+                return {
+                  ...s.threadLastReply,
+                  [msg.threadRootId]: {
+                    at: msg.createdAt,
+                    authorUserId: msg.authorUserId,
+                  },
+                };
+              })()
+            : s.threadLastReply;
+
         const focusNext = applyFocusIncoming(patches.focusFeed ?? s.focusFeed, msg);
         const focusPatch = focusNext ? { focusFeed: focusNext } : {};
 
-        set({ overview, replyCounts, ...patches, ...focusPatch });
+        set({ overview, replyCounts, threadLastReply, ...patches, ...focusPatch });
         return known;
       },
 
       setThreadMessages: (rootId, messages) =>
-        set((s) => ({
-          threadByRoot: { ...s.threadByRoot, [rootId]: messages },
-          replyCounts: {
-            ...s.replyCounts,
-            [rootId]: Math.max(0, messages.filter((m) => m.id !== rootId && !m.deletedAt).length),
-          },
-        })),
+        set((s) => {
+          const replies = messages.filter((m) => m.id !== rootId && !m.deletedAt);
+          const last = [...replies].sort((a, b) =>
+            a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+          ).at(-1);
+          return {
+            threadByRoot: { ...s.threadByRoot, [rootId]: messages },
+            replyCounts: {
+              ...s.replyCounts,
+              [rootId]: Math.max(0, replies.length),
+            },
+            ...(last
+              ? {
+                  threadLastReply: {
+                    ...s.threadLastReply,
+                    [rootId]: { at: last.createdAt, authorUserId: last.authorUserId },
+                  },
+                }
+              : {}),
+          };
+        }),
 
-      setReplyCounts: (counts) =>
-        set((s) => ({ replyCounts: { ...s.replyCounts, ...counts } })),
+      setReplyCounts: (peeks) =>
+        set((s) => {
+          const replyCounts = { ...s.replyCounts };
+          const threadLastReply = { ...s.threadLastReply };
+          for (const [id, v] of Object.entries(peeks)) {
+            if (typeof v === "number") {
+              replyCounts[id] = v;
+            } else {
+              replyCounts[id] = v.count;
+              threadLastReply[id] = {
+                at: v.lastAt,
+                authorUserId: v.lastAuthorUserId,
+              };
+            }
+          }
+          return { replyCounts, threadLastReply };
+        }),
+
+      markThreadSeen: (rootId, atMs = Date.now()) =>
+        set((s) => ({
+          threadSeenAt: { ...s.threadSeenAt, [rootId]: atMs },
+        })),
 
       setPinnedMessages: (conversationId, messages) =>
         set((s) => ({
@@ -628,19 +675,18 @@ export const useChatStore = create<ChatState>()(
           panelMode = "todo";
         }
         const hubTabRaw = p.hubTab as string | undefined;
-        const hubTabs = [
-          "today",
-          "chat",
-          "threads",
-          "decisions",
-          "notes",
-          "media",
-          "mentions",
-          "search",
-          "links",
-        ] as const;
-        const hubTab = hubTabs.includes(hubTabRaw as (typeof hubTabs)[number])
-          ? (hubTabRaw as ChatState["hubTab"])
+        const hubTabs = ["chat", "decisions", "notes", "media", "search"] as const;
+        // Migracja: usunięte zakładki → Czat / Media.
+        const hubTabNormalized =
+          hubTabRaw === "today" ||
+          hubTabRaw === "mentions" ||
+          hubTabRaw === "threads"
+            ? "chat"
+            : hubTabRaw === "links"
+              ? "media"
+              : hubTabRaw;
+        const hubTab = hubTabs.includes(hubTabNormalized as (typeof hubTabs)[number])
+          ? (hubTabNormalized as ChatState["hubTab"])
           : current.hubTab;
         const foldersRaw = p.hubChatFolders;
         const hubChatFolders = Array.isArray(foldersRaw)

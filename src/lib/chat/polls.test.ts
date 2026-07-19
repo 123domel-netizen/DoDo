@@ -26,6 +26,7 @@ function pollMsg(votes: { userId: string; optionId: string }[]): ChatMessage {
     pinnedAt: null,
     pinnedBy: null,
     threadTitle: null,
+    threadArchivedAt: null,
     votes: votes.map((v) => ({ messageId: "p1", ...v })),
   };
 }

@@ -8,11 +8,22 @@ interface NameThreadDialogProps {
   msg: ChatMessage;
   onConfirm: (title: string) => void;
   onCancel: () => void;
+  /** Domyślnie „Otwórz wątek”; przy edycji np. „Zapisz”. */
+  confirmLabel?: string;
+  heading?: string;
 }
 
 /** Kompaktowy dialog nazwy wątku — domyślnie treść wiadomości startowej. */
-export function NameThreadDialog({ msg, onConfirm, onCancel }: NameThreadDialogProps) {
-  const [title, setTitle] = useState(() => defaultThreadTitle(msg));
+export function NameThreadDialog({
+  msg,
+  onConfirm,
+  onCancel,
+  confirmLabel = "Otwórz wątek",
+  heading = "Nazwij wątek",
+}: NameThreadDialogProps) {
+  const [title, setTitle] = useState(
+    () => msg.threadTitle?.trim() || defaultThreadTitle(msg),
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -51,7 +62,7 @@ export function NameThreadDialog({ msg, onConfirm, onCancel }: NameThreadDialogP
           <MessageSquare size={15} className="mt-0.5 shrink-0 text-accent" />
           <div className="min-w-0 flex-1">
             <h3 id="name-thread-title" className="text-sm font-semibold text-ink">
-              Nazwij wątek
+              {heading}
             </h3>
             <p className="mt-0.5 text-[11px] text-ink-faint">
               Domyślnie treść wiadomości — możesz zmienić.
@@ -95,7 +106,7 @@ export function NameThreadDialog({ msg, onConfirm, onCancel }: NameThreadDialogP
               disabled={!title.trim()}
               className="rounded-lg bg-accent/90 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent disabled:opacity-40"
             >
-              Otwórz wątek
+              {confirmLabel}
             </button>
           </div>
         </form>

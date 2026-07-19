@@ -4,15 +4,11 @@ import { useChatStore } from "@/lib/chat/store";
 type HubTab = ReturnType<typeof useChatStore.getState>["hubTab"];
 
 const TAB_BY_DIGIT: Record<string, HubTab> = {
-  "1": "today",
-  "2": "chat",
-  "3": "threads",
-  "4": "decisions",
-  "5": "notes",
-  "6": "media",
-  "7": "mentions",
-  "8": "search",
-  "9": "links",
+  "1": "chat",
+  "2": "decisions",
+  "3": "notes",
+  "4": "media",
+  "5": "search",
 };
 
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -25,7 +21,7 @@ function isTypingTarget(el: EventTarget | null): boolean {
 
 /**
  * Skróty hubu (desktop):
- * Alt+1…9 — zakładki
+ * Alt+1…5 — zakładki
  * Alt+E — rozwiń / zwiń hub
  */
 export function useHubHotkeys(enabled: boolean) {

@@ -67,4 +67,15 @@
     background: rgba(20, 20, 23, 0.72);
     backdrop-filter: saturate(140%) blur(12px);
   }
+  /**
+   * Chat bubble: natural content width, then snap up in 1rem steps.
+   * Finer than 2.5rem so 2–3 letter messages stay compact.
+   * Fallback = fit-content when calc-size/round unsupported.
+   */
+  .chat-msg-bubble {
+    width: fit-content;
+    width: -moz-fit-content;
+    width: calc-size(fit-content, round(up, size, 1rem));
+    max-width: 100%;
+  }
 }

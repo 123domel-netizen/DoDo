@@ -5,10 +5,10 @@ import {
   AtSign,
   Bell,
   BellOff,
+  ChevronDown,
   ChevronUp,
   FolderOpen,
   Gavel,
-  Hash,
   LogOut,
   MailOpen,
   MessageSquare,
@@ -16,6 +16,7 @@ import {
   MoreVertical,
   Pin,
   PinOff,
+  Settings2,
   StickyNote,
   User,
   Users,
@@ -52,6 +53,8 @@ import {
 } from "@/lib/chat/init";
 import {
   fetchMessageById,
+  fetchDecisions,
+  fetchNotes,
   leaveConversation,
   setConversationNotify,
 } from "@/lib/chat/api";
@@ -78,6 +81,12 @@ import {
 import { EditHistoryModal } from "@/components/chat/EditHistoryModal";
 import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
 import { RegistryView, type RegistryMode } from "@/components/chat/RegistryView";
+import {
+  RegistryDetailSheet,
+  type RegistryFocus,
+} from "@/components/hub/RegistryDetailPanel";
+import { ChannelIcon } from "@/components/chat/ChannelIcon";
+import { ChannelManageDialog } from "@/components/chat/ChannelManageDialog";
 import { PinnedThreadsBar } from "@/components/chat/PinnedThreadsBar";
 import { ThreadsSheet } from "@/components/chat/ThreadsSheet";
 import { NameThreadDialog } from "@/components/chat/NameThreadDialog";
@@ -116,7 +125,9 @@ function MessageFeed({
   initialBottom = true,
   onOpenThread,
   onOpenActions,
+  onReply,
   onJumpTo,
+  onOpenRegistry,
   inThread = false,
 }: {
   messages: ChatMessage[];
@@ -134,7 +145,9 @@ function MessageFeed({
   initialBottom?: boolean;
   onOpenThread?: (rootId: string) => void;
   onOpenActions: (msg: ChatMessage, anchor: DOMRect) => void;
+  onReply?: (msg: ChatMessage) => void;
   onJumpTo: (messageId: string) => void;
+  onOpenRegistry?: (msg: ChatMessage) => void;
   inThread?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -211,7 +224,7 @@ function MessageFeed({
         if (el.scrollTop < 150) triggerOlder();
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) triggerNewer();
       }}
-      className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-1"
+      className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-2"
     >
       {hasOlder && onLoadOlder && (
         <div className="flex justify-center pb-2">
@@ -231,11 +244,16 @@ function MessageFeed({
       )}
       {messages.map((m, i) => {
         const prev = messages[i - 1];
-        const showAuthor =
-          !prev ||
-          prev.authorUserId !== m.authorUserId ||
-          prev.kind === "system" ||
-          new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() > 5 * 60_000;
+        const prevSameAuthor =
+          Boolean(prev) &&
+          prev!.kind !== "system" &&
+          m.kind !== "system" &&
+          prev!.authorUserId === m.authorUserId;
+        const showAuthor = !prevSameAuthor;
+        const gapMs = prev
+          ? new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime()
+          : Number.POSITIVE_INFINITY;
+        const showTime = gapMs > 5 * 60_000;
         const quotedMsg = m.replyToMessageId ? quotedLookup(m.replyToMessageId) : null;
         return (
           <MessageBubble
@@ -243,7 +261,9 @@ function MessageFeed({
             msg={m}
             mine={m.authorUserId === myUserId}
             authorName={profiles[m.authorUserId]?.displayName || "Nieznany"}
+            authorAvatarUrl={profiles[m.authorUserId]?.avatarUrl}
             showAuthor={showAuthor}
+            showTime={showTime}
             myUserId={myUserId}
             mentionNames={mentionNames}
             quoted={
@@ -261,13 +281,26 @@ function MessageFeed({
             inThread={inThread}
             onOpenThread={onOpenThread}
             onOpenActions={onOpenActions}
+            onReply={onReply}
             onRetry={retryFailedMessage}
             onToggleReaction={(msg, emoji) => void toggleReaction(msg, emoji)}
             onVote={(msg, optionId) => void votePoll(msg, optionId)}
             onJumpTo={onJumpTo}
+            onOpenRegistry={onOpenRegistry}
           />
         );
       })}
+      {hasNewer && onLoadNewer && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            onClick={triggerNewer}
+            className="flex items-center gap-1 rounded-full border border-line bg-surface-raised px-3 py-1 text-[11px] text-ink-light transition hover:border-line-strong hover:text-ink"
+          >
+            <ChevronDown size={12} /> Pokaż nowsze
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -303,9 +336,11 @@ export function ConversationView({
   const [replyTo, setReplyTo] = useState<(ReplyTarget & { threadRootId: string | null }) | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [muteMenuOpen, setMuteMenuOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [historyMsg, setHistoryMsg] = useState<ChatMessage | null>(null);
   const [showMedia, setShowMedia] = useState(false);
   const [registryMode, setRegistryMode] = useState<RegistryMode | null>(null);
+  const [registryDetail, setRegistryDetail] = useState<RegistryFocus | null>(null);
   const [showThreads, setShowThreads] = useState(false);
   const [fetchedQuotes, setFetchedQuotes] = useState<Record<string, ChatMessage | null>>({});
   const [typing, setTyping] = useState<Record<string, { name: string; at: number }>>({});
@@ -431,6 +466,100 @@ export function ConversationView({
     [conversationId],
   );
 
+  const handleReply = useCallback(
+    (msg: ChatMessage) => {
+      setReplyTo({
+        id: msg.id,
+        authorName: profiles[msg.authorUserId]?.displayName || "Nieznany",
+        snippet: quoteSnippet(msg),
+        threadRootId: msg.threadRootId,
+      });
+    },
+    [profiles],
+  );
+
+  const handleOpenThread = useCallback(
+    (msgOrRootId: ChatMessage | string) => {
+      const rootId =
+        typeof msgOrRootId === "string"
+          ? msgOrRootId
+          : (msgOrRootId.threadRootId ?? msgOrRootId.id);
+      const fromArg = typeof msgOrRootId === "string" ? null : msgOrRootId;
+      const root =
+        displayedFeed.find((m) => m.id === rootId) ??
+        feed.find((m) => m.id === rootId) ??
+        (fromArg && fromArg.id === rootId ? fromArg : null) ??
+        (messages ?? []).find((m) => m.id === rootId) ??
+        null;
+      if (root && !root.threadTitle?.trim()) {
+        setNameThreadMsg(root);
+        return;
+      }
+      void openThread(rootId);
+    },
+    [displayedFeed, feed, messages],
+  );
+
+  const handleOpenRegistry = useCallback(
+    (msg: ChatMessage) => {
+      void (async () => {
+        const kind =
+          msg.payload?.registry?.kind ??
+          (msg.body.startsWith("📝 Zapisano notatkę")
+            ? "note"
+            : msg.body.startsWith("📌 Zapisano decyzję")
+              ? "decision"
+              : null);
+        if (!kind) return;
+
+        const registryId = msg.payload?.registry?.id;
+        if (kind === "note") {
+          const notes = await fetchNotes(conversationId);
+          const note =
+            (registryId ? notes.find((n) => n.id === registryId) : null) ??
+            notes.find((n) => msg.body.includes(n.body.slice(0, 80))) ??
+            notes[0];
+          if (!note) return;
+          setRegistryDetail({
+            kind: "note",
+            id: note.id,
+            conversationId: note.conversationId,
+            messageId: note.messageId,
+            title: note.title,
+            body: note.body,
+            note: "",
+            createdBy: note.createdBy,
+            at: note.notedAt,
+            groupId: note.groupId,
+            tagIds: note.tagIds,
+          });
+          return;
+        }
+
+        const decisions = await fetchDecisions(conversationId);
+        const decision =
+          (registryId ? decisions.find((d) => d.id === registryId) : null) ??
+          decisions.find((d) => msg.body.includes(d.body.slice(0, 80))) ??
+          decisions[0];
+        if (!decision) return;
+        setRegistryDetail({
+          kind: "decision",
+          id: decision.id,
+          conversationId: decision.conversationId,
+          messageId: decision.messageId,
+          title: "",
+          body: decision.body,
+          note: decision.note,
+          createdBy: decision.createdBy,
+          at: decision.decidedAt,
+          groupId: decision.groupId,
+          tagIds: decision.tagIds,
+        });
+      })();
+    },
+    [conversationId],
+  );
+
   const handleSend = useCallback(
     async (body: string, files: File[], mentions: string[]) => {
       const reply = replyTo;
@@ -480,12 +609,7 @@ export function ConversationView({
           if (arg) void toggleReaction(msg, arg);
           break;
         case "reply":
-          setReplyTo({
-            id: msg.id,
-            authorName: profiles[msg.authorUserId]?.displayName || "Nieznany",
-            snippet: quoteSnippet(msg),
-            threadRootId: msg.threadRootId,
-          });
+          handleReply(msg);
           break;
         case "createTask":
           beginConvertMessageToItem(msg, "task");
@@ -498,30 +622,26 @@ export function ConversationView({
           break;
         case "saveDecision":
           void saveMessageAsDecision(msg).then(({ error }) => {
-            if (error) alert(error);
+            if (error) {
+              console.warn("[chat] saveDecision:", error);
+              alert(`Nie udało się zapisać decyzji:\n${error}`);
+            }
           });
           break;
         case "saveNote":
           void saveMessageAsNote(msg).then(({ error }) => {
-            if (error) alert(error);
+            if (error) {
+              console.warn("[chat] saveNote:", error);
+              alert(`Nie udało się zapisać notatki:\n${error}`);
+            }
           });
           break;
         case "pinThread":
           void pinThreadMessage(msg, !msg.pinnedAt);
           break;
-        case "openThread": {
-          const rootId = msg.threadRootId ?? msg.id;
-          const root =
-            displayedFeed.find((m) => m.id === rootId) ??
-            feed.find((m) => m.id === rootId) ??
-            (msg.id === rootId ? msg : null);
-          if (root && !root.threadTitle?.trim()) {
-            setNameThreadMsg(root);
-          } else {
-            void openThread(rootId);
-          }
+        case "openThread":
+          handleOpenThread(msg);
           break;
-        }
         case "copy":
           void navigator.clipboard?.writeText(msg.body);
           break;
@@ -536,7 +656,7 @@ export function ConversationView({
           break;
       }
     },
-    [profiles, displayedFeed, feed],
+    [profiles, handleReply, handleOpenThread],
   );
 
   const handleSaveEdit = useCallback(
@@ -562,11 +682,19 @@ export function ConversationView({
 
   const handleLeave = async () => {
     if (!confirm("Opuścić tę rozmowę?")) return;
-    await leaveConversation(conversationId);
+    const { error } = await leaveConversation(conversationId);
+    if (error) {
+      alert(error);
+      return;
+    }
     setMenuOpen(false);
     scheduleOverviewRefresh(200);
     onBack?.();
   };
+
+  const isChannelAdmin =
+    entry?.kind === "channel" &&
+    (entry.myRole === "owner" || entry.myRole === "admin");
 
   const composerShared = {
     members,
@@ -623,13 +751,34 @@ export function ConversationView({
           >
             <ArrowLeft size={18} />
           </button>
-          <MessageSquare size={15} className="text-accent" />
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+            <MessagesSquare size={15} />
+          </span>
           <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+              <span>Wątek</span>
+              {rootMsg?.pinnedAt && (
+                <span className="inline-flex items-center gap-0.5 normal-case tracking-normal text-accent">
+                  <Pin size={9} /> przypięty
+                </span>
+              )}
+            </div>
             <div className="truncate text-sm font-semibold text-ink">
               {threadDisplayTitle(rootMsg)}
             </div>
             <div className="truncate text-[11px] text-ink-faint">{title}</div>
           </div>
+          {rootMsg && !rootMsg.deletedAt && (
+            <button
+              type="button"
+              onClick={() => void pinThreadMessage(rootMsg, !rootMsg.pinnedAt)}
+              className={headerIconBtn}
+              aria-label={rootMsg.pinnedAt ? "Odepnij wątek" : "Przypnij wątek"}
+              title={rootMsg.pinnedAt ? "Odepnij wątek" : "Przypnij wątek"}
+            >
+              {rootMsg.pinnedAt ? <PinOff size={16} /> : <Pin size={16} />}
+            </button>
+          )}
         </div>
         <MessageFeed
           messages={thread}
@@ -641,7 +790,9 @@ export function ConversationView({
           replyCounts={replyCounts}
           hasOlder={false}
           onOpenActions={(msg, anchor) => setActionTarget({ msg, anchor })}
+          onReply={handleReply}
           onJumpTo={handleJumpTo}
+          onOpenRegistry={handleOpenRegistry}
           inThread
         />
         {typingText && (
@@ -685,16 +836,16 @@ export function ConversationView({
               <ArrowLeft size={18} />
             </button>
           )}
-          <span className="relative shrink-0 text-ink-faint">
+          <span className="relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised text-ink-faint">
             {entry?.kind === "channel" ? (
-              <Hash size={15} />
+              <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 28 : 15} />
             ) : entry?.kind === "dm" ? (
               entry.members.length > 2 ? <Users size={15} /> : <User size={15} />
             ) : (
               <MessageSquare size={15} />
             )}
             {dmOtherOnline && (
-              <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-surface bg-green-500" />
+              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-surface bg-green-500" />
             )}
           </span>
           <div className="min-w-0 flex-1">
@@ -720,35 +871,40 @@ export function ConversationView({
             <>
               <button
                 type="button"
+                onClick={() => setShowThreads(true)}
+                className={headerIconBtn}
+                aria-label="Wątki"
+                title="Wątki"
+              >
+                <MessagesSquare size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRegistryMode("decisions")}
+                className={headerIconBtn}
+                aria-label="Decyzje"
+                title="Decyzje"
+              >
+                <Gavel size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRegistryMode("notes")}
+                className={headerIconBtn}
+                aria-label="Notatki"
+                title="Notatki"
+              >
+                <StickyNote size={16} />
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowMedia(true)}
                 className={headerIconBtn}
-                aria-label="Media i pliki"
-                title="Media i pliki"
+                aria-label="Media"
+                title="Media"
               >
                 <FolderOpen size={16} />
               </button>
-              {!pane && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setRegistryMode("decisions")}
-                    className={headerIconBtn}
-                    aria-label="Decyzje"
-                    title="Decyzje"
-                  >
-                    <Gavel size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRegistryMode("notes")}
-                    className={headerIconBtn}
-                    aria-label="Notatki"
-                    title="Notatki"
-                  >
-                    <StickyNote size={16} />
-                  </button>
-                </>
-              )}
               <button
                 type="button"
                 onClick={() => {
@@ -771,17 +927,6 @@ export function ConversationView({
                 onClick={() => setMenuOpen(false)}
               />
               <div className="thin-scrollbar absolute right-2 top-full z-50 mt-1 max-h-[70vh] w-56 overflow-y-auto rounded-xl border border-line bg-surface-overlay p-1 shadow-pop">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowThreads(true);
-                    setMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
-                >
-                  <MessagesSquare size={14} /> Wątki
-                </button>
-
                 <button
                   type="button"
                   onClick={() => {
@@ -854,6 +999,19 @@ export function ConversationView({
                   <MailOpen size={14} /> Oznacz jako nieprzeczytane
                 </button>
 
+                {isChannelAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setManageOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                  >
+                    <Settings2 size={14} /> Zarządzaj kanałem…
+                  </button>
+                )}
+
                 {entry.kind !== "item" && (
                   <button
                     type="button"
@@ -869,12 +1027,20 @@ export function ConversationView({
         </div>
       )}
 
+      {manageOpen && entry?.kind === "channel" && (
+        <ChannelManageDialog
+          open={manageOpen}
+          onClose={() => setManageOpen(false)}
+          entry={entry}
+        />
+      )}
+
       {!embedded && !pane && (
         <PinnedThreadsBar
           conversationId={conversationId}
           profiles={profiles}
           replyCounts={replyCounts}
-          onOpenThread={(rootId) => void openThread(rootId)}
+          onOpenThread={(rootId) => handleOpenThread(rootId)}
           onJumpTo={handleJumpTo}
         />
       )}
@@ -895,9 +1061,11 @@ export function ConversationView({
         hasNewer={focus?.hasNewer ?? false}
         onLoadNewer={focus ? () => loadNewerFocus() : undefined}
         initialBottom={!focus}
-        onOpenThread={embedded ? undefined : (rootId) => void openThread(rootId)}
+        onOpenThread={embedded ? undefined : (rootId) => handleOpenThread(rootId)}
         onOpenActions={(msg, anchor) => setActionTarget({ msg, anchor })}
+        onReply={handleReply}
         onJumpTo={handleJumpTo}
+        onOpenRegistry={handleOpenRegistry}
       />
 
       {focus && (
@@ -959,12 +1127,19 @@ export function ConversationView({
         />
       )}
 
+      {registryDetail && (
+        <RegistryDetailSheet
+          focus={registryDetail}
+          onClose={() => setRegistryDetail(null)}
+        />
+      )}
+
       {showThreads && (
         <ThreadsSheet
           conversationId={conversationId}
           profiles={profiles}
           onClose={() => setShowThreads(false)}
-          onOpenThread={(rootId) => void openThread(rootId)}
+          onOpenThread={(rootId) => handleOpenThread(rootId)}
         />
       )}
       {nameThreadDialog}

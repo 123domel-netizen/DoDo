@@ -6,19 +6,33 @@ import {
   CalendarClock,
   CheckSquare,
   ListChecks,
+  MessageCircle,
+  Plus,
+  Pin,
+  User,
+  Users,
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { Item, UserTag } from "@/types";
-import { itemMatchesGroupFilter } from "@/lib/groups";
+import { groupIdForNewItem, itemMatchesGroupFilter } from "@/lib/groups";
 import { withNormalizedAllDay, itemCoversCalendarDay } from "@/lib/allDay";
 import { expandItemsForRange } from "@/lib/recurrence";
 import { calendarBlockFromDeadline, defaultTaskDueRange, itemDurationMinutes } from "@/lib/factory";
-import { fmt, tint } from "@/lib/format";
+import { fmt } from "@/lib/format";
 import { isSharedItem, SHARE_CALENDAR_COLOR } from "@/lib/share";
 import { effectiveReminders } from "@/lib/reminders";
 import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
 import { baseItemId } from "@/lib/itemId";
 import { deadlineIconDimmed } from "@/lib/deadlines";
+import { cloudEnabled } from "@/lib/supabase";
+import { useChatStore } from "@/lib/chat/store";
+import { overviewTitle } from "@/lib/chat/feed";
+import { openConversation } from "@/lib/chat/init";
+import { setRouteHash } from "@/lib/navigation";
+import type { ChatOverviewEntry } from "@/lib/chat/types";
+import { messagePreviewLabel } from "@/lib/chat/types";
+import { ChannelIcon } from "@/components/chat/ChannelIcon";
+import { formatMessageTime } from "@/components/chat/MessageBubble";
 
 /** Łączna liczba wydarzeń w sekcjach „dzisiaj” + „nadchodzące”. */
 const EVENTS_DISPLAY_TARGET = 5;
@@ -40,6 +54,28 @@ export function MobileDashboard() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
+  const startDraft = useStore((s) => s.startDraft);
+
+  const addTask = () => {
+    startDraft({
+      type: "task",
+      hasDueDate: false,
+      showInTodo: true,
+      showInCalendar: false,
+      groupId: groupIdForNewItem(),
+    });
+  };
+
+  const addEvent = () => {
+    const start = new Date();
+    start.setMinutes(Math.round(start.getMinutes() / 30) * 30, 0, 0);
+    startDraft({
+      type: "event",
+      start: start.toISOString(),
+      end: new Date(start.getTime() + 3600000).toISOString(),
+      groupId: groupIdForNewItem(),
+    });
+  };
 
   const groups = useMemo(() => {
     const m: Record<string, { name: string; color: string }> = {};
@@ -91,6 +127,10 @@ export function MobileDashboard() {
         .filter((it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "todo"))
         .filter((it) => !it.done)
         .sort((a, b) => {
+          const ap = a.pinnedAt ? 1 : 0;
+          const bp = b.pinnedAt ? 1 : 0;
+          if (ap !== bp) return bp - ap;
+          if (a.pinnedAt && b.pinnedAt) return b.pinnedAt.localeCompare(a.pinnedAt);
           if (!a.hasDueDate && !b.hasDueDate) return 0;
           if (!a.hasDueDate) return 1;
           if (!b.hasDueDate) return -1;
@@ -107,19 +147,30 @@ export function MobileDashboard() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface">
+      {cloudEnabled && <DashboardChatSection />}
+
       <section className="border-b border-line p-3">
         <div
-          className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+          className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
             todayEvents.length === 0 ? "mb-1" : "mb-2"
           }`}
         >
           <CalendarClock size={14} className="shrink-0" />
           <span className="shrink-0">Wydarzenia dzisiaj</span>
           {todayEvents.length === 0 && (
-            <span className="text-xs font-normal normal-case text-ink-faint">
+            <span className="min-w-0 flex-1 truncate text-xs font-normal normal-case text-ink-faint">
               Brak wydarzeń na dziś
             </span>
           )}
+          {todayEvents.length > 0 && <span className="min-w-0 flex-1" />}
+          <button
+            type="button"
+            onClick={addEvent}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
+          >
+            <Plus size={12} strokeWidth={2.5} />
+            Dodaj wydarzenie
+          </button>
         </div>
         {todayEvents.length > 0 && (
           <div className="space-y-1">
@@ -162,7 +213,15 @@ export function MobileDashboard() {
       <section className="flex-1 p-3">
         <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
           <ListChecks size={14} />
-          Zadania
+          <span className="min-w-0 flex-1">Zadania</span>
+          <button
+            type="button"
+            onClick={addTask}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
+          >
+            <Plus size={12} strokeWidth={2.5} />
+            Dodaj zadanie
+          </button>
         </div>
         {tasks.length === 0 ? (
           <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak zadań</p>
@@ -200,12 +259,145 @@ export function MobileDashboard() {
   );
 }
 
+/** Nowe wiadomości (+ ewentualnie ostatnie 2 rozmowy, gdy łącznie < 5 czatów). */
+function DashboardChatSection() {
+  const myUserId = useChatStore((s) => s.userId);
+  const overview = useChatStore((s) => s.overview);
+  const itemsMap = useStore((s) => s.items);
+
+  const rows = useMemo(() => {
+    const byRecent = [...overview].sort((a, b) =>
+      (b.lastMessageAt ?? b.createdAt).localeCompare(a.lastMessageAt ?? a.createdAt),
+    );
+    const unread = byRecent.filter((c) => c.unreadCount > 0 || c.myMarkedUnread);
+    const seen = new Set(unread.map((c) => c.id));
+    const result: ChatOverviewEntry[] = [...unread];
+
+    if (overview.length < 5) {
+      for (const c of byRecent) {
+        if (result.length >= unread.length + 2) break;
+        if (seen.has(c.id)) continue;
+        result.push(c);
+        seen.add(c.id);
+      }
+    }
+    return result;
+  }, [overview]);
+
+  if (!myUserId) return null;
+
+  const open = (id: string) => {
+    void openConversation(id);
+    setRouteHash({ view: "conversation", conversationId: id });
+  };
+
+  const titleOf = (entry: ChatOverviewEntry) =>
+    overviewTitle(entry, myUserId, (id) => itemsMap[id]?.title);
+
+  return (
+    <section className="border-b border-line p-3">
+      <div
+        className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+          rows.length === 0 ? "mb-1" : "mb-2"
+        }`}
+      >
+        <MessageCircle size={14} className="shrink-0" />
+        <span className="shrink-0">Czat</span>
+        {rows.length === 0 && (
+          <span className="text-xs font-normal normal-case text-ink-faint">
+            Brak nowych wiadomości
+          </span>
+        )}
+      </div>
+      {rows.length > 0 && (
+        <div className="space-y-1">
+          {rows.map((entry) => {
+            const last = entry.lastMessage;
+            const authorName =
+              last && last.kind !== "system"
+                ? last.authorUserId === myUserId
+                  ? "Ty"
+                  : (entry.members.find((m) => m.userId === last.authorUserId)?.displayName ??
+                    null)
+                : null;
+            const preview = last
+              ? last.deletedAt
+                ? "Wiadomość usunięta"
+                : last.kind === "system"
+                  ? last.body
+                  : `${authorName ? `${authorName}: ` : ""}${
+                      messagePreviewLabel(last.kind, last.body) || "(załącznik)"
+                    }`
+              : "Brak wiadomości";
+            const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => open(entry.id)}
+                className={`flex w-full min-w-0 items-center gap-1.5 rounded-lg border border-line/60 px-2 py-1 text-left transition hover:bg-surface-overlay ${
+                  showUnread ? "bg-accent/[0.07]" : "bg-surface-raised/40"
+                }`}
+              >
+                <span className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised text-ink-faint">
+                  {entry.kind === "channel" ? (
+                    <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 24 : 12} />
+                  ) : entry.kind === "item" ? (
+                    <MessageCircle size={12} />
+                  ) : entry.members.length > 2 ? (
+                    <Users size={12} />
+                  ) : (
+                    <User size={12} />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span
+                      className={`min-w-0 truncate text-[13px] leading-tight ${
+                        showUnread ? "font-semibold text-ink" : "font-medium text-ink"
+                      }`}
+                    >
+                      {titleOf(entry)}
+                    </span>
+                    {entry.lastMessageAt && (
+                      <span className="shrink-0 text-[9px] text-ink-faint">
+                        {formatMessageTime(entry.lastMessageAt)}
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span
+                      className={`min-w-0 flex-1 truncate text-[11px] leading-tight ${
+                        showUnread ? "text-ink-light" : "text-ink-faint"
+                      }`}
+                    >
+                      {preview}
+                    </span>
+                    {entry.unreadCount > 0 ? (
+                      <span className="flex h-3.5 min-w-[0.875rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold text-white">
+                        {entry.unreadCount > 99 ? "99+" : entry.unreadCount}
+                      </span>
+                    ) : entry.myMarkedUnread ? (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
+                    ) : null}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DashboardMetaRow({ children }: { children: ReactNode }) {
   const items = Array.isArray(children) ? children : [children];
   const visible = items.filter(Boolean);
   if (!visible.length) return null;
   return (
-    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-ink-faint">
+    <div className="mt-px flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-tight text-ink-faint">
       {visible}
     </div>
   );
@@ -317,19 +509,19 @@ function DashboardEventRow({
     <button
       type="button"
       onClick={onOpen}
-      className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay ${
+      className={`group flex w-full min-w-0 items-center gap-1.5 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-1 text-left transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       }`}
       style={{ borderLeft: `3px solid ${color}` }}
     >
-      <div className={`${DASHBOARD_LEFT_COL} flex-col items-center pt-0.5 text-[11px] font-medium tabular-nums text-ink-light`}>
+      <div className={`${DASHBOARD_LEFT_COL} flex-col items-center text-[10px] font-medium tabular-nums leading-tight text-ink-light`}>
         {showEventDate && (
-          <div className="mb-0.5 whitespace-nowrap text-center text-[10px] leading-tight text-ink-faint">
+          <div className="mb-px whitespace-nowrap text-center text-[9px] leading-tight text-ink-faint">
             {fmt(item.start, "EEE d MMM")}
           </div>
         )}
         {item.allDay ? (
-          <span className="text-[10px] leading-tight text-ink-faint">Cały dzień</span>
+          <span className="text-[9px] leading-tight text-ink-faint">Cały dzień</span>
         ) : (
           <>
             <div>{fmt(item.start, "HH:mm")}</div>
@@ -338,10 +530,10 @@ function DashboardEventRow({
         )}
       </div>
       <div className="min-w-0 flex-1 overflow-hidden">
-        <div className="text-sm font-medium text-ink">
+        <div className="truncate text-[13px] font-medium leading-tight text-ink">
           {item.title || "(bez tytułu)"}
           {shared && (
-            <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-ink-faint">
               SHARE
             </span>
           )}
@@ -375,12 +567,14 @@ function DashboardTodoRow({
   onOpen: () => void;
   onConvert: () => void;
 }) {
+  const patchItem = useStore((s) => s.patchItem);
   const due = new Date(item.end);
   const overdue = item.hasDueDate && !item.done && isPast(due) && !isToday(due);
   const shared = isSharedItem(item);
   const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#9b9a97");
   const reminderCount = effectiveReminders(item).length;
   const hasChecklist = item.checklist.length > 0;
+  const pinned = Boolean(item.pinnedAt);
   const showMeta =
     item.hasDueDate ||
     Boolean(item.deadlineAt) ||
@@ -390,30 +584,46 @@ function DashboardTodoRow({
     hasChecklist ||
     itemTags.length > 0;
 
+  const togglePin = () => {
+    if (shared) return;
+    patchItem(baseItemId(item.id), {
+      pinnedAt: pinned ? null : new Date().toISOString(),
+    });
+  };
+
+  const toggleCalendar = () => {
+    if (shared) return;
+    if (item.showInCalendar) {
+      patchItem(baseItemId(item.id), { showInCalendar: false });
+    } else {
+      onConvert();
+    }
+  };
+
   return (
     <div
-      className={`group flex min-w-0 gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
+      className={`group flex min-w-0 items-center gap-1.5 rounded-lg border border-transparent px-2 py-1 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
-      }`}
+      } ${pinned && !item.done ? "bg-accent/[0.06]" : ""}`}
       style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
     >
-      <div className={`${DASHBOARD_LEFT_COL} items-center pt-0.5`}>
+      <div className={`${DASHBOARD_LEFT_COL} items-center`}>
         <input
           type="checkbox"
           checked={item.done}
           onChange={onToggle}
           disabled={shared}
-          className={`h-4 w-4 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
+          className={`h-3.5 w-3.5 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
         />
       </div>
       <div className="min-w-0 flex-1 overflow-hidden">
         <div
-          className={`cursor-pointer text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
+          className={`cursor-pointer truncate text-[13px] font-medium leading-tight ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
           onClick={onOpen}
         >
           {item.title || "(bez tytułu)"}
           {shared && (
-            <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-ink-faint">
               SHARE
             </span>
           )}
@@ -433,15 +643,37 @@ function DashboardTodoRow({
           </DashboardMetaRow>
         )}
       </div>
-      {!item.showInCalendar && (
-        <button
-          onClick={onConvert}
-          title="Zmień na wydarzenie (pokaż w kalendarzu)"
-          className="shrink-0 self-start rounded-md px-1.5 py-0.5 text-[11px] text-ink-light opacity-0 transition hover:text-ink group-hover:opacity-100"
-          style={{ background: tint(color, 0.12) }}
-        >
-          → kalendarz
-        </button>
+      {!shared && (
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
+            onClick={togglePin}
+            title={pinned ? "Odepnij" : "Przypnij na górę"}
+            aria-label={pinned ? "Odepnij" : "Przypnij na górę"}
+            aria-pressed={pinned}
+            className={`rounded-md p-0.5 transition hover:bg-surface-raised ${
+              pinned ? "text-accent" : "text-ink-faint/45 hover:text-ink-faint"
+            }`}
+          >
+            <Pin size={13} className={pinned ? "fill-accent" : ""} strokeWidth={pinned ? 2.25 : 1.75} />
+          </button>
+          <button
+            type="button"
+            onClick={toggleCalendar}
+            title={item.showInCalendar ? "Ukryj w kalendarzu" : "Pokaż w kalendarzu"}
+            aria-label={item.showInCalendar ? "Ukryj w kalendarzu" : "Pokaż w kalendarzu"}
+            aria-pressed={item.showInCalendar}
+            className={`rounded-md p-0.5 transition hover:bg-surface-raised ${
+              item.showInCalendar ? "text-accent" : "text-ink-faint/45 hover:text-ink-faint"
+            }`}
+          >
+            <CalendarClock
+              size={13}
+              className={item.showInCalendar ? "fill-accent/25" : ""}
+              strokeWidth={item.showInCalendar ? 2.25 : 1.75}
+            />
+          </button>
+        </div>
       )}
     </div>
   );

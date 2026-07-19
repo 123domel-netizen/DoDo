@@ -210,6 +210,63 @@ export function isMuted(entry: ChatOverviewEntry, now: Date = new Date()): boole
   return !Number.isNaN(until.getTime()) && until > now;
 }
 
+/** Czy rozmowa ma nowe / nieprzeczytane wiadomości. */
+export function hasUnread(entry: ChatOverviewEntry): boolean {
+  return entry.unreadCount > 0 || entry.myMarkedUnread;
+}
+
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Lista „Ulubione”: najpierw nowe wiadomości, potem ulubione (przypięte),
+ * potem osoby/kanały z aktywnością w ostatnim miesiącu.
+ * `activityCounts` = liczba wiadomości w oknie (gdy brak — sort po lastMessageAt).
+ */
+export function sortFavoritesAndNew(
+  overview: ChatOverviewEntry[],
+  now: Date = new Date(),
+  activityCounts?: Record<string, number>,
+): ChatOverviewEntry[] {
+  const monthAgo = now.getTime() - MONTH_MS;
+  const activityAt = (e: ChatOverviewEntry) => {
+    const raw = e.lastMessageAt ?? e.createdAt;
+    const t = new Date(raw).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const volume = (e: ChatOverviewEntry) => activityCounts?.[e.id] ?? 0;
+  return [...overview].sort((a, b) => {
+    const aNew = hasUnread(a) ? 1 : 0;
+    const bNew = hasUnread(b) ? 1 : 0;
+    if (aNew !== bNew) return bNew - aNew;
+
+    // Wśród nowych: najświeższa aktywność pierwsza.
+    if (aNew && bNew) {
+      const aAt = activityAt(a);
+      const bAt = activityAt(b);
+      if (aAt !== bAt) return bAt - aAt;
+    }
+
+    const aPin = a.myPinnedAt ? 1 : 0;
+    const bPin = b.myPinnedAt ? 1 : 0;
+    if (aPin !== bPin) return bPin - aPin;
+
+    const aAt = activityAt(a);
+    const bAt = activityAt(b);
+    const aRecent = aAt >= monthAgo ? 1 : 0;
+    const bRecent = bAt >= monthAgo ? 1 : 0;
+    if (aRecent !== bRecent) return bRecent - aRecent;
+
+    if (activityCounts) {
+      const aVol = volume(a);
+      const bVol = volume(b);
+      if (aVol !== bVol) return bVol - aVol;
+    }
+
+    if (aAt !== bAt) return bAt - aAt;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
 /** Ulubione (przypięte) na górze, wewnątrz sekcji porządek po aktywności. */
 export function sortOverview(overview: ChatOverviewEntry[]): ChatOverviewEntry[] {
   return [...overview].sort((a, b) => {

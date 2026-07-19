@@ -1,4 +1,13 @@
-import { lazy, Suspense, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { addDays, addMonths, startOfDay } from "date-fns";
 import {
   Bell,
@@ -9,13 +18,14 @@ import {
   ListChecks,
   LogOut,
   MessageCircle,
+  MoreHorizontal,
   Plus,
   Settings2,
   Sliders,
   X,
 } from "lucide-react";
 import { useStore } from "@/state/store";
-import type { CalendarViewKind } from "@/types";
+import type { CalendarViewKind, Group } from "@/types";
 import { CalendarView } from "@/components/calendar/CalendarView";
 import { MobileDashboard } from "@/components/mobile/MobileDashboard";
 import { MobileTodayPanel } from "@/components/mobile/MobileTodayPanel";
@@ -42,6 +52,7 @@ import { TagsSettings } from "@/components/settings/TagsSettings";
 import { SyncSettings } from "@/components/settings/SyncSettings";
 import { useChatStore } from "@/lib/chat/store";
 import { totalUnread } from "@/lib/chat/feed";
+import { setRouteHash } from "@/lib/navigation";
 
 const ChatPanel = lazy(() =>
   import("@/components/chat/ChatPanel").then((m) => ({ default: m.ChatPanel })),
@@ -88,11 +99,20 @@ export function MobileShell() {
 
   const chatUnread = useChatStore((s) => (cloudEnabled ? totalUnread(s.overview) : 0));
   const activeConversationId = useChatStore((s) => s.activeConversationId);
+  const setActiveConversation = useChatStore((s) => s.setActiveConversation);
 
   // Deep-link (push / chip „→ rozmowa") otwiera rozmowę → przełącz na zakładkę czatu.
   useEffect(() => {
     if (activeConversationId) setTab("chat");
   }, [activeConversationId]);
+
+  const goChatHome = () => {
+    setTab("chat");
+    if (activeConversationId) {
+      setActiveConversation(null);
+      setRouteHash({ view: "chat" });
+    }
+  };
 
   const anchor = new Date(settings.anchorDate);
 
@@ -150,6 +170,17 @@ export function MobileShell() {
         <Logo size={24} />
 
         <div className="ml-auto flex items-center gap-1">
+          {(tab === "calendar" || tab === "tasks") && (
+            <button
+              type="button"
+              onClick={tab === "calendar" ? addEvent : addTask}
+              aria-label={tab === "calendar" ? "Dodaj wydarzenie" : "Dodaj zadanie"}
+              title={tab === "calendar" ? "Dodaj wydarzenie" : "Dodaj zadanie"}
+              className="flex items-center justify-center rounded-lg bg-accent-grad p-2 text-white shadow-glow transition hover:brightness-110"
+            >
+              <Plus size={18} />
+            </button>
+          )}
           <button
             onClick={enableNotifications}
             className="rounded-lg p-2 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
@@ -169,140 +200,79 @@ export function MobileShell() {
         </div>
       </header>
 
-      {/* Menu główne: Dziś · Kalendarz [+] · Zadania [+] */}
-      <div className="flex items-stretch gap-1.5 border-b border-line px-3 py-2">
-        <TabSegment
-          active={tab === "dashboard"}
-          onSelect={() => setTab("dashboard")}
-          icon={<LayoutDashboard size={16} />}
-          label="Dziś"
+      {/* Chipsy filtra grup (nie dotyczą czatu) — nad belką kalendarza */}
+      {tab !== "chat" && (
+        <GroupFilterBar
+          userGroups={userGroups}
+          share={share}
+          archive={archive}
+          activeGroupFilter={activeGroupFilter}
+          onSelect={setActiveGroupFilter}
+          onManage={() => setShowManage(true)}
+          onAdd={() => setShowAddGroup(true)}
         />
-        <TabSegment
-          active={tab === "calendar"}
-          onSelect={() => setTab("calendar")}
-          onAdd={addEvent}
-          icon={<CalendarDays size={16} />}
-          label="Kalendarz"
-          addLabel="Dodaj wydarzenie"
-        />
-        <TabSegment
-          active={tab === "tasks"}
-          onSelect={() => setTab("tasks")}
-          onAdd={addTask}
-          icon={<ListChecks size={16} />}
-          label="Zadania"
-          addLabel="Dodaj zadanie"
-        />
-        {cloudEnabled && (
-          <TabSegment
-            active={tab === "chat"}
-            onSelect={() => setTab("chat")}
-            icon={<MessageCircle size={16} />}
-            label="Czat"
-            badge={chatUnread}
-          />
-        )}
-      </div>
+      )}
 
       {/* Pasek nawigacji daty + przełącznik widoku (kalendarz) */}
       {tab === "calendar" && (
-        <div className="flex flex-col gap-2 border-b border-line px-3 py-2">
+        <div className="flex flex-col border-b border-line">
           {mobileView !== "today" ? (
-            <div className="flex items-center gap-2">
+            <div className="relative flex h-9 items-center px-2">
               <button
+                type="button"
                 onClick={goToday}
-                className="rounded-lg border border-line bg-surface-raised px-2.5 py-1 text-xs font-medium text-ink transition hover:border-line-strong"
+                className="z-10 shrink-0 px-1.5 py-1 text-[12px] font-medium text-accent transition hover:text-accent/80"
               >
                 Dziś
               </button>
-              <button
-                onClick={() => shift(-1)}
-                className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-                aria-label="Poprzedni"
-              >
-                <ChevronLeft size={20} />
-              </button>
-              <div className="min-w-0 flex-1 truncate text-center text-sm font-medium capitalize text-ink">
-                {getViewLabel(mobileView, anchor, settings.nineDayStartWeekday)}
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-0.5 px-14">
+                <button
+                  type="button"
+                  onClick={() => shift(-1)}
+                  className="pointer-events-auto rounded-md p-1.5 text-ink-faint transition hover:bg-white/[0.04] hover:text-ink"
+                  aria-label="Poprzedni"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <div className="min-w-0 truncate text-center text-[13px] font-semibold capitalize tracking-tight text-ink">
+                  {getViewLabel(mobileView, anchor, settings.nineDayStartWeekday)}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => shift(1)}
+                  className="pointer-events-auto rounded-md p-1.5 text-ink-faint transition hover:bg-white/[0.04] hover:text-ink"
+                  aria-label="Następny"
+                >
+                  <ChevronRight size={18} />
+                </button>
               </div>
-              <button
-                onClick={() => shift(1)}
-                className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-                aria-label="Następny"
-              >
-                <ChevronRight size={20} />
-              </button>
             </div>
           ) : (
-            <div className="text-center text-sm font-medium text-ink">Dziś · wydarzenia i zadania</div>
+            <div className="flex h-9 items-center justify-center px-3 text-[13px] font-semibold tracking-tight text-ink">
+              Dziś · wydarzenia i zadania
+            </div>
           )}
-          <div className="flex items-center gap-0.5 self-center rounded-lg border border-line bg-surface-raised p-0.5">
-            {MOBILE_VIEWS.map((v) => (
-              <button
-                key={v.key}
-                onClick={() => setMobileView(v.key)}
-                className={`rounded-md px-3 py-1 text-xs font-medium transition ${
-                  mobileView === v.key
-                    ? "bg-accent text-white shadow-glow"
-                    : "text-ink-light hover:text-ink"
-                }`}
-              >
-                {v.label}
-              </button>
-            ))}
+          <div className="flex items-stretch">
+            {MOBILE_VIEWS.map((v) => {
+              const active = mobileView === v.key;
+              return (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => setMobileView(v.key)}
+                  className={`relative min-w-0 flex-1 px-1 py-2 text-[12px] font-medium transition ${
+                    active ? "text-ink" : "text-ink-faint hover:text-ink-light"
+                  }`}
+                >
+                  {v.label}
+                  {active && (
+                    <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-accent" />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
-      )}
-
-      {/* Chipsy filtra grup (nie dotyczą czatu) */}
-      {tab !== "chat" && (
-      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-line px-3 py-2 no-scrollbar">
-        <GroupChip
-          label="Wszystkie"
-          color="#737881"
-          active={activeGroupFilter === null}
-          onClick={() => setActiveGroupFilter(null)}
-        />
-        {userGroups.map((g) => (
-          <GroupChip
-            key={g.id}
-            label={g.name}
-            color={g.color}
-            active={activeGroupFilter === g.id}
-            onClick={() => setActiveGroupFilter(g.id)}
-          />
-        ))}
-        {share && (
-          <GroupChip
-            label="SHARE"
-            color={SHARE_GROUP_COLOR}
-            active={activeGroupFilter === share.id}
-            onClick={() => setActiveGroupFilter(share.id)}
-          />
-        )}
-        {archive && (
-          <GroupChip
-            label={ARCHIVE_GROUP_NAME}
-            color={archive.color}
-            active={activeGroupFilter === archive.id}
-            onClick={() => setActiveGroupFilter(archive.id)}
-          />
-        )}
-        <button
-          onClick={() => setShowManage(true)}
-          className="ml-0.5 shrink-0 rounded-full border border-dashed border-line p-1.5 text-ink-faint transition hover:border-line-strong hover:text-ink"
-          aria-label="Zarządzaj grupami"
-        >
-          <Sliders size={14} />
-        </button>
-        <button
-          onClick={() => setShowAddGroup(true)}
-          className="shrink-0 rounded-full border border-dashed border-line p-1.5 text-ink-faint transition hover:border-line-strong hover:text-ink"
-          aria-label="Dodaj grupę"
-        >
-          <Plus size={14} />
-        </button>
-      </div>
       )}
 
       {/* Treść */}
@@ -335,6 +305,48 @@ export function MobileShell() {
           <TodoPanel />
         )}
       </main>
+
+      {/* Dolne menu: Dziś · Kalendarz · Zadania · Czat (zawsze widoczne) */}
+      <nav
+        className="z-30 flex shrink-0 items-stretch border-t border-line bg-surface"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        aria-label="Menu główne"
+      >
+        <BottomTab
+          active={tab === "dashboard"}
+          onSelect={() => setTab("dashboard")}
+          icon={<LayoutDashboard size={22} strokeWidth={tab === "dashboard" ? 2.25 : 1.75} />}
+          label="Dziś"
+        />
+        <BottomTab
+          active={tab === "calendar"}
+          onSelect={() => setTab("calendar")}
+          icon={<CalendarDays size={22} strokeWidth={tab === "calendar" ? 2.25 : 1.75} />}
+          label="Kalendarz"
+        />
+        <BottomTab
+          active={tab === "tasks"}
+          onSelect={() => setTab("tasks")}
+          icon={<ListChecks size={22} strokeWidth={tab === "tasks" ? 2.25 : 1.75} />}
+          label="Zadania"
+        />
+        {cloudEnabled && (
+          <BottomTab
+            active={tab === "chat"}
+            onSelect={goChatHome}
+            icon={
+              <MessageCircle
+                size={22}
+                strokeWidth={tab === "chat" || chatUnread > 0 ? 2.25 : 1.75}
+                fill={chatUnread > 0 ? "currentColor" : "none"}
+              />
+            }
+            label="Czat"
+            badge={chatUnread}
+            emphasize={chatUnread > 0}
+          />
+        )}
+      </nav>
 
       {/* Edytor pełnoekranowy */}
       {editingId && (
@@ -447,55 +459,280 @@ export function MobileShell() {
   );
 }
 
-function TabSegment({
+function BottomTab({
   active,
   onSelect,
-  onAdd,
   icon,
   label,
-  addLabel,
   badge = 0,
+  emphasize = false,
 }: {
   active: boolean;
   onSelect: () => void;
-  onAdd?: () => void;
   icon: ReactNode;
   label: string;
-  addLabel?: string;
   badge?: number;
+  /** Np. nieodczytane — lekko wyróżnij nawet gdy tab nieaktywny. */
+  emphasize?: boolean;
 }) {
   return (
-    <div
-      className={`flex min-w-0 flex-1 items-center rounded-xl border p-0.5 transition ${
-        active ? "border-accent/60 bg-accent/10" : "border-line bg-surface-raised"
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 transition ${
+        active || emphasize ? "text-accent" : "text-ink-faint"
       }`}
     >
-      <button
-        type="button"
-        onClick={onSelect}
-        className={`relative flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-xs font-semibold transition sm:gap-1.5 sm:px-2 sm:text-sm ${
-          active ? "text-ink" : "text-ink-light"
-        }`}
-      >
+      <span className="relative flex h-6 w-6 items-center justify-center">
         {icon}
-        <span className="truncate">{label}</span>
         {badge > 0 && (
-          <span className="absolute -top-0.5 right-0 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-white">
+          <span className="absolute -right-2.5 -top-1.5 flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full bg-accent px-1 text-[9px] font-bold leading-none text-white shadow-sm ring-2 ring-surface">
             {badge > 99 ? "99+" : badge}
           </span>
         )}
-      </button>
-      {onAdd && (
-        <button
-          type="button"
-          onClick={onAdd}
-          aria-label={addLabel}
-          title={addLabel}
-          className="flex shrink-0 items-center justify-center rounded-lg bg-accent-grad p-1.5 text-white shadow-glow transition hover:brightness-110 sm:p-2"
-        >
-          <Plus size={16} />
-        </button>
-      )}
+      </span>
+      <span
+        className={`truncate text-[10px] leading-tight ${
+          active || emphasize ? "font-semibold" : "font-medium"
+        }`}
+      >
+        {label}
+      </span>
+    </button>
+  );
+}
+
+type ChipItem = {
+  key: string;
+  label: string;
+  color: string;
+  filterId: string | null;
+};
+
+function GroupFilterBar({
+  userGroups,
+  share,
+  archive,
+  activeGroupFilter,
+  onSelect,
+  onManage,
+  onAdd,
+}: {
+  userGroups: Group[];
+  share: Group | undefined;
+  archive: Group | undefined;
+  activeGroupFilter: string | null;
+  onSelect: (id: string | null) => void;
+  onManage: () => void;
+  onAdd: () => void;
+}) {
+  const userChips: ChipItem[] = userGroups.map((g) => ({
+    key: g.id,
+    label: g.name,
+    color: g.color,
+    filterId: g.id,
+  }));
+
+  const systemChips: ChipItem[] = [
+    { key: "all", label: "ALL", color: "#737881", filterId: null },
+    ...(share
+      ? [{ key: share.id, label: "SHARE", color: SHARE_GROUP_COLOR, filterId: share.id }]
+      : []),
+    ...(archive
+      ? [
+          {
+            key: archive.id,
+            label: ARCHIVE_GROUP_NAME,
+            color: archive.color,
+            filterId: archive.id,
+          },
+        ]
+      : []),
+  ];
+
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState(userChips.length);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    const measure = measureRef.current;
+    if (!wrap || !measure) return;
+
+    const layoutRows = (widths: number[], availW: number, gap: number) => {
+      let rows = 1;
+      let x = 0;
+      for (const w of widths) {
+        if (x === 0) {
+          x = w;
+          continue;
+        }
+        if (x + gap + w <= availW) {
+          x += gap + w;
+        } else {
+          rows += 1;
+          x = w;
+        }
+      }
+      return rows;
+    };
+
+    const recompute = () => {
+      const chipEls = Array.from(
+        measure.querySelectorAll<HTMLElement>("[data-chip-measure]"),
+      );
+      const moreEl = measure.querySelector<HTMLElement>("[data-more-measure]");
+      if (!chipEls.length) {
+        setVisibleCount(0);
+        return;
+      }
+
+      const availW = wrap.clientWidth;
+      if (availW <= 0) return;
+
+      const gap = 4;
+      const widths = chipEls.map((el) => el.offsetWidth);
+      const moreW = moreEl?.offsetWidth ?? 28;
+
+      // Grupy użytkownika: max 1 wiersz (ALL/SHARE/ARCH mają osobny wiersz poniżej)
+      if (layoutRows(widths, availW, gap) <= 1) {
+        setVisibleCount(widths.length);
+        return;
+      }
+
+      let best = 1;
+      for (let n = widths.length - 1; n >= 1; n--) {
+        if (layoutRows([...widths.slice(0, n), moreW], availW, gap) <= 1) {
+          best = n;
+          break;
+        }
+      }
+      setVisibleCount(best);
+    };
+
+    recompute();
+    const ro = new ResizeObserver(() => recompute());
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [userChips.length, userChips.map((c) => `${c.key}:${c.label}`).join("|")]);
+
+  const visible = userChips.slice(0, visibleCount);
+  const hidden = userChips.slice(visibleCount);
+  const hiddenActive = hidden.some((c) => c.filterId === activeGroupFilter);
+
+  const renderChip = (c: ChipItem) => (
+    <GroupChip
+      key={c.key}
+      label={c.label}
+      color={c.color}
+      active={activeGroupFilter === c.filterId}
+      onClick={() => onSelect(c.filterId)}
+    />
+  );
+
+  return (
+    <div className="relative border-b border-line px-3 py-1.5">
+      <div className="flex items-start gap-1">
+        <div ref={wrapRef} className="flex min-w-0 flex-1 flex-col gap-1">
+          {userChips.length > 0 && (
+            <div className="flex flex-wrap content-start justify-center gap-1">
+              {visible.map(renderChip)}
+              {hidden.length > 0 && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setMenuOpen((v) => !v)}
+                    aria-label={`Więcej grup (${hidden.length})`}
+                    aria-expanded={menuOpen}
+                    className={`flex h-7 min-w-[1.875rem] shrink-0 items-center justify-center rounded-full border px-1.5 text-[11px] font-semibold transition ${
+                      hiddenActive || menuOpen
+                        ? "border-accent/50 bg-accent/15 text-accent"
+                        : "border-dashed border-line text-ink-faint hover:border-line-strong hover:text-ink"
+                    }`}
+                  >
+                    <MoreHorizontal size={14} />
+                  </button>
+                  {menuOpen && (
+                    <>
+                      <button
+                        type="button"
+                        className="fixed inset-0 z-40 cursor-default"
+                        aria-label="Zamknij"
+                        onClick={() => setMenuOpen(false)}
+                      />
+                      <div className="absolute right-0 top-full z-50 mt-1 max-h-56 min-w-[10rem] overflow-y-auto rounded-lg border border-line bg-surface-overlay p-1 shadow-pop">
+                        {hidden.map((c) => (
+                          <button
+                            key={c.key}
+                            type="button"
+                            onClick={() => {
+                              onSelect(c.filterId);
+                              setMenuOpen(false);
+                            }}
+                            className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] transition ${
+                              activeGroupFilter === c.filterId
+                                ? "bg-accent/15 text-ink"
+                                : "text-ink-light hover:bg-surface-raised hover:text-ink"
+                            }`}
+                          >
+                            <span
+                              className="h-1.5 w-1.5 shrink-0 rounded-full"
+                              style={{ background: c.color }}
+                            />
+                            <span className="truncate">{c.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap content-start justify-center gap-1">
+            {systemChips.map(renderChip)}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-0.5 pt-px">
+          <button
+            type="button"
+            onClick={onManage}
+            className="shrink-0 rounded-full border border-dashed border-line p-1.5 text-ink-faint transition hover:border-line-strong hover:text-ink"
+            aria-label="Zarządzaj grupami"
+          >
+            <Sliders size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={onAdd}
+            className="shrink-0 rounded-full border border-dashed border-line p-1.5 text-ink-faint transition hover:border-line-strong hover:text-ink"
+            aria-label="Dodaj grupę"
+          >
+            <Plus size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* Ukryty pomiar — tylko grupy użytkownika (1 wiersz) */}
+      <div
+        ref={measureRef}
+        className="pointer-events-none invisible absolute left-0 top-0 flex flex-wrap gap-1 px-3"
+        aria-hidden
+      >
+        {userChips.map((c) => (
+          <span key={c.key} data-chip-measure>
+            <GroupChip label={c.label} color={c.color} active={false} onClick={() => {}} />
+          </span>
+        ))}
+        <span data-more-measure>
+          <span className="flex h-7 min-w-[1.875rem] items-center justify-center rounded-full border px-1.5">
+            <MoreHorizontal size={14} />
+          </span>
+        </span>
+      </div>
     </div>
   );
 }
@@ -516,16 +753,16 @@ function GroupChip({
       type="button"
       onClick={onClick}
       style={chipStyle(color, active)}
-      className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
+      className={`flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium leading-none transition ${
         active ? "" : "border-dashed"
       }`}
     >
       <span
-        className="h-2 w-2 shrink-0 rounded-full"
+        className="h-1.5 w-1.5 shrink-0 rounded-full"
         style={{ background: color }}
         aria-hidden
       />
-      <span className="max-w-[8rem] truncate">{label}</span>
+      <span className="max-w-[7rem] truncate">{label}</span>
     </button>
   );
 }

@@ -72,17 +72,15 @@ export default function App() {
           <Toolbar todoOpen={panelOpen} onToggleTodo={togglePanel} />
           <div className="flex min-h-0 flex-1">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div
-                className={`min-h-0 overflow-hidden ${
-                  hubExpanded ? "flex-[2]" : "flex-[5]"
-                }`}
-              >
+              <div className="min-h-0 flex-1 overflow-hidden">
                 <CalendarView />
               </div>
               {cloudEnabled && (
                 <div
-                  className={`min-h-0 overflow-hidden border-t border-line bg-surface ${
-                    hubExpanded ? "flex-[5]" : "flex-[3]"
+                  className={`min-h-0 shrink-0 overflow-hidden border-t border-line bg-surface ${
+                    hubExpanded
+                      ? "h-[min(55vh,560px)]"
+                      : "h-[min(36vh,340px)]"
                   }`}
                 >
                   <ErrorBoundary label="hub" compact>

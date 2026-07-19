@@ -59,9 +59,24 @@ export function ViewSettings() {
         min={36}
         max={96}
         value={settings.hourHeight}
-        onChange={(e) => setSettings({ hourHeight: +e.target.value })}
+        onChange={(e) =>
+          setSettings({ hourHeight: +e.target.value, hourHeightAuto: false })
+        }
         className="w-full"
       />
+      <p className="mt-1 text-[11px] text-ink-faint">
+        {settings.hourHeightAuto
+          ? "Automatycznie: siatka wypełnia panel kalendarza (do hubu)."
+          : `Ręcznie: ${settings.hourHeight} px / h`}
+      </p>
+      <button
+        type="button"
+        onClick={() => setSettings({ hourHeightAuto: true })}
+        disabled={settings.hourHeightAuto}
+        className="mt-2 w-full rounded-lg border border-line px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-surface-raised disabled:cursor-default disabled:opacity-50"
+      >
+        Przywróć domyślną wysokość
+      </button>
     </>
   );
 }

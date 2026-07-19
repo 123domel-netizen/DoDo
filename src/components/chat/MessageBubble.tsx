@@ -18,9 +18,13 @@ import type { ChatAttachment, ChatMessage } from "@/lib/chat/types";
 import { formatFileSize, signedUrlFor } from "@/lib/chat/upload";
 import { parseMarkdownLite } from "@/lib/chat/markdown";
 import { mentionsUser } from "@/lib/chat/mentions";
-import { aggregatePoll, groupReactions } from "@/lib/chat/polls";
+import { aggregatePoll, groupReactions, QUICK_REACTIONS } from "@/lib/chat/polls";
 import { formatDuration } from "@/lib/chat/voice";
+import { isThreadUnread } from "@/lib/chat/recentThreads";
+import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
+
+const INLINE_REACTIONS = QUICK_REACTIONS.slice(0, 3);
 
 export function formatMessageTime(iso: string): string {
   const d = new Date(iso);
@@ -103,6 +107,46 @@ export function MessageBody({
   );
 }
 
+function AuthorAvatar({
+  name,
+  avatarUrl,
+  size = 28,
+}: {
+  name: string;
+  avatarUrl?: string | null;
+  size?: number;
+}) {
+  const initials = (name || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("") || "?";
+
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt=""
+        width={size}
+        height={size}
+        className="shrink-0 rounded-full border border-line object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+
+  return (
+    <span
+      className="flex shrink-0 items-center justify-center rounded-full border border-line bg-surface-raised text-[10px] font-semibold text-ink-faint"
+      style={{ width: size, height: size }}
+      aria-hidden
+    >
+      {initials}
+    </span>
+  );
+}
+
 function VoiceAttachment({ att, durationSec }: { att: ChatAttachment; durationSec?: number }) {
   const url = useSignedUrl(att.bucketPath);
   return (
@@ -135,7 +179,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
       <button
         type="button"
         onClick={() => void openFull()}
-        className="block overflow-hidden rounded-lg border border-line bg-surface-raised"
+        className="block overflow-hidden rounded-xl border border-line bg-surface-raised"
         aria-label={`Otwórz ${att.fileName}`}
       >
         {thumbUrl ? (
@@ -143,7 +187,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
             src={thumbUrl}
             alt={att.fileName}
             loading="lazy"
-            className="max-h-48 w-auto max-w-full object-cover"
+            className="max-h-52 w-auto max-w-full object-cover"
           />
         ) : (
           <div className="flex h-24 w-32 items-center justify-center text-xs text-ink-faint">
@@ -158,7 +202,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
     <button
       type="button"
       onClick={() => void openFull()}
-      className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-2 text-left transition hover:border-line-strong"
+      className="flex w-full items-center gap-2 rounded-xl border border-line bg-surface-raised px-2.5 py-2 text-left transition hover:border-line-strong"
     >
       <Download size={14} className="shrink-0 text-ink-faint" />
       <span className="min-w-0 flex-1 truncate text-xs text-ink">{att.fileName}</span>
@@ -183,7 +227,7 @@ function LinkPreviewCard({ msg }: { msg: ChatMessage }) {
       href={preview.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="mt-2 block overflow-hidden rounded-lg border border-line bg-surface-raised transition hover:border-line-strong"
+      className="mt-2 block overflow-hidden rounded-xl border border-line bg-surface-overlay/50 transition hover:border-line-strong"
     >
       {preview.imageUrl && (
         <img
@@ -226,17 +270,17 @@ function PollBlock({
 }) {
   const results = aggregatePoll(msg, myUserId);
   return (
-    <div className="mt-1.5 flex min-w-[13rem] flex-col gap-1">
+    <div className="mt-2 flex min-w-[13rem] flex-col gap-1.5">
       {results.options.map((o) => (
         <button
           key={o.option.id}
           type="button"
           disabled={!onVote || Boolean(msg.sendState)}
           onClick={() => onVote?.(msg, o.option.id)}
-          className={`relative overflow-hidden rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
+          className={`relative overflow-hidden rounded-lg border px-2.5 py-2 text-left text-xs transition ${
             o.mine
               ? "border-accent/60 bg-accent/10 text-ink"
-              : "border-line bg-surface-raised text-ink hover:border-line-strong"
+              : "border-line bg-surface-overlay/40 text-ink hover:border-line-strong"
           }`}
         >
           <span
@@ -263,32 +307,128 @@ function PollBlock({
   );
 }
 
+function HoverToolbar({
+  mine,
+  onReply,
+  onOpenThread,
+  onOpenActions,
+  onToggleReaction,
+  msg,
+  replyCount,
+  inThread,
+}: {
+  mine: boolean;
+  msg: ChatMessage;
+  replyCount: number;
+  inThread: boolean;
+  onReply?: (msg: ChatMessage) => void;
+  onOpenThread?: (rootId: string) => void;
+  onOpenActions?: (msg: ChatMessage, anchor: DOMRect) => void;
+  onToggleReaction?: (msg: ChatMessage, emoji: string) => void;
+}) {
+  return (
+    // Wrapper z „mostkiem” (pb) wypełnia lukę do bąbelka — inaczej hover ginie w drodze.
+    <div
+      className={`pointer-events-none absolute bottom-full z-20 pb-2 opacity-0 transition duration-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${
+        mine ? "right-0" : "left-0"
+      }`}
+    >
+      <div className="flex items-center gap-0.5 rounded-xl border border-line/80 bg-surface-overlay/95 p-0.5 shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md">
+        {INLINE_REACTIONS.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            title={`Reaguj ${emoji}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleReaction?.(msg, emoji);
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-sm transition hover:scale-110 hover:bg-white/[0.08]"
+          >
+            {emoji}
+          </button>
+        ))}
+        <span className="mx-0.5 h-4 w-px bg-line/80" aria-hidden />
+        {onReply && (
+          <button
+            type="button"
+            title="Odpowiedz"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReply(msg);
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-white/[0.08] hover:text-ink"
+          >
+            <CornerUpLeft size={14} />
+          </button>
+        )}
+        {!inThread && onOpenThread && (
+          <button
+            type="button"
+            title={replyCount > 0 ? `Wątek · ${replyCount}` : "Odpowiedz w wątku"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenThread(msg.id);
+            }}
+            className="relative flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-white/[0.08] hover:text-ink"
+          >
+            <MessageSquare size={14} />
+            {replyCount > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[8px] font-semibold text-white">
+                {replyCount}
+              </span>
+            )}
+          </button>
+        )}
+        {onOpenActions && (
+          <button
+            type="button"
+            title="Więcej"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenActions(msg, e.currentTarget.getBoundingClientRect());
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-white/[0.08] hover:text-ink"
+          >
+            <MoreHorizontal size={14} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface MessageBubbleProps {
   msg: ChatMessage;
   mine: boolean;
   authorName: string;
+  authorAvatarUrl?: string | null;
   showAuthor: boolean;
+  /** false = ta sama seria (≤5 min od poprzedniej) — bez godziny */
+  showTime?: boolean;
   myUserId?: string | null;
-  /** Nazwy członków rozmowy (podświetlanie wzmianek). */
   mentionNames?: string[];
-  /** Cytowana wiadomość (odpowiedź) + autor. */
   quoted?: { msg: ChatMessage | null; authorName: string } | null;
   flash?: boolean;
   replyCount?: number;
   inThread?: boolean;
   onOpenThread?: (rootId: string) => void;
   onOpenActions?: (msg: ChatMessage, anchor: DOMRect) => void;
+  onReply?: (msg: ChatMessage) => void;
   onRetry?: (messageId: string) => void;
   onToggleReaction?: (msg: ChatMessage, emoji: string) => void;
   onVote?: (msg: ChatMessage, optionId: string) => void;
   onJumpTo?: (messageId: string) => void;
+  onOpenRegistry?: (msg: ChatMessage) => void;
 }
 
 export function MessageBubble({
   msg,
   mine,
   authorName,
+  authorAvatarUrl = null,
   showAuthor,
+  showTime = true,
   myUserId = null,
   mentionNames = [],
   quoted = null,
@@ -297,20 +437,59 @@ export function MessageBubble({
   inThread = false,
   onOpenThread,
   onOpenActions,
+  onReply,
   onRetry,
   onToggleReaction,
   onVote,
   onJumpTo,
+  onOpenRegistry,
 }: MessageBubbleProps) {
   const setEditing = useStore((s) => s.setEditing);
   const items = useStore((s) => s.items);
+  const threadLastReply = useChatStore((s) => s.threadLastReply[msg.id]);
+  const threadSeenAt = useChatStore((s) => s.threadSeenAt[msg.id]);
+  const hasThread = !inThread && replyCount > 0;
+  const threadUnread = isThreadUnread({
+    replyCount,
+    myUserId,
+    lastReply: threadLastReply,
+    seenAt: threadSeenAt,
+  });
 
   if (msg.kind === "system") {
+    const registryKind =
+      msg.payload?.registry?.kind ??
+      (msg.body.startsWith("📝 Zapisano notatkę")
+        ? "note"
+        : msg.body.startsWith("📌 Zapisano decyzję")
+          ? "decision"
+          : null);
+    const clickable = Boolean(registryKind && onOpenRegistry);
+    const pill = (
+      <div
+        className={`max-w-full truncate whitespace-nowrap rounded-full border border-line bg-surface-raised/60 px-3.5 py-1.5 text-center text-[11px] leading-snug text-ink-faint ${
+          clickable
+            ? "cursor-pointer transition hover:border-accent/40 hover:bg-surface-raised hover:text-ink"
+            : ""
+        }`}
+      >
+        {msg.body}
+      </div>
+    );
     return (
-      <div className="my-1 flex justify-center px-3">
-        <div className="max-w-[85%] rounded-full border border-line bg-surface-raised/60 px-3 py-1 text-center text-[11px] text-ink-faint">
-          {msg.body}
-        </div>
+      <div className="my-2.5 flex justify-center px-3">
+        {clickable ? (
+          <button
+            type="button"
+            onClick={() => onOpenRegistry?.(msg)}
+            className="max-w-[85%] border-0 bg-transparent p-0"
+            title={registryKind === "note" ? "Otwórz notatkę" : "Otwórz decyzję"}
+          >
+            {pill}
+          </button>
+        ) : (
+          <div className="max-w-[85%]">{pill}</div>
+        )}
       </div>
     );
   }
@@ -324,211 +503,258 @@ export function MessageBubble({
     msg.kind === "voice"
       ? (msg.attachments ?? []).find((a) => a.mimeType.startsWith("audio/"))
       : undefined;
+  const canAct = !deleted && !pending && !failed;
 
   return (
     <div
       data-message-id={msg.id}
-      className={`group relative flex px-2 py-px ${mine ? "justify-end" : "justify-start"}`}
+      className={`group relative flex gap-2 px-3 ${
+        showAuthor ? "mt-3" : "mt-0.5"
+      } ${mine ? "flex-row-reverse" : "flex-row"}`}
     >
-      <div className={`relative max-w-[88%] min-w-0 ${mine ? "items-end" : "items-start"}`}>
-        {showAuthor && !mine && (
-          <div className="mb-px px-1 text-[10px] font-medium leading-tight text-ink-light">
+      {/* Awatar — tylko po stronie rozmówcy; placeholder gdy ciąg dalszy */}
+      {!mine && (
+        <div className="flex w-7 shrink-0 flex-col pt-0.5">
+          {showAuthor ? (
+            <AuthorAvatar name={authorName} avatarUrl={authorAvatarUrl} size={28} />
+          ) : (
+            <span className="h-7 w-7" aria-hidden />
+          )}
+        </div>
+      )}
+
+      <div
+        className={`relative flex min-w-0 max-w-[min(88%,22rem)] flex-col ${
+          mine ? "items-end" : "items-start"
+        }`}
+      >
+        {showAuthor && (
+          <div
+            className={`mb-1 px-1 text-[11px] font-medium leading-none tracking-wide ${
+              mine ? "text-right text-ink-faint" : "text-left text-ink-light"
+            }`}
+          >
             {authorName}
           </div>
         )}
-        <div
-          onContextMenu={
-            !deleted && !pending && !failed && onOpenActions
-              ? (e) => {
-                  e.preventDefault();
-                  onOpenActions(msg, new DOMRect(e.clientX, e.clientY, 0, 0));
-                }
-              : undefined
-          }
-          className={`relative rounded-xl border px-2 py-1 text-[13px] leading-snug transition-colors ${
-            mine
-              ? "border-accent/30 bg-accent/15 text-ink"
-              : mentioned
-                ? "border-accent/50 bg-accent/10 text-ink"
-                : "border-line bg-surface-raised text-ink"
-          } ${pending ? "opacity-60" : ""} ${failed ? "border-red-500/50" : ""} ${
-            flash ? "ring-2 ring-accent" : ""
-          }`}
-        >
-          {deleted ? (
-            <span className="italic text-ink-faint">Wiadomość usunięta</span>
-          ) : (
-            <>
-              {quoted && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    quoted.msg && onJumpTo ? onJumpTo(quoted.msg.id) : undefined
-                  }
-                  className="mb-1 flex w-full items-start gap-1 rounded border-l-2 border-accent/60 bg-surface-overlay/60 px-1.5 py-0.5 text-left"
-                >
-                  <CornerUpLeft size={10} className="mt-0.5 shrink-0 text-accent" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] font-medium text-accent">
-                      {quoted.authorName}
-                    </span>
-                    <span className="line-clamp-1 text-[10px] text-ink-faint">
-                      {quoted.msg
-                        ? quoted.msg.deletedAt
-                          ? "Wiadomość usunięta"
-                          : quoted.msg.kind === "voice"
-                            ? "🎤 Wiadomość głosowa"
-                            : quoted.msg.kind === "gif"
-                              ? "GIF"
-                              : quoted.msg.body || "(załącznik)"
-                        : "…"}
-                    </span>
-                  </span>
-                </button>
-              )}
 
-              {msg.kind === "poll" ? (
-                <>
-                  <div className="font-medium">
-                    <MessageBody body={msg.body} mentionNames={mentionNames} />
-                  </div>
-                  <PollBlock msg={msg} myUserId={myUserId} onVote={onVote} />
-                </>
-              ) : msg.kind === "gif" && msg.payload.gif ? (
-                <img
-                  src={msg.payload.gif.url}
-                  alt="GIF"
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                  className="max-h-40 w-auto max-w-full rounded-lg"
-                />
-              ) : msg.kind === "voice" ? (
-                voiceAtt ? (
-                  <VoiceAttachment
-                    att={voiceAtt}
-                    durationSec={msg.payload.voice?.durationSec}
-                  />
-                ) : (
-                  <span className="text-xs text-ink-faint">
-                    🎤 Wiadomość głosowa{pending ? " (wysyłanie…)" : ""}
-                  </span>
-                )
-              ) : (
-                msg.body && <MessageBody body={msg.body} mentionNames={mentionNames} />
-              )}
-
-              {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {msg.attachments!.map((att) => (
-                    <AttachmentTile key={att.id} att={att} />
-                  ))}
-                </div>
-              )}
-
-              {msg.kind === "text" && <LinkPreviewCard msg={msg} />}
-
-              {(msg.links?.length ?? 0) > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {msg.links!.map((link) => {
-                    const item = items[link.itemId];
-                    const isTask = item ? item.type === "task" : true;
-                    return (
-                      <button
-                        key={link.itemId}
-                        type="button"
-                        onClick={() => setEditing(link.itemId)}
-                        className="flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px text-[10px] text-ink transition hover:bg-accent/20"
-                      >
-                        {isTask ? <CheckSquare size={10} /> : <CalendarDays size={10} />}
-                        <span className="max-w-[10rem] truncate">
-                          {item?.title?.trim() || (item ? "(bez tytułu)" : "Usunięty wpis")}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </>
+        <div className="relative">
+          {canAct && (onOpenActions || onReply || onToggleReaction) && (
+            <HoverToolbar
+              mine={mine}
+              msg={msg}
+              replyCount={replyCount}
+              inThread={inThread}
+              onReply={onReply}
+              onOpenThread={onOpenThread}
+              onOpenActions={onOpenActions}
+              onToggleReaction={onToggleReaction}
+            />
           )}
 
-          {/* Meta w jednej linii z treścią — oszczędza wysokość */}
-          <span className="ml-1.5 inline-flex translate-y-px items-center gap-1 whitespace-nowrap align-bottom text-[10px] leading-none text-ink-faint">
-            {msg.pinnedAt && !deleted && (
-              <Pin size={9} className="text-accent" aria-label="Wątek przypięty" />
-            )}
-            {msg.editedAt && !deleted && <span>(ed.)</span>}
-            <span>{formatMessageTime(msg.createdAt)}</span>
-            {pending && <Clock size={9} aria-label="Wysyłanie…" />}
-            {failed && (
-              <AlertTriangle size={9} className="text-red-400" aria-label="Nie wysłano" />
-            )}
-            {!inThread && replyCount > 0 && onOpenThread && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenThread(msg.id);
-                }}
-                className="inline-flex items-center gap-0.5 rounded text-accent transition hover:brightness-125"
-                aria-label={`Otwórz wątek (${replyCount})`}
-                title={`Wątek · ${replyCount}`}
-              >
-                <MessageSquare size={9} />
-                <span>{replyCount}</span>
-              </button>
-            )}
-          </span>
-        </div>
-
-        {/* Akcje obok bąbelka (hover), nie pod nim */}
-        {!deleted && !pending && !failed && onOpenActions && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenActions(msg, e.currentTarget.getBoundingClientRect());
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onOpenActions(msg, e.currentTarget.getBoundingClientRect());
-            }}
-            aria-label="Akcje wiadomości"
-            className={`absolute top-1/2 z-10 -translate-y-1/2 rounded-md border border-line bg-surface-overlay p-0.5 text-ink-faint opacity-0 shadow-sm transition hover:text-ink group-hover:opacity-100 ${
-              mine ? "-left-7" : "-right-7"
+          <div
+            onContextMenu={
+              canAct && onOpenActions
+                ? (e) => {
+                    e.preventDefault();
+                    onOpenActions(msg, new DOMRect(e.clientX, e.clientY, 0, 0));
+                  }
+                : undefined
+            }
+            className={`chat-msg-bubble relative box-border flow-root px-2.5 py-[7px] text-[14.5px] leading-[1.35] transition-colors ${
+              mine
+                ? threadUnread
+                  ? "rounded-2xl rounded-br-[5px] border-l-4 border-white/70 bg-accent text-white shadow-[0_0_0_1px_rgba(124,116,255,0.7),0_4px_16px_rgba(124,116,255,0.4)]"
+                  : hasThread
+                    ? "rounded-2xl rounded-br-[5px] border-l-4 border-[#c4bfff] bg-accent/65 text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
+                    : "rounded-2xl rounded-br-[5px] bg-accent/45 text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
+                : threadUnread
+                  ? "rounded-2xl rounded-bl-[5px] border-l-4 border-accent bg-accent/40 text-ink shadow-[0_0_0_1px_rgba(124,116,255,0.55),0_4px_16px_rgba(124,116,255,0.3)]"
+                  : hasThread
+                    ? "rounded-2xl rounded-bl-[5px] border-l-4 border-[#c4bfff] bg-accent/25 text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
+                    : mentioned
+                      ? "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)] ring-1 ring-inset ring-accent/45"
+                      : "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
+            } ${pending ? "opacity-60" : ""} ${failed ? "ring-1 ring-inset ring-red-500/50" : ""} ${
+              flash ? "ring-2 ring-accent ring-offset-1 ring-offset-surface" : ""
             }`}
           >
-            <MoreHorizontal size={12} />
-          </button>
-        )}
+            {deleted ? (
+              <span className="italic text-ink-faint">Wiadomość usunięta</span>
+            ) : (
+              <>
+                {quoted && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      quoted.msg && onJumpTo ? onJumpTo(quoted.msg.id) : undefined
+                    }
+                    className={`mb-1.5 flex w-full items-start gap-1.5 rounded-md border-l-[3px] border-accent px-2 py-1 text-left ${
+                      mine ? "bg-black/20" : "bg-black/25"
+                    }`}
+                  >
+                    <CornerUpLeft size={11} className="mt-0.5 shrink-0 text-accent" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-medium text-accent">
+                        {quoted.authorName}
+                      </span>
+                      <span className="line-clamp-2 text-[11px] text-ink-faint">
+                        {quoted.msg
+                          ? quoted.msg.deletedAt
+                            ? "Wiadomość usunięta"
+                            : quoted.msg.kind === "voice"
+                              ? "🎤 Wiadomość głosowa"
+                              : quoted.msg.kind === "gif"
+                                ? "GIF"
+                                : quoted.msg.body || "(załącznik)"
+                          : "…"}
+                      </span>
+                    </span>
+                  </button>
+                )}
+
+                {msg.kind === "poll" ? (
+                  <>
+                    <div className="font-medium">
+                      <MessageBody body={msg.body} mentionNames={mentionNames} />
+                    </div>
+                    <PollBlock msg={msg} myUserId={myUserId} onVote={onVote} />
+                  </>
+                ) : msg.kind === "gif" && msg.payload.gif ? (
+                  <img
+                    src={msg.payload.gif.url}
+                    alt="GIF"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    className="max-h-44 w-auto max-w-full rounded-xl"
+                  />
+                ) : msg.kind === "voice" ? (
+                  voiceAtt ? (
+                    <VoiceAttachment
+                      att={voiceAtt}
+                      durationSec={msg.payload.voice?.durationSec}
+                    />
+                  ) : (
+                    <span className="text-xs text-ink-faint">
+                      🎤 Wiadomość głosowa{pending ? " (wysyłanie…)" : ""}
+                    </span>
+                  )
+                ) : (
+                  msg.body && <MessageBody body={msg.body} mentionNames={mentionNames} />
+                )}
+
+                {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {msg.attachments!.map((att) => (
+                      <AttachmentTile key={att.id} att={att} />
+                    ))}
+                  </div>
+                )}
+
+                {msg.kind === "text" && <LinkPreviewCard msg={msg} />}
+
+                {(msg.links?.length ?? 0) > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {msg.links!.map((link) => {
+                      const item = items[link.itemId];
+                      const isTask = item ? item.type === "task" : true;
+                      return (
+                        <button
+                          key={link.itemId}
+                          type="button"
+                          onClick={() => setEditing(link.itemId)}
+                          className="flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[11px] text-ink transition hover:bg-accent/20"
+                        >
+                          {isTask ? <CheckSquare size={11} /> : <CalendarDays size={11} />}
+                          <span className="max-w-[10rem] truncate">
+                            {item?.title?.trim() || (item ? "(bez tytułu)" : "Usunięty wpis")}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {(showTime ||
+              (msg.pinnedAt && !deleted) ||
+              (msg.editedAt && !deleted) ||
+              pending ||
+              failed) && (
+              <span
+                className={`float-right ml-2 inline-flex translate-y-[0.4em] items-center gap-1 text-[11px] leading-none ${
+                  mine
+                    ? threadUnread
+                      ? "text-white/70"
+                      : "text-ink/55"
+                    : "text-ink-faint"
+                }`}
+              >
+                {msg.pinnedAt && !deleted && (
+                  <Pin size={10} className="text-accent" aria-label="Wątek przypięty" />
+                )}
+                {msg.editedAt && !deleted && <span className="opacity-80">edytowano</span>}
+                {showTime && (
+                  <span className="tabular-nums">{formatMessageTime(msg.createdAt)}</span>
+                )}
+                {pending && <Clock size={10} aria-label="Wysyłanie…" />}
+                {failed && (
+                  <AlertTriangle size={10} className="text-red-400" aria-label="Nie wysłano" />
+                )}
+              </span>
+            )}
+          </div>
+        </div>
 
         {!deleted && reactions.length > 0 && (
-          <div className={`mt-px flex flex-wrap gap-0.5 px-0.5 ${mine ? "justify-end" : ""}`}>
+          <div className={`mt-1 flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}>
             {reactions.map((r) => (
               <button
                 key={r.emoji}
                 type="button"
                 onClick={() => onToggleReaction?.(msg, r.emoji)}
-                className={`flex items-center gap-0.5 rounded-full border px-1 py-px text-[10px] transition ${
+                className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] transition ${
                   r.mine
-                    ? "border-accent/50 bg-accent/15 text-ink"
-                    : "border-line bg-surface-raised text-ink-light hover:border-line-strong"
+                    ? "bg-accent/20 text-ink ring-1 ring-inset ring-accent/40"
+                    : "bg-surface-raised text-ink-light ring-1 ring-inset ring-white/[0.06] hover:text-ink"
                 }`}
               >
                 <span>{r.emoji}</span>
-                {r.count > 1 && <span className="text-[9px]">{r.count}</span>}
+                {r.count > 1 && <span className="text-[10px] tabular-nums">{r.count}</span>}
               </button>
             ))}
           </div>
+        )}
+
+        {!inThread && replyCount > 0 && onOpenThread && (
+          <button
+            type="button"
+            onClick={() => onOpenThread(msg.id)}
+            className={`mt-1 inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-[11px] font-semibold transition ${
+              threadUnread
+                ? "bg-accent/20 text-accent hover:bg-accent/30"
+                : "text-accent/85 hover:bg-accent/10"
+            } ${mine ? "self-end" : "self-start"}`}
+          >
+            <MessageSquare
+              size={12}
+              className={threadUnread ? "fill-accent/40" : undefined}
+            />
+            {replyCount === 1 ? "1 odpowiedź" : `${replyCount} odpowiedzi`}
+            {threadUnread && (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-label="Nieodczytane" />
+            )}
+          </button>
         )}
 
         {failed && onRetry && (
           <button
             type="button"
             onClick={() => onRetry(msg.id)}
-            className="mt-px flex items-center gap-1 px-1 text-[10px] text-red-400 transition hover:text-red-300"
+            className="mt-1 flex items-center gap-1.5 px-1 text-[11px] text-red-400 transition hover:text-red-300"
           >
-            <RotateCw size={10} /> Nie wysłano — ponów
+            <RotateCw size={11} /> Nie wysłano — ponów
           </button>
         )}
       </div>

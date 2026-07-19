@@ -32,9 +32,13 @@ interface RegistryEntry {
   id: string;
   conversationId: string;
   messageId: string | null;
+  title?: string;
   body: string;
+  note?: string;
   createdBy: string;
   at: string;
+  groupId: string | null;
+  tagIds: string[];
 }
 
 interface RegistryViewProps {
@@ -44,6 +48,8 @@ interface RegistryViewProps {
   profiles: Record<string, ChatProfile>;
   onClose: () => void;
   onJumpTo: (messageId: string) => void;
+  /** Podświetl / przewiń do wpisu (klik z chipa systemowego). */
+  focusId?: string | null;
 }
 
 const COPY: Record<
@@ -78,6 +84,7 @@ export function RegistryView({
   profiles,
   onClose,
   onJumpTo,
+  focusId = null,
 }: RegistryViewProps) {
   const [entries, setEntries] = useState<RegistryEntry[] | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -94,16 +101,22 @@ export function RegistryView({
               conversationId: d.conversationId,
               messageId: d.messageId,
               body: d.body,
+              note: d.note,
               createdBy: d.createdBy,
               at: d.decidedAt,
+              groupId: d.groupId,
+              tagIds: d.tagIds,
             }))
           : (await fetchNotes(conversationId)).map((n) => ({
               id: n.id,
               conversationId: n.conversationId,
               messageId: n.messageId,
+              title: n.title,
               body: n.body,
               createdBy: n.createdBy,
               at: n.notedAt,
+              groupId: n.groupId,
+              tagIds: n.tagIds,
             }));
       if (!cancelled) setEntries(list);
     };
@@ -112,6 +125,12 @@ export function RegistryView({
       cancelled = true;
     };
   }, [conversationId, mode]);
+
+  useEffect(() => {
+    if (!focusId || !entries?.length) return;
+    const el = document.getElementById(`registry-entry-${focusId}`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [focusId, entries]);
 
   const remove = async (id: string) => {
     if (!confirm(copy.deleteConfirm)) return;
@@ -129,7 +148,7 @@ export function RegistryView({
     onClose();
     beginConvertToItem(
       {
-        body: entry.body,
+        body: [entry.title?.trim(), entry.body.trim()].filter(Boolean).join("\n"),
         conversationId: entry.conversationId,
         messageId: entry.messageId,
         authorName: profiles[entry.createdBy]?.displayName || "uczestnika rozmowy",
@@ -146,17 +165,23 @@ export function RegistryView({
             id: entry.id,
             conversationId: entry.conversationId,
             messageId: entry.messageId,
+            title: entry.title || "",
             body: entry.body,
             createdBy: entry.createdBy,
             notedAt: entry.at,
+            groupId: entry.groupId,
+            tagIds: entry.tagIds,
           })
         : await decisionToNote({
             id: entry.id,
             conversationId: entry.conversationId,
             messageId: entry.messageId,
             body: entry.body,
+            note: entry.note || "",
             createdBy: entry.createdBy,
             decidedAt: entry.at,
+            groupId: entry.groupId,
+            tagIds: entry.tagIds,
           });
     if (error) alert(error);
   };
@@ -200,10 +225,24 @@ export function RegistryView({
             {entries?.map((d) => (
               <div
                 key={d.id}
-                className="relative rounded-xl border border-line bg-surface-raised px-3 py-2"
+                id={`registry-entry-${d.id}`}
+                className={`relative rounded-xl border px-3 py-2 ${
+                  focusId === d.id
+                    ? "border-accent/50 bg-accent/10"
+                    : "border-line bg-surface-raised"
+                }`}
               >
                 <div className="whitespace-pre-wrap break-words text-sm text-ink">
-                  {d.body}
+                  {mode === "notes" && d.title ? (
+                    <>
+                      <div className="font-semibold">{d.title}</div>
+                      {d.body.trim() && d.body.trim() !== d.title.trim() && (
+                        <div className="mt-1 text-ink-light">{d.body}</div>
+                      )}
+                    </>
+                  ) : (
+                    d.body
+                  )}
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-[10px] text-ink-faint">
                   <span className="min-w-0 flex-1 truncate">

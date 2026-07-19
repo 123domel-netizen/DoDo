@@ -112,7 +112,8 @@ function defaultSettings(): Settings {
     anchorDate: startOfDay(new Date()).toISOString(),
     nineDayStartWeekday: 5,
     hourHeight: 52,
-    settingsVersion: 12,
+    hourHeightAuto: true,
+    settingsVersion: 13,
   };
 }
 
@@ -236,6 +237,11 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
       }
     }
     settings.settingsVersion = 12;
+  }
+  if ((settings.settingsVersion ?? 0) < 13) {
+    // Domyślnie siatka wypełnia panel kalendarza; ręczne hourHeight zostaje fallbackiem.
+    if (settings.hourHeightAuto === undefined) settings.hourHeightAuto = true;
+    settings.settingsVersion = 13;
   }
   return { settings, groups, items, activeGroupFilter, tags, myTagIdsByItem };
 }

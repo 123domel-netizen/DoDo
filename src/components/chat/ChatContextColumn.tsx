@@ -22,6 +22,7 @@ type Tab = "threads" | "decisions" | "notes";
 interface RegistryRow {
   id: string;
   kind: "decisions" | "notes";
+  title?: string;
   body: string;
   messageId: string | null;
   authorId: string;
@@ -95,6 +96,7 @@ export function ChatContextColumn({
         n.map((row) => ({
           id: row.id,
           kind: "notes" as const,
+          title: row.title,
           body: row.body,
           messageId: row.messageId,
           authorId: row.createdBy,
@@ -134,7 +136,7 @@ export function ChatContextColumn({
     if (!q) return notes;
     return notes.filter((row) => {
       const author = profiles[row.authorId]?.displayName || "";
-      return matchesQuery(`${row.body} ${author}`, q);
+      return matchesQuery(`${row.title ?? ""} ${row.body} ${author}`, q);
     });
   }, [notes, q, profiles]);
 
@@ -185,7 +187,18 @@ export function ChatContextColumn({
           {row.kind === "decisions" ? "Decyzja" : "Notatka"}
         </div>
       )}
-      <div className="line-clamp-3 text-[11px] leading-snug text-ink">{row.body}</div>
+      <div className="line-clamp-3 text-[11px] leading-snug text-ink">
+        {row.kind === "notes" && row.title ? (
+          <>
+            <span className="font-medium">{row.title}</span>
+            {row.body.trim() && row.body.trim() !== row.title.trim() ? (
+              <span className="text-ink-faint"> — {row.body}</span>
+            ) : null}
+          </>
+        ) : (
+          row.body
+        )}
+      </div>
       <div className="mt-0.5 truncate text-[9px] text-ink-faint">
         {profiles[row.authorId]?.displayName || "Nieznany"} · {formatMessageTime(row.at)}
       </div>

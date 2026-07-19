@@ -36,6 +36,8 @@ export interface ChatOverviewEntry {
   createdBy: string;
   lastMessageAt: string | null;
   createdAt: string;
+  /** Ścieżka w bucketcie chat-attachments (ikona kanału). */
+  iconUrl: string | null;
   myLastReadAt: string | null;
   myNotify: "all" | "mentions" | "none";
   myRole: "owner" | "admin" | "member";
@@ -98,6 +100,11 @@ export interface MessagePayload {
   gif?: { url: string; width?: number; height?: number };
   voice?: { durationSec: number };
   linkPreview?: LinkPreview;
+  /** System: zapisana decyzja/notatka — klik otwiera detal. */
+  registry?: {
+    kind: "decision" | "note";
+    id: string;
+  };
 }
 
 export type MessageSendState = "pending" | "failed";
@@ -120,6 +127,8 @@ export interface ChatMessage {
   pinnedBy: string | null;
   /** Nazwa wątku (tylko root; null = użyj treści wiadomości). */
   threadTitle: string | null;
+  /** Archiwum wątku — ukryty na głównej liście. */
+  threadArchivedAt: string | null;
   /** undefined = nieznane (np. event realtime bez zagnieżdżeń) — nie nadpisywać. */
   links?: ChatItemLink[];
   attachments?: ChatAttachment[];
@@ -149,6 +158,7 @@ export interface PublicChannelInfo {
   id: string;
   name: string;
   description: string | null;
+  iconUrl: string | null;
 }
 
 export interface MessageRevision {
@@ -164,17 +174,28 @@ export interface ChatDecision {
   conversationId: string;
   messageId: string | null;
   body: string;
+  /** Notatka do decyzji (wspólna dla członków rozmowy). */
+  note: string;
   createdBy: string;
   decidedAt: string;
+  /** Prywatna etykieta grupy bieżącego użytkownika. */
+  groupId: string | null;
+  /** Prywatne tagi bieżącego użytkownika. */
+  tagIds: string[];
 }
 
 export interface ChatNote {
   id: string;
   conversationId: string;
   messageId: string | null;
+  title: string;
   body: string;
   createdBy: string;
   notedAt: string;
+  /** Prywatna etykieta grupy bieżącego użytkownika. */
+  groupId: string | null;
+  /** Prywatne tagi bieżącego użytkownika. */
+  tagIds: string[];
 }
 
 /** Wpis listy wątków rozmowy (root + liczba odpowiedzi). */

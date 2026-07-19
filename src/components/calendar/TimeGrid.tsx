@@ -1,4 +1,6 @@
 import {
+  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -89,7 +91,10 @@ export function TimeGrid({
   onSlotTap,
 }: TimeGridProps) {
   const settings = useStore((s) => s.settings);
-  const { dayStartHour, dayEndHour, hourHeight } = settings;
+  const { dayStartHour, dayEndHour } = settings;
+  const hourHeightAuto = settings.hourHeightAuto !== false;
+  const [autoHourHeight, setAutoHourHeight] = useState(settings.hourHeight);
+  const hourHeight = hourHeightAuto ? autoHourHeight : settings.hourHeight;
   const patchItem = useStore((s) => s.patchItem);
   const setEditing = useStore((s) => s.setEditing);
   const startDraft = useStore((s) => s.startDraft);
@@ -100,6 +105,7 @@ export function TimeGrid({
   const clipboard = useStore((s) => s.clipboard);
 
   const gridRef = useRef<HTMLDivElement>(null);
+  const timedRegionRef = useRef<HTMLDivElement>(null);
   const [override, setOverrideState] = useState<Override | null>(null);
   const [draft, setDraftState] = useState<{
     dayIndex: number;
@@ -134,7 +140,29 @@ export function TimeGrid({
   } | null>(null);
 
   const columnLayout = useMemo(() => dayColumnLayout(days), [days]);
-  const gridHeight = (dayEndHour - dayStartHour) * hourHeight;
+  const hourSpan = Math.max(1, dayEndHour - dayStartHour);
+  const gridHeight = hourSpan * hourHeight;
+
+  // Auto: dopasuj px/h do wysokości panelu kalendarza (do hubu).
+  useLayoutEffect(() => {
+    if (!hourHeightAuto) return;
+    const el = timedRegionRef.current;
+    if (!el) return;
+    const apply = () => {
+      const h = el.clientHeight;
+      if (h < 40) return;
+      const next = Math.max(28, Math.min(140, Math.floor(h / hourSpan)));
+      setAutoHourHeight((prev) => (prev === next ? prev : next));
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hourHeightAuto, hourSpan, days.length]);
+
+  useEffect(() => {
+    if (!hourHeightAuto) setAutoHourHeight(settings.hourHeight);
+  }, [hourHeightAuto, settings.hourHeight]);
 
   // Split items into all-day/multi-day band vs per-day timed/before/after.
   const bandItems = useMemo(
@@ -428,7 +456,13 @@ export function TimeGrid({
       {/* All-day / multi-day band */}
       <AllDayBand days={days} items={bandItems} groups={groups} onOpen={(id) => setEditing(id)} />
 
-      <div className="flex-1 overflow-y-auto thin-scrollbar">
+      <div
+        className={
+          hourHeightAuto
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+            : "flex-1 overflow-y-auto thin-scrollbar"
+        }
+      >
         {/* Off-hours BEFORE band */}
         <OffHoursBand
           days={days}
@@ -441,7 +475,12 @@ export function TimeGrid({
         />
 
         {/* Timed grid */}
-        <div className="flex" style={{ height: gridHeight }}>
+        <div
+          ref={timedRegionRef}
+          className={hourHeightAuto ? "min-h-0 flex-1" : undefined}
+          style={hourHeightAuto ? undefined : { height: gridHeight }}
+        >
+          <div className="flex" style={{ height: gridHeight }}>
           <div className="relative shrink-0" style={{ width: GUTTER }}>
             {hours.map((h, i) => (
               <div
@@ -602,6 +641,7 @@ export function TimeGrid({
                 onOpen={(id) => setEditing(id)}
               />
             ))}
+          </div>
           </div>
         </div>
 

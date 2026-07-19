@@ -74,6 +74,7 @@ export function rowToMessage(row: Row, withNested: boolean): ChatMessage {
     pinnedAt: (row.pinned_at as string | null) ?? null,
     pinnedBy: (row.pinned_by as string | null) ?? null,
     threadTitle: (row.thread_title as string | null) ?? null,
+    threadArchivedAt: (row.thread_archived_at as string | null) ?? null,
   };
   if (withNested) {
     const links = (row.message_item_links as Row[] | null) ?? [];
@@ -104,6 +105,7 @@ function rowToOverviewEntry(row: Row): ChatOverviewEntry {
     createdBy: row.created_by as string,
     lastMessageAt: (row.last_message_at as string | null) ?? null,
     createdAt: row.created_at as string,
+    iconUrl: (row.icon_url as string | null) ?? null,
     myLastReadAt: (row.my_last_read_at as string | null) ?? null,
     myNotify: ((row.my_notify as string) ?? "all") as ChatOverviewEntry["myNotify"],
     myRole: ((row.my_role as string) ?? "member") as ChatOverviewEntry["myRole"],
@@ -142,6 +144,29 @@ export async function fetchOverview(): Promise<ChatOverviewEntry[]> {
     return [];
   }
   return ((data as Row[]) ?? []).map(rowToOverviewEntry);
+}
+
+/** Liczba wiadomości w rozmowach od `sinceIso` (do rankingu „Ulubione”). */
+export async function fetchMessageCountsSince(
+  sinceIso: string,
+): Promise<Record<string, number>> {
+  if (!supabase) return {};
+  const { data, error } = await supabase
+    .from("messages")
+    .select("conversation_id")
+    .gte("created_at", sinceIso)
+    .is("deleted_at", null)
+    .limit(5000);
+  if (error) {
+    console.warn("[chat] activity counts failed:", error.message);
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const row of (data as Row[]) ?? []) {
+    const id = row.conversation_id as string;
+    out[id] = (out[id] ?? 0) + 1;
+  }
+  return out;
 }
 
 export async function fetchProfiles(): Promise<Record<string, ChatProfile>> {
@@ -318,20 +343,36 @@ export async function fetchMessageById(id: string): Promise<ChatMessage | null> 
 /** Liczby odpowiedzi w wątkach dla widocznych rootów (jedno zapytanie). */
 export async function fetchReplyCounts(
   rootIds: string[],
-): Promise<Record<string, number>> {
+): Promise<
+  Record<string, { count: number; lastAt: string; lastAuthorUserId: string }>
+> {
   if (!supabase || !rootIds.length) return {};
   const { data, error } = await supabase
     .from("messages")
-    .select("thread_root_id")
+    .select("thread_root_id, created_at, author_user_id")
     .in("thread_root_id", rootIds)
     .is("deleted_at", null);
   if (error) return {};
-  const counts: Record<string, number> = {};
+  const peeks: Record<
+    string,
+    { count: number; lastAt: string; lastAuthorUserId: string }
+  > = {};
   for (const row of (data as Row[]) ?? []) {
     const id = row.thread_root_id as string;
-    counts[id] = (counts[id] ?? 0) + 1;
+    const at = row.created_at as string;
+    const author = row.author_user_id as string;
+    const prev = peeks[id];
+    if (!prev) {
+      peeks[id] = { count: 1, lastAt: at, lastAuthorUserId: author };
+      continue;
+    }
+    prev.count += 1;
+    if (at > prev.lastAt) {
+      prev.lastAt = at;
+      prev.lastAuthorUserId = author;
+    }
   }
-  return counts;
+  return peeks;
 }
 
 /** Insert idempotentny — duplikat id (retry outboxa) traktujemy jak sukces. */
@@ -413,6 +454,20 @@ export async function removeReaction(r: ChatReaction): Promise<{ error?: string 
   return error ? { error: error.message } : {};
 }
 
+/** Usuń wszystkie reakcje użytkownika na wiadomości (1 reakcja / user). */
+export async function removeMyReactionsOnMessage(
+  messageId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase
+    .from("message_reactions")
+    .delete()
+    .eq("message_id", messageId)
+    .eq("user_id", userId);
+  return error ? { error: error.message } : {};
+}
+
 export async function upsertPollVote(v: PollVote): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { error } = await supabase
@@ -458,14 +513,24 @@ export async function fetchRevisions(messageId: string): Promise<MessageRevision
   }));
 }
 
-function rowToDecision(r: Row): ChatDecision {
+export type RegistryKind = "decision" | "note";
+
+export interface RegistryLabels {
+  groupId: string | null;
+  tagIds: string[];
+}
+
+function rowToDecision(r: Row, labels?: RegistryLabels): ChatDecision {
   return {
     id: r.id as string,
     conversationId: r.conversation_id as string,
     messageId: (r.message_id as string | null) ?? null,
     body: (r.body as string) ?? "",
+    note: ((r.note as string | null) ?? "").toString(),
     createdBy: r.created_by as string,
     decidedAt: r.decided_at as string,
+    groupId: labels?.groupId ?? null,
+    tagIds: labels?.tagIds ?? [],
   };
 }
 
@@ -477,7 +542,12 @@ export async function fetchDecisions(conversationId: string): Promise<ChatDecisi
     .eq("conversation_id", conversationId)
     .order("decided_at", { ascending: false });
   if (error) return [];
-  return ((data as Row[]) ?? []).map(rowToDecision);
+  const rows = (data as Row[]) ?? [];
+  const labels = await fetchRegistryLabels(
+    "decision",
+    rows.map((r) => r.id as string),
+  );
+  return rows.map((r) => rowToDecision(r, labels[r.id as string]));
 }
 
 /** Decyzje ze wskazanych rozmów (hub — lista globalna w ramach membership). */
@@ -492,44 +562,98 @@ export async function fetchDecisionsForConversations(
     .order("decided_at", { ascending: false })
     .limit(100);
   if (error) return [];
-  return ((data as Row[]) ?? []).map(rowToDecision);
+  const rows = (data as Row[]) ?? [];
+  const labels = await fetchRegistryLabels(
+    "decision",
+    rows.map((r) => r.id as string),
+  );
+  return rows.map((r) => rowToDecision(r, labels[r.id as string]));
 }
 
 export async function addDecision(input: {
   conversationId: string;
   messageId: string | null;
   body: string;
+  note?: string;
   createdBy: string;
 }): Promise<{ decision?: ChatDecision; error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
+  const body = input.body.trim();
+  if (!body) return { error: "Pusta treść nie może być decyzją." };
+
+  const tryInsert = async (withNote: boolean) =>
+    supabase!
+      .from("decisions")
+      .insert(
+        withNote
+          ? {
+              conversation_id: input.conversationId,
+              message_id: input.messageId,
+              body,
+              note: input.note ?? "",
+              created_by: input.createdBy,
+            }
+          : {
+              conversation_id: input.conversationId,
+              message_id: input.messageId,
+              body,
+              created_by: input.createdBy,
+            },
+      )
+      .select()
+      .single();
+
+  let { data, error } = await tryInsert(true);
+  if (error && /note|schema cache|column/i.test(error.message)) {
+    ({ data, error } = await tryInsert(false));
+  }
+  if (error) {
+    console.warn("[chat] addDecision failed:", error.message);
+    return { error: error.message };
+  }
+  return { decision: rowToDecision(data as Row, { groupId: null, tagIds: [] }) };
+}
+
+export async function updateDecision(
+  id: string,
+  patch: { body?: string; note?: string },
+): Promise<{ decision?: ChatDecision; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const updates: Record<string, string> = {};
+  if (patch.body !== undefined) updates.body = patch.body;
+  if (patch.note !== undefined) updates.note = patch.note;
+  if (!Object.keys(updates).length) return { error: "Brak zmian." };
   const { data, error } = await supabase
     .from("decisions")
-    .insert({
-      conversation_id: input.conversationId,
-      message_id: input.messageId,
-      body: input.body,
-      created_by: input.createdBy,
-    })
+    .update(updates)
+    .eq("id", id)
     .select()
     .single();
   if (error) return { error: error.message };
-  return { decision: rowToDecision(data as Row) };
+  const labels = await fetchRegistryLabels("decision", [id]);
+  return { decision: rowToDecision(data as Row, labels[id]) };
 }
 
 export async function deleteDecision(id: string): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { error } = await supabase.from("decisions").delete().eq("id", id);
+  if (!error) await deleteRegistryLabels("decision", id);
   return error ? { error: error.message } : {};
 }
 
-function rowToNote(r: Row): ChatNote {
+function rowToNote(r: Row, labels?: RegistryLabels): ChatNote {
+  const body = (r.body as string) ?? "";
+  const titleRaw = ((r.title as string | null) ?? "").trim();
   return {
     id: r.id as string,
     conversationId: r.conversation_id as string,
     messageId: (r.message_id as string | null) ?? null,
-    body: (r.body as string) ?? "",
+    title: titleRaw || body.trim().split(/\n/)[0]?.trim().slice(0, 120) || "Notatka",
+    body,
     createdBy: r.created_by as string,
     notedAt: r.noted_at as string,
+    groupId: labels?.groupId ?? null,
+    tagIds: labels?.tagIds ?? [],
   };
 }
 
@@ -541,7 +665,12 @@ export async function fetchNotes(conversationId: string): Promise<ChatNote[]> {
     .eq("conversation_id", conversationId)
     .order("noted_at", { ascending: false });
   if (error) return [];
-  return ((data as Row[]) ?? []).map(rowToNote);
+  const rows = (data as Row[]) ?? [];
+  const labels = await fetchRegistryLabels(
+    "note",
+    rows.map((r) => r.id as string),
+  );
+  return rows.map((r) => rowToNote(r, labels[r.id as string]));
 }
 
 /** Notatki ze wskazanych rozmów (hub — lista globalna w ramach membership). */
@@ -556,34 +685,172 @@ export async function fetchNotesForConversations(
     .order("noted_at", { ascending: false })
     .limit(100);
   if (error) return [];
-  return ((data as Row[]) ?? []).map(rowToNote);
+  const rows = (data as Row[]) ?? [];
+  const labels = await fetchRegistryLabels(
+    "note",
+    rows.map((r) => r.id as string),
+  );
+  return rows.map((r) => rowToNote(r, labels[r.id as string]));
+}
+
+/** Tytuł notatki z pierwszej linii treści (zapis z wiadomości). */
+export function deriveNoteTitle(body: string): string {
+  return body.trim().split(/\n/)[0]?.trim().slice(0, 120) || "Notatka";
 }
 
 export async function addNote(input: {
   conversationId: string;
   messageId: string | null;
+  title?: string;
   body: string;
   createdBy: string;
 }): Promise<{ note?: ChatNote; error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
+  const body = input.body.trim();
+  if (!body) return { error: "Pusta treść nie może być notatką." };
+  const title = (input.title?.trim() || deriveNoteTitle(body)).slice(0, 120);
+
+  const tryInsert = async (withTitle: boolean) =>
+    supabase!
+      .from("notes")
+      .insert(
+        withTitle
+          ? {
+              conversation_id: input.conversationId,
+              message_id: input.messageId,
+              title,
+              body,
+              created_by: input.createdBy,
+            }
+          : {
+              conversation_id: input.conversationId,
+              message_id: input.messageId,
+              body,
+              created_by: input.createdBy,
+            },
+      )
+      .select()
+      .single();
+
+  let { data, error } = await tryInsert(true);
+  // Stara baza bez kolumny title (przed 0022) — zapis bez tytułu.
+  if (
+    error &&
+    /title|schema cache|column/i.test(error.message)
+  ) {
+    ({ data, error } = await tryInsert(false));
+  }
+  if (error) {
+    console.warn("[chat] addNote failed:", error.message);
+    return { error: error.message };
+  }
+  return { note: rowToNote(data as Row, { groupId: null, tagIds: [] }) };
+}
+
+export async function updateNote(
+  id: string,
+  patch: { title?: string; body?: string },
+): Promise<{ note?: ChatNote; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const updates: Record<string, string> = {};
+  if (patch.title !== undefined) updates.title = patch.title.trim().slice(0, 120);
+  if (patch.body !== undefined) updates.body = patch.body;
+  if (!Object.keys(updates).length) return { error: "Brak zmian." };
   const { data, error } = await supabase
     .from("notes")
-    .insert({
-      conversation_id: input.conversationId,
-      message_id: input.messageId,
-      body: input.body,
-      created_by: input.createdBy,
-    })
+    .update(updates)
+    .eq("id", id)
     .select()
     .single();
   if (error) return { error: error.message };
-  return { note: rowToNote(data as Row) };
+  const labels = await fetchRegistryLabels("note", [id]);
+  return { note: rowToNote(data as Row, labels[id]) };
 }
 
 export async function deleteNote(id: string): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { error } = await supabase.from("notes").delete().eq("id", id);
+  if (!error) await deleteRegistryLabels("note", id);
   return error ? { error: error.message } : {};
+}
+
+// ---------------------------------------------------------------------------
+// Prywatne etykiety (grupa + tagi) decyzji / notatek
+// ---------------------------------------------------------------------------
+
+export async function fetchRegistryLabels(
+  kind: RegistryKind,
+  entityIds: string[],
+): Promise<Record<string, RegistryLabels>> {
+  if (!supabase || entityIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from("user_registry_labels")
+    .select("entity_id, group_id, tag_ids")
+    .eq("kind", kind)
+    .in("entity_id", entityIds);
+  if (error) {
+    // Tabela może jeszcze nie istnieć przed migracją 0026.
+    if (!/schema cache|does not exist|relation/i.test(error.message)) {
+      console.warn("[chat] fetchRegistryLabels:", error.message);
+    }
+    return {};
+  }
+  const out: Record<string, RegistryLabels> = {};
+  for (const row of (data as Row[]) ?? []) {
+    const id = row.entity_id as string;
+    out[id] = {
+      groupId: (row.group_id as string | null) ?? null,
+      tagIds: Array.isArray(row.tag_ids) ? (row.tag_ids as string[]) : [],
+    };
+  }
+  return out;
+}
+
+export async function upsertRegistryLabels(
+  kind: RegistryKind,
+  entityId: string,
+  patch: { groupId?: string | null; tagIds?: string[] },
+): Promise<{ labels?: RegistryLabels; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Brak zalogowanego użytkownika." };
+
+  const existing = (await fetchRegistryLabels(kind, [entityId]))[entityId];
+  const next: RegistryLabels = {
+    groupId: patch.groupId !== undefined ? patch.groupId : (existing?.groupId ?? null),
+    tagIds: patch.tagIds !== undefined ? patch.tagIds : (existing?.tagIds ?? []),
+  };
+
+  const { error } = await supabase.from("user_registry_labels").upsert(
+    {
+      user_id: user.id,
+      kind,
+      entity_id: entityId,
+      group_id: next.groupId,
+      tag_ids: next.tagIds,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,kind,entity_id" },
+  );
+  if (error) {
+    console.warn("[chat] upsertRegistryLabels:", error.message);
+    return { error: error.message };
+  }
+  return { labels: next };
+}
+
+async function deleteRegistryLabels(
+  kind: RegistryKind,
+  entityId: string,
+): Promise<void> {
+  if (!supabase) return;
+  await supabase
+    .from("user_registry_labels")
+    .delete()
+    .eq("kind", kind)
+    .eq("entity_id", entityId);
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +881,33 @@ export async function setThreadTitle(
   return error ? { error: error.message } : {};
 }
 
+export async function setThreadArchived(
+  messageId: string,
+  archived: boolean,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("set_thread_archived", {
+    p_message_id: messageId,
+    p_archived: archived,
+  });
+  return error ? { error: error.message } : {};
+}
+
+/** Usuń pusty wątek z listy (bez odpowiedzi): czyści nazwę, pin i archiwum. */
+export async function dissolveEmptyThread(
+  messageId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("dissolve_empty_thread", {
+    p_message_id: messageId,
+  });
+  if (!error) return {};
+  if (/has replies|archive instead/i.test(error.message)) {
+    return { error: "Wątek ma odpowiedzi — zarchiwizuj go zamiast usuwać." };
+  }
+  return { error: error.message };
+}
+
 /** Przypięte wątki rozmowy (najnowsze przypięcia pierwsze). */
 export async function fetchPinnedMessages(
   conversationId: string,
@@ -624,6 +918,7 @@ export async function fetchPinnedMessages(
     .select(MESSAGE_SELECT)
     .eq("conversation_id", conversationId)
     .not("pinned_at", "is", null)
+    .is("thread_archived_at", null)
     .is("deleted_at", null)
     .order("pinned_at", { ascending: false })
     .limit(100);
@@ -631,34 +926,75 @@ export async function fetchPinnedMessages(
   return ((data as unknown as Row[]) ?? []).map((r) => rowToMessage(r, true));
 }
 
-/** Wątki rozmowy: rooty z ≥1 odpowiedzią + liczby odpowiedzi (2 zapytania). */
+/** Wątki rozmowy: rooty z odpowiedziami + nazwane / przypięte (nawet bez odpowiedzi). */
 export async function fetchThreadsList(
   conversationId: string,
 ): Promise<ThreadListEntry[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("messages")
-    .select("thread_root_id")
-    .eq("conversation_id", conversationId)
-    .not("thread_root_id", "is", null)
-    .is("deleted_at", null);
-  if (error) return [];
+
+  const [{ data: replyRows, error: replyErr }, { data: namedRows, error: namedErr }] =
+    await Promise.all([
+      supabase
+        .from("messages")
+        .select("thread_root_id")
+        .eq("conversation_id", conversationId)
+        .not("thread_root_id", "is", null)
+        .is("deleted_at", null),
+      supabase
+        .from("messages")
+        .select(MESSAGE_SELECT)
+        .eq("conversation_id", conversationId)
+        .is("thread_root_id", null)
+        .is("deleted_at", null)
+        .or("pinned_at.not.is.null,thread_title.not.is.null,thread_archived_at.not.is.null"),
+    ]);
+
+  if (replyErr && namedErr) return [];
+
   const counts = new Map<string, number>();
-  for (const row of (data as Row[]) ?? []) {
+  for (const row of (replyRows as Row[] | null) ?? []) {
     const id = row.thread_root_id as string;
     counts.set(id, (counts.get(id) ?? 0) + 1);
   }
-  if (!counts.size) return [];
-  const { data: rootRows, error: rootErr } = await supabase
-    .from("messages")
-    .select(MESSAGE_SELECT)
-    .in("id", [...counts.keys()])
-    .order("created_at", { ascending: false });
-  if (rootErr) return [];
-  return ((rootRows as unknown as Row[]) ?? []).map((r) => {
-    const root = rowToMessage(r, true);
-    return { root, replyCount: counts.get(root.id) ?? 0 };
+
+  const byId = new Map<string, ChatMessage>();
+  for (const r of (namedRows as unknown as Row[] | null) ?? []) {
+    const msg = rowToMessage(r, true);
+    if (msg.pinnedAt || msg.threadTitle?.trim() || msg.threadArchivedAt) {
+      byId.set(msg.id, msg);
+    }
+  }
+
+  const missingIds = [...counts.keys()].filter((id) => !byId.has(id));
+  if (missingIds.length) {
+    const { data: rootRows, error: rootErr } = await supabase
+      .from("messages")
+      .select(MESSAGE_SELECT)
+      .in("id", missingIds);
+    if (!rootErr) {
+      for (const r of (rootRows as unknown as Row[]) ?? []) {
+        const msg = rowToMessage(r, true);
+        byId.set(msg.id, msg);
+      }
+    }
+  }
+
+  const list: ThreadListEntry[] = [...byId.values()].map((root) => ({
+    root,
+    replyCount: counts.get(root.id) ?? 0,
+  }));
+
+  list.sort((a, b) => {
+    const aa = a.root.threadArchivedAt ? 1 : 0;
+    const ba = b.root.threadArchivedAt ? 1 : 0;
+    if (aa !== ba) return aa - ba; // aktywne najpierw
+    const ap = a.root.pinnedAt ? 1 : 0;
+    const bp = b.root.pinnedAt ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    return (b.root.createdAt || "").localeCompare(a.root.createdAt || "");
   });
+
+  return list;
 }
 
 /** Wątki ze wskazanych rozmów (hub). */
@@ -692,15 +1028,17 @@ export async function fetchThreadsForConversations(
     .order("created_at", { ascending: false })
     .limit(80);
   if (rootErr) return [];
-  return ((rootRows as unknown as Row[]) ?? []).map((r) => {
-    const root = rowToMessage(r, true);
-    const meta = counts.get(root.id);
-    return {
-      root,
-      replyCount: meta?.count ?? 0,
-      conversationId: meta?.conversationId ?? root.conversationId,
-    };
-  });
+  return ((rootRows as unknown as Row[]) ?? [])
+    .map((r) => {
+      const root = rowToMessage(r, true);
+      const meta = counts.get(root.id);
+      return {
+        root,
+        replyCount: meta?.count ?? 0,
+        conversationId: meta?.conversationId ?? root.conversationId,
+      };
+    })
+    .filter((t) => !t.root.threadArchivedAt);
 }
 
 /** Przypięte wątki ze wskazanych rozmów (hub). */
@@ -714,6 +1052,7 @@ export async function fetchPinnedMessagesForConversations(
     .select(MESSAGE_SELECT)
     .in("conversation_id", ids)
     .not("pinned_at", "is", null)
+    .is("thread_archived_at", null)
     .is("deleted_at", null)
     .order("pinned_at", { ascending: false })
     .limit(50);
@@ -845,7 +1184,7 @@ export async function fetchPublicChannels(): Promise<PublicChannelInfo[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("conversations")
-    .select("id, name, description")
+    .select("id, name, description, icon_url")
     .eq("kind", "channel")
     .eq("is_public", true)
     .is("archived_at", null);
@@ -854,7 +1193,71 @@ export async function fetchPublicChannels(): Promise<PublicChannelInfo[]> {
     id: r.id as string,
     name: (r.name as string) ?? "Kanał",
     description: (r.description as string | null) ?? null,
+    iconUrl: (r.icon_url as string | null) ?? null,
   }));
+}
+
+export async function inviteToConversation(
+  conversationId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("invite_to_conversation", {
+    p_conversation_id: conversationId,
+    p_user_id: userId,
+  });
+  return error ? { error: friendlyAdminError(error.message) } : {};
+}
+
+export async function removeFromConversation(
+  conversationId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("remove_from_conversation", {
+    p_conversation_id: conversationId,
+    p_user_id: userId,
+  });
+  return error ? { error: friendlyAdminError(error.message) } : {};
+}
+
+export async function setMemberRole(
+  conversationId: string,
+  userId: string,
+  role: "admin" | "member",
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("set_member_role", {
+    p_conversation_id: conversationId,
+    p_user_id: userId,
+    p_role: role,
+  });
+  return error ? { error: friendlyAdminError(error.message) } : {};
+}
+
+export async function updateConversationIcon(
+  conversationId: string,
+  iconUrl: string | null,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase
+    .from("conversations")
+    .update({ icon_url: iconUrl })
+    .eq("id", conversationId);
+  return error ? { error: error.message } : {};
+}
+
+function friendlyAdminError(message: string): string {
+  if (message.includes("last admin") || message.includes("at least one admin")) {
+    return "Kanał musi mieć przynajmniej jednego administratora.";
+  }
+  if (message.includes("cannot leave as the last admin")) {
+    return "Nie możesz opuścić kanału jako ostatni administrator — najpierw nadaj uprawnienia komuś innemu.";
+  }
+  if (message.includes("not an admin")) {
+    return "Tylko administrator kanału może to zrobić.";
+  }
+  return message;
 }
 
 export async function joinChannel(conversationId: string): Promise<{ error?: string }> {
@@ -872,7 +1275,7 @@ export async function leaveConversation(
   const { error } = await supabase.rpc("leave_conversation", {
     p_conversation_id: conversationId,
   });
-  return error ? { error: error.message } : {};
+  return error ? { error: friendlyAdminError(error.message) } : {};
 }
 
 export async function markConversationRead(

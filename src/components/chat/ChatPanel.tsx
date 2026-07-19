@@ -5,9 +5,7 @@ import {
   CalendarDays,
   CheckSquare,
   FileText,
-  Hash,
   MessageSquare,
-  Pin,
   Plus,
   Search,
   User,
@@ -34,97 +32,14 @@ import type {
   ChatSearchResult,
   PublicChannelInfo,
 } from "@/lib/chat/types";
-import { messagePreviewLabel } from "@/lib/chat/types";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { ChatContextColumn } from "@/components/chat/ChatContextColumn";
+import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
+import { MobileChatHub } from "@/components/chat/MobileChatHub";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
 
 const FREQUENT_LIMIT = 8;
-
-function ConversationRow({
-  entry,
-  title,
-  authorName,
-  online,
-  onOpen,
-}: {
-  entry: ChatOverviewEntry;
-  title: string;
-  authorName: string | null;
-  online: boolean;
-  onOpen: () => void;
-}) {
-  const last = entry.lastMessage;
-  const preview = last
-    ? last.deletedAt
-      ? "Wiadomość usunięta"
-      : last.kind === "system"
-        ? last.body
-        : `${authorName ? `${authorName}: ` : ""}${
-            messagePreviewLabel(last.kind, last.body) || "(załącznik)"
-          }`
-    : "Brak wiadomości";
-  const muted = isMuted(entry);
-  const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex w-full items-center gap-2.5 border-b border-line/50 px-3 py-2.5 text-left transition hover:bg-surface-raised"
-    >
-      <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface-raised text-ink-faint">
-        {entry.kind === "channel" ? (
-          <Hash size={15} />
-        ) : entry.kind === "item" ? (
-          <MessageSquare size={15} />
-        ) : entry.members.length > 2 ? (
-          <Users size={15} />
-        ) : (
-          <User size={15} />
-        )}
-        {online && (
-          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-green-500" />
-        )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline justify-between gap-2">
-          <span
-            className={`flex min-w-0 items-center gap-1 truncate text-sm ${
-              showUnread ? "font-semibold text-ink" : "font-medium text-ink"
-            }`}
-          >
-            {entry.myPinnedAt && <Pin size={11} className="shrink-0 text-accent" />}
-            <span className="truncate">{title}</span>
-            {muted && <BellOff size={11} className="shrink-0 text-ink-faint" />}
-          </span>
-          {entry.lastMessageAt && (
-            <span className="shrink-0 text-[10px] text-ink-faint">
-              {formatMessageTime(entry.lastMessageAt)}
-            </span>
-          )}
-        </span>
-        <span className="mt-0.5 flex items-center justify-between gap-2">
-          <span
-            className={`min-w-0 flex-1 truncate text-xs ${
-              showUnread ? "text-ink-light" : "text-ink-faint"
-            }`}
-          >
-            {preview}
-          </span>
-          {entry.unreadCount > 0 ? (
-            <span className="flex h-4 min-w-[1rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-white">
-              {entry.unreadCount > 99 ? "99+" : entry.unreadCount}
-            </span>
-          ) : entry.myMarkedUnread ? (
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent" />
-          ) : null}
-        </span>
-      </span>
-    </button>
-  );
-}
 
 function NavRow({
   entry,
@@ -152,9 +67,9 @@ function NavRow({
         active ? "bg-accent/15 text-ink" : "hover:bg-surface-raised"
       }`}
     >
-      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center text-ink-faint">
+      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full text-ink-faint">
         {entry.kind === "channel" ? (
-          <Hash size={12} />
+          <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 20 : 12} />
         ) : entry.kind === "item" ? (
           <MessageSquare size={12} />
         ) : entry.members.length > 2 ? (
@@ -362,13 +277,23 @@ export function ChatPanel() {
 
   if (isMobile && activeId) {
     return (
-      <ConversationView
-        conversationId={activeId}
-        onBack={() => {
-          setActiveConversation(null);
-          setRouteHash({ view: "chat" });
-        }}
-      />
+      <div className="h-full min-h-0">
+        <ConversationView
+          conversationId={activeId}
+          onBack={() => {
+            setActiveConversation(null);
+            setRouteHash({ view: "chat" });
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (isMobile) {
+    return (
+      <div className="h-full min-h-0">
+        <MobileChatHub />
+      </div>
     );
   }
 
@@ -418,27 +343,6 @@ export function ChatPanel() {
   const titleOf = (entry: ChatOverviewEntry) =>
     overviewTitle(entry, myUserId, (id) => items[id]?.title);
 
-  const renderMobileRow = (entry: ChatOverviewEntry) => {
-    const last = entry.lastMessage;
-    const authorName =
-      last && last.kind !== "system"
-        ? last.authorUserId === myUserId
-          ? "Ty"
-          : (entry.members.find((m) => m.userId === last.authorUserId)?.displayName ??
-            null)
-        : null;
-    return (
-      <ConversationRow
-        key={entry.id}
-        entry={entry}
-        title={titleOf(entry)}
-        authorName={authorName}
-        online={dmOnline(entry)}
-        onOpen={() => openRow(entry)}
-      />
-    );
-  };
-
   const renderNavSection = (label: string, entries: ChatOverviewEntry[]) =>
     entries.length > 0 && (
       <>
@@ -471,7 +375,9 @@ export function ChatPanel() {
           <SectionLabel>Kanały publiczne</SectionLabel>
           {discoverable.map((c) => (
             <div key={c.id} className="flex items-center gap-1 px-1.5 py-1">
-              <Hash size={11} className="shrink-0 text-ink-faint" />
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-full text-ink-faint">
+                <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 16 : 11} />
+              </span>
               <span className="min-w-0 flex-1 truncate text-[12px] text-ink-light">
                 {c.name}
               </span>
@@ -554,70 +460,10 @@ export function ChatPanel() {
       <SearchResults results={results} onClose={() => setResults(null)} />
     )
   ) : (
-    <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-1 pb-2">
-      {isMobile ? (
-        <>
-          {overview.length === 0 && (
-            <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-              Nie masz jeszcze rozmów.
-            </div>
-          )}
-          {pinned.length > 0 && (
-            <>
-              <div className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                Ulubione
-              </div>
-              {pinned.map(renderMobileRow)}
-              {unpinned.length > 0 && (
-                <div className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                  Rozmowy
-                </div>
-              )}
-            </>
-          )}
-          {unpinned.map(renderMobileRow)}
-          {discoverable.length > 0 && (
-            <>
-              <div className="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                Kanały publiczne
-              </div>
-              {discoverable.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-dashed border-line text-ink-faint">
-                    <Hash size={15} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleJoin(c.id)}
-                    className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
-                  >
-                    Dołącz
-                  </button>
-                </div>
-              ))}
-            </>
-          )}
-        </>
-      ) : (
-        navList
-      )}
-    </div>
+    <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-1 pb-2">{navList}</div>
   );
 
-  if (isMobile) {
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        {toolbar}
-        {navBody}
-        <NewConversationDialog open={showNew} onClose={() => setShowNew(false)} />
-      </div>
-    );
-  }
-
+  // Desktop 3-kolumnowy (mobile idzie przez MobileChatHub / ConversationView wyżej).
   return (
     <div className="flex h-full min-h-0">
       <aside className="flex min-h-0 w-[25%] min-w-[9rem] max-w-[14rem] flex-col border-r border-line bg-surface">
