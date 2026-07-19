@@ -47,6 +47,8 @@ export interface TeamMember {
   displayName: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Wyciszony w pickerze uczestników (kontakt z orga). */
+  muted?: boolean;
 }
 
 export interface Attachment {

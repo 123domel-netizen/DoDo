@@ -574,7 +574,7 @@ export function ItemEditorPanel() {
               }}
               onParticipantsChange={(participants) => patchItem(it.id, { participants })}
             />
-          ) : teamMembers.length === 0 ? (
+          ) : teamMembers.filter((m) => !m.muted).length === 0 ? (
             <ParticipantsReadOnly participants={it.participants} />
           ) : (
             <TeamParticipantsEditor
@@ -1014,7 +1014,7 @@ function TeamParticipantsEditor({
   onChange: (p: Participant[]) => void;
 }) {
   const selectedIds = new Set(participants.map((p) => p.teamMemberId).filter(Boolean));
-  const available = teamMembers.filter((m) => !selectedIds.has(m.id));
+  const available = teamMembers.filter((m) => !m.muted && !selectedIds.has(m.id));
 
   const addMember = (memberId: string) => {
     const m = teamMembers.find((x) => x.id === memberId);
@@ -1074,9 +1074,11 @@ function TeamParticipantsEditor({
         </select>
       ) : (
         <p className="text-xs text-ink-faint">
-          {teamMembers.length === 0
-            ? "Dodaj osoby w ustawieniach → Kontakty."
-            : "Wszyscy członkowie zespołu są już dodani."}
+          {teamMembers.filter((m) => !m.muted).length === 0
+            ? teamMembers.length > 0
+              ? "Wszystkie kontakty są wyciszone. Przywróć je w Ustawienia → Kontakty."
+              : "Brak osób w zespole. Zaproś kogoś w Ustawienia → Zespół."
+            : "Wszyscy dostępni członkowie są już dodani."}
         </p>
       )}
     </div>

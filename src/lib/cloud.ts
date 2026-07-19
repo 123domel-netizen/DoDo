@@ -18,8 +18,8 @@ import {
 import type { Group, Item, UserTag } from "@/types";
 import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store";
 import { cloudEnabled, supabase } from "@/lib/supabase";
-import { fetchTeamMembers } from "@/lib/team";
 import { bootstrapOrgs } from "@/lib/orgs";
+import { loadAssignableContacts } from "@/lib/contacts";
 import {
   clearDirtyItems,
   clearDirtyParticipants,
@@ -748,10 +748,14 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
     await pullGroups();
     await pullAll(true);
 
-    const team = await fetchTeamMembers();
-    useStore.getState().setTeamMembers(team);
     const orgs = await bootstrapOrgs();
     useStore.getState().setOrgBootstrap(orgs);
+    const st = useStore.getState();
+    const contacts = await loadAssignableContacts({
+      orgId: st.activeOrgId ?? st.myOrgs[0]?.id ?? null,
+      ownerUserId: st.authUserId,
+    });
+    st.setTeamMembers(contacts);
 
     lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
     lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
@@ -811,12 +815,17 @@ export async function handleAuthUserChange(nextUserId: string | null) {
   if (isUserSwitch) resetLocalUserState();
 
   try {
-    const team = await fetchTeamMembers();
-    useStore.getState().setTeamMembers(team);
-
-    // Accept pending org invites before loading membership list.
+    // Accept pending org invites before loading membership / contacts.
     const orgs = await bootstrapOrgs();
     useStore.getState().setOrgBootstrap(orgs);
+    {
+      const st = useStore.getState();
+      const contacts = await loadAssignableContacts({
+        orgId: st.activeOrgId ?? st.myOrgs[0]?.id ?? null,
+        ownerUserId: st.authUserId,
+      });
+      st.setTeamMembers(contacts);
+    }
 
     // Grupy najpierw — items.group_id ma klucz obcy do groups(id).
     await pullUserTags();

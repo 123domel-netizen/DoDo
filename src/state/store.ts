@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { Group, Item, Settings, TeamMember, UserTag } from "@/types";
 import type { MyOrg } from "@/lib/orgs";
+import { loadAssignableContacts } from "@/lib/contacts";
 import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
@@ -552,7 +553,13 @@ export const useStore = create<AppState>()(
                 : s.orgInviteNotice,
           };
         }),
-      setActiveOrgId: (id) => set({ activeOrgId: id }),
+      setActiveOrgId: (id) => {
+        set({ activeOrgId: id });
+        const ownerUserId = get().authUserId;
+        void loadAssignableContacts({ orgId: id, ownerUserId }).then((list) => {
+          set({ teamMembers: list });
+        });
+      },
       setMyOrgs: (orgs) =>
         set((s) => ({
           myOrgs: orgs,
