@@ -29,16 +29,6 @@ create table if not exists public.app_admins (
 
 alter table public.app_admins enable row level security;
 
-drop policy if exists "app admins read self or peer" on public.app_admins;
-create policy "app admins read self or peer" on public.app_admins
-  for select using (
-    user_id = auth.uid()
-    or public.is_app_admin()
-  );
-
-grant select on public.app_admins to authenticated;
-grant all on public.app_admins to service_role;
-
 create or replace function public.is_app_admin()
 returns boolean
 language sql
@@ -52,6 +42,16 @@ as $$
 $$;
 
 grant execute on function public.is_app_admin() to authenticated;
+
+drop policy if exists "app admins read self or peer" on public.app_admins;
+create policy "app admins read self or peer" on public.app_admins
+  for select using (
+    user_id = auth.uid()
+    or public.is_app_admin()
+  );
+
+grant select on public.app_admins to authenticated;
+grant all on public.app_admins to service_role;
 
 -- Seed / bootstrap: email → user_id gdy konto już istnieje; inaczej przy profilu
 create or replace function public.ensure_app_admin_by_email(p_email text)
