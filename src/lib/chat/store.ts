@@ -54,6 +54,8 @@ interface ChatState {
   hubTab: "chat" | "decisions" | "notes" | "media" | "search";
   /** Hub zajmuje więcej wysokości (kalendarz się kurczy). */
   hubExpanded: boolean;
+  /** Hub zwinięty do paska nagłówka. */
+  hubCollapsed: boolean;
   /** Hub: zawężaj listy do aktywnej grupy z GroupRail. */
   hubMatchGroup: boolean;
   /** Ukryte zakładki hubu (widoczność per użytkownik; filtr grupy dodatkowo zawęża treść). */
@@ -122,6 +124,10 @@ interface ChatState {
   setHubTab: (tab: ChatState["hubTab"]) => void;
   setHubExpanded: (on: boolean) => void;
   toggleHubExpanded: () => void;
+  setHubCollapsed: (on: boolean) => void;
+  toggleHubCollapsed: () => void;
+  /** Alt+E: normal → expanded → collapsed → normal */
+  cycleHubLayout: () => void;
   setHubMatchGroup: (on: boolean) => void;
   toggleHubTabHidden: (tab: ChatState["hubTab"]) => void;
   setMediaConversationId: (id: string | null) => void;
@@ -262,6 +268,7 @@ export const useChatStore = create<ChatState>()(
       panelMode: "todo",
       hubTab: "chat",
       hubExpanded: false,
+      hubCollapsed: false,
       hubMatchGroup: false,
       hubHiddenTabs: [],
       hubChatFolders: [],
@@ -535,9 +542,29 @@ export const useChatStore = create<ChatState>()(
 
       setHubTab: (tab) => set({ hubTab: tab }),
 
-      setHubExpanded: (on) => set({ hubExpanded: on }),
+      setHubExpanded: (on) => set({ hubExpanded: on, ...(on ? { hubCollapsed: false } : {}) }),
 
-      toggleHubExpanded: () => set((s) => ({ hubExpanded: !s.hubExpanded })),
+      toggleHubExpanded: () =>
+        set((s) => {
+          if (s.hubCollapsed) return { hubCollapsed: false, hubExpanded: true };
+          return { hubExpanded: !s.hubExpanded };
+        }),
+
+      setHubCollapsed: (on) =>
+        set({ hubCollapsed: on, ...(on ? { hubExpanded: false } : {}) }),
+
+      toggleHubCollapsed: () =>
+        set((s) => ({
+          hubCollapsed: !s.hubCollapsed,
+          ...(s.hubCollapsed ? {} : { hubExpanded: false }),
+        })),
+
+      cycleHubLayout: () =>
+        set((s) => {
+          if (s.hubCollapsed) return { hubCollapsed: false, hubExpanded: false };
+          if (!s.hubExpanded) return { hubExpanded: true, hubCollapsed: false };
+          return { hubExpanded: false, hubCollapsed: true };
+        }),
 
       setHubMatchGroup: (on) => set({ hubMatchGroup: on }),
 
@@ -623,6 +650,7 @@ export const useChatStore = create<ChatState>()(
           panelMode: "todo",
           hubTab: "chat",
           hubExpanded: false,
+          hubCollapsed: false,
           hubMatchGroup: false,
           hubHiddenTabs: [],
           hubChatFolders: [],
@@ -655,6 +683,7 @@ export const useChatStore = create<ChatState>()(
         panelMode: s.panelMode === "media" ? "todo" : s.panelMode,
         hubTab: s.hubTab,
         hubExpanded: s.hubExpanded,
+        hubCollapsed: s.hubCollapsed,
         hubMatchGroup: s.hubMatchGroup,
         hubHiddenTabs: s.hubHiddenTabs,
         hubChatFolders: s.hubChatFolders,
@@ -715,6 +744,7 @@ export const useChatStore = create<ChatState>()(
           panelMode: panelMode as ChatState["panelMode"],
           hubTab,
           hubExpanded: Boolean(p.hubExpanded ?? current.hubExpanded),
+          hubCollapsed: Boolean(p.hubCollapsed ?? current.hubCollapsed),
           hubMatchGroup: Boolean(p.hubMatchGroup ?? current.hubMatchGroup),
           hubHiddenTabs,
           hubChatFolders,

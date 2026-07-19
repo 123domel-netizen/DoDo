@@ -22,11 +22,11 @@ function isTypingTarget(el: EventTarget | null): boolean {
 /**
  * Skróty hubu (desktop):
  * Alt+1…5 — zakładki
- * Alt+E — rozwiń / zwiń hub
+ * Alt+E — cykl: normalny → powiększony → zwinięty → normalny
  */
 export function useHubHotkeys(enabled: boolean) {
   const setHubTab = useChatStore((s) => s.setHubTab);
-  const toggleHubExpanded = useChatStore((s) => s.toggleHubExpanded);
+  const cycleHubLayout = useChatStore((s) => s.cycleHubLayout);
   const hubHiddenTabs = useChatStore((s) => s.hubHiddenTabs);
 
   useEffect(() => {
@@ -39,7 +39,7 @@ export function useHubHotkeys(enabled: boolean) {
       const digit = e.key;
       if (digit in TAB_BY_DIGIT) {
         const tab = TAB_BY_DIGIT[digit];
-        if (hubHiddenTabs.includes(tab)) return;
+        if (!tab || hubHiddenTabs.includes(tab)) return;
         e.preventDefault();
         setHubTab(tab);
         return;
@@ -47,11 +47,11 @@ export function useHubHotkeys(enabled: boolean) {
 
       if (e.key === "e" || e.key === "E") {
         e.preventDefault();
-        toggleHubExpanded();
+        cycleHubLayout();
       }
     };
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [enabled, setHubTab, toggleHubExpanded, hubHiddenTabs]);
+  }, [enabled, setHubTab, cycleHubLayout, hubHiddenTabs]);
 }

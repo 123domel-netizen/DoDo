@@ -11,6 +11,7 @@ import { defaultEventDraftRange } from "@/lib/eventDraft";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useHorizontalSwipe } from "@/hooks/useHorizontalSwipe";
 import { CalendarDaySheet } from "@/components/mobile/CalendarDaySheet";
+import { CalendarNav } from "./CalendarNav";
 import { TimeGrid } from "./TimeGrid";
 import { MonthView } from "./MonthView";
 import type { CalendarViewKind, Group } from "@/types";
@@ -141,6 +142,7 @@ export function CalendarView({
       className="flex h-full flex-col bg-surface touch-pan-y"
       {...(mobileCalendar ? swipeHandlers : {})}
     >
+      {!isMobile && <CalendarNav />}
       {view === "month" ? (
         <MonthView
           days={days}

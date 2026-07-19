@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
-import { addDays, addMonths, startOfDay } from "date-fns";
 import {
-  ChevronLeft,
-  ChevronRight,
   Settings2,
   Bell,
   LogOut,
@@ -10,9 +7,6 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import { useStore } from "@/state/store";
-import type { CalendarViewKind } from "@/types";
-import { getViewLabel } from "@/lib/viewLabel";
-import { getViewDays } from "@/lib/time";
 import { enableNotificationsFlow } from "@/lib/push";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
@@ -24,13 +18,6 @@ import { OrgSettings } from "@/components/settings/OrgSettings";
 import { AppAdminSettings } from "@/components/settings/AppAdminSettings";
 import { SyncSettings } from "@/components/settings/SyncSettings";
 
-const VIEWS: { key: CalendarViewKind; label: string }[] = [
-  { key: "day", label: "Dzień" },
-  { key: "week", label: "Tydzień" },
-  { key: "eleven", label: "11 dni" },
-  { key: "month", label: "Miesiąc" },
-];
-
 type SettingsTab = "view" | "org" | "contacts" | "tags" | "sync" | "admin";
 
 interface ToolbarProps {
@@ -39,33 +26,9 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
-  const settings = useStore((s) => s.settings);
-  const setSettings = useStore((s) => s.setSettings);
   const isAppAdmin = useStore((s) => s.isAppAdmin);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("view");
-
-  const anchor = new Date(settings.anchorDate);
-
-  const shift = (dir: number) => {
-    if (settings.view === "month") {
-      setSettings({ anchorDate: startOfDay(addMonths(anchor, dir)).toISOString() });
-      return;
-    }
-    if (settings.view === "day") {
-      setSettings({ anchorDate: startOfDay(addDays(anchor, dir)).toISOString() });
-      return;
-    }
-    if (settings.view === "eleven") {
-      const days = getViewDays("eleven", anchor, settings.nineDayStartWeekday);
-      const next = addDays(days[0], dir * 7);
-      setSettings({ anchorDate: startOfDay(next).toISOString() });
-      return;
-    }
-    setSettings({ anchorDate: startOfDay(addDays(anchor, dir * 7)).toISOString() });
-  };
-
-  const goToday = () => setSettings({ anchorDate: startOfDay(new Date()).toISOString() });
 
   const enableNotifications = async () => {
     const res = await enableNotificationsFlow();
@@ -78,55 +41,7 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
         <Logo size={26} />
       </div>
 
-      <button
-        type="button"
-        onClick={goToday}
-        className="rounded-lg border border-line bg-surface-raised px-2.5 py-1 text-sm text-ink transition hover:border-line-strong"
-      >
-        Dziś
-      </button>
-
-      <div className="flex items-center">
-        <button
-          type="button"
-          onClick={() => shift(-1)}
-          className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-          aria-label="Poprzedni"
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <button
-          type="button"
-          onClick={() => shift(1)}
-          className="rounded-lg p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-          aria-label="Następny"
-        >
-          <ChevronRight size={18} />
-        </button>
-      </div>
-
-      <div className="min-w-[170px] text-sm font-medium capitalize text-ink">
-        {getViewLabel(settings.view, anchor, settings.nineDayStartWeekday)}
-      </div>
-
       <div className="ml-auto flex items-center gap-2">
-        <div className="flex items-center gap-0.5 rounded-lg border border-line bg-surface-raised p-0.5">
-          {VIEWS.map((v) => (
-            <button
-              key={v.key}
-              type="button"
-              onClick={() => setSettings({ view: v.key })}
-              className={`rounded-md px-2.5 py-1 text-sm transition ${
-                settings.view === v.key
-                  ? "bg-accent text-white shadow-glow"
-                  : "text-ink-light hover:text-ink"
-              }`}
-            >
-              {v.label}
-            </button>
-          ))}
-        </div>
-
         <button
           onClick={() => setSettingsOpen((v) => !v)}
           className={`rounded-lg p-1.5 transition hover:bg-surface-overlay hover:text-ink ${

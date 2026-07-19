@@ -25,6 +25,7 @@ export default function App() {
   const editingId = useStore((s) => s.editingId);
   const panelMode = useChatStore((s) => s.panelMode);
   const hubExpanded = useChatStore((s) => s.hubExpanded);
+  const hubCollapsed = useChatStore((s) => s.hubCollapsed);
   const isMobile = useIsMobile();
   const [todoOpen, setTodoOpen] = useState(true);
   useReminderScheduler();
@@ -78,9 +79,11 @@ export default function App() {
               {cloudEnabled && (
                 <div
                   className={`min-h-0 shrink-0 overflow-hidden border-t border-line bg-surface ${
-                    hubExpanded
-                      ? "h-[min(55vh,560px)]"
-                      : "h-[min(36vh,340px)]"
+                    hubCollapsed
+                      ? "h-9"
+                      : hubExpanded
+                        ? "h-[min(55vh,560px)]"
+                        : "h-[min(36vh,340px)]"
                   }`}
                 >
                   <ErrorBoundary label="hub" compact>

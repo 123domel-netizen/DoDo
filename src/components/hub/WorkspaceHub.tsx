@@ -20,6 +20,7 @@ import {
   User,
   Users,
   X,
+  ChevronUp,
 } from "lucide-react";
 import { cloudEnabled } from "@/lib/supabase";
 import { useStore } from "@/state/store";
@@ -67,7 +68,6 @@ import { HubSearchPane } from "@/components/hub/HubSearchPane";
 import { HubLinksPane } from "@/components/hub/HubLinksPane";
 import {
   RAIL,
-  RAIL_CHAT,
   RAIL_TREE,
   type ChatBrowseTab,
   type MediaSubTab,
@@ -304,7 +304,9 @@ export function WorkspaceHub() {
   const hubTab = useChatStore((s) => s.hubTab);
   const setHubTab = useChatStore((s) => s.setHubTab);
   const hubExpanded = useChatStore((s) => s.hubExpanded);
+  const hubCollapsed = useChatStore((s) => s.hubCollapsed);
   const toggleHubExpanded = useChatStore((s) => s.toggleHubExpanded);
+  const setHubCollapsed = useChatStore((s) => s.setHubCollapsed);
   const hubMatchGroup = useChatStore((s) => s.hubMatchGroup);
   const setHubMatchGroup = useChatStore((s) => s.setHubMatchGroup);
   const hubHiddenTabs = useChatStore((s) => s.hubHiddenTabs);
@@ -815,19 +817,6 @@ export function WorkspaceHub() {
       >
         <Eye size={12} />
       </button>
-      <button
-        type="button"
-        onClick={() => toggleHubExpanded()}
-        className={`shrink-0 rounded-md p-1.5 transition ${
-          hubExpanded
-            ? "bg-accent/15 text-ink"
-            : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-        }`}
-        title={hubExpanded ? "Zmniejsz hub (Alt+E)" : "Rozwiń hub (Alt+E)"}
-        aria-pressed={hubExpanded}
-      >
-        {hubExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-      </button>
       {visibilityMenu}
     </div>
   );
@@ -1105,22 +1094,22 @@ export function WorkspaceHub() {
                   tagIds: row.tagIds,
                 })
               }
-              className={`flex w-full flex-col gap-0.5 border-b border-line/50 px-3 py-2.5 text-left transition ${
+              className={`flex w-full flex-col gap-0 border-b border-line/50 px-2.5 py-1.5 text-left transition ${
                 active ? "bg-accent/10" : "hover:bg-surface-raised"
               }`}
             >
-              <span className="line-clamp-2 text-sm text-ink">
+              <span className="line-clamp-2 text-[12px] leading-snug text-ink">
                 {kind === "note"
                   ? (row as ChatNote).title || row.body
                   : row.body}
               </span>
               {kind === "note" && (row as ChatNote).body.trim() && (
-                <span className="line-clamp-1 text-[11px] text-ink-faint">
+                <span className="line-clamp-1 text-[10px] leading-snug text-ink-faint">
                   {(row as ChatNote).body}
                 </span>
               )}
               {(group || rowTags.length > 0) && (
-                <span className="flex flex-wrap items-center gap-1">
+                <span className="mt-0.5 flex flex-wrap items-center gap-1">
                   {group && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-surface-raised px-1.5 py-0.5 text-[9px] font-medium text-ink-light">
                       <span
@@ -1144,7 +1133,7 @@ export function WorkspaceHub() {
                   ))}
                 </span>
               )}
-              <span className="truncate text-[10px] text-ink-faint">
+              <span className="truncate text-[9px] leading-snug text-ink-faint">
                 {author}
                 {conv ? ` · ${titleOf(conv)}` : ""} · {formatMessageTime(at)}
               </span>
@@ -1202,38 +1191,61 @@ export function WorkspaceHub() {
   };
 
   return (
-    <div className="flex h-full min-h-0">
-      <nav className="thin-scrollbar flex w-36 shrink-0 flex-col overflow-y-auto border-r border-line bg-surface-raised/40 p-1.5">
-        {!hubHiddenTabs.includes("chat") && (
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line/80 bg-surface-raised/50 px-3">
+        <button
+          type="button"
+          onClick={() => {
+            if (hubCollapsed) setHubCollapsed(false);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          title={hubCollapsed ? "Rozwiń hub" : undefined}
+        >
+          <MessageSquare size={15} className="shrink-0 text-accent" />
+          <span className="truncate text-sm font-semibold tracking-tight text-ink">Czat</span>
+          {unread > 0 && (
+            <span className="flex h-4 min-w-[1rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold text-white">
+              {unread > 99 ? "99+" : unread}
+            </span>
+          )}
+          {hubCollapsed && (
+            <span className="truncate text-[11px] font-normal text-ink-faint">
+              — kliknij, aby rozwinąć
+            </span>
+          )}
+        </button>
+
+        {!hubCollapsed && (
           <button
             type="button"
-            onClick={() => {
-              setHubTab("chat");
-              setChatBrowse("all");
-            }}
-            title={`${RAIL_CHAT.label} — wszystkie rozmowy (Alt+1)`}
-            aria-label={RAIL_CHAT.label}
-            className={`relative flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] font-semibold transition ${
-              hubTab === "chat"
-                ? "text-ink"
-                : "text-ink-light hover:bg-surface-raised hover:text-ink"
+            onClick={() => toggleHubExpanded()}
+            className={`shrink-0 rounded-md p-1.5 transition ${
+              hubExpanded
+                ? "bg-accent/15 text-ink"
+                : "text-ink-faint hover:bg-surface-overlay hover:text-ink"
             }`}
+            title={hubExpanded ? "Przywróć wysokość (Alt+E)" : "Powiększ hub (Alt+E)"}
+            aria-pressed={hubExpanded}
           >
-            <RAIL_CHAT.icon size={15} className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{RAIL_CHAT.label}</span>
-            {unread > 0 && (
-              <span className="flex h-4 min-w-[1rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold text-white">
-                {unread > 99 ? "99+" : unread}
-              </span>
-            )}
+            {hubExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
         )}
 
-        <div
-          className="ml-2.5 mt-0.5 flex flex-col gap-0.5 border-l border-line/70 pl-1.5"
-          role="group"
-          aria-label="Sekcje hubu"
+        <button
+          type="button"
+          onClick={() => setHubCollapsed(!hubCollapsed)}
+          className="shrink-0 rounded-md p-1.5 text-ink-faint transition hover:bg-surface-overlay hover:text-ink"
+          title={hubCollapsed ? "Rozwiń hub" : "Zwiń hub"}
+          aria-pressed={hubCollapsed}
         >
+          {hubCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      </header>
+
+      {!hubCollapsed && (
+      <div className="flex min-h-0 flex-1">
+      <nav className="thin-scrollbar flex w-36 shrink-0 flex-col overflow-y-auto border-r border-line bg-surface-raised/40 p-1.5">
+        <div className="flex flex-col gap-0.5" role="group" aria-label="Sekcje hubu">
           {RAIL_TREE.filter((item) =>
             item.kind === "browse"
               ? !hubHiddenTabs.includes("chat")
@@ -1305,6 +1317,8 @@ export function WorkspaceHub() {
       </div>
 
       <NewConversationDialog open={showNew} onClose={() => setShowNew(false)} />
+      </div>
+      )}
     </div>
   );
 }
