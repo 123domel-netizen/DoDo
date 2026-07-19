@@ -232,7 +232,6 @@ export function MobileChatHub() {
     groups,
     tags,
     allUserTags,
-    allByRecent,
     discoverable,
     browseList,
     decisions,
