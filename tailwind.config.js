@@ -17,32 +17,32 @@ export default {
         ],
       },
       colors: {
-        // Premium dark palette
-        canvas: "#0b0b0d",
+        canvas: "rgb(var(--color-canvas) / <alpha-value>)",
         surface: {
-          DEFAULT: "#141417",
-          raised: "#1b1b20",
-          overlay: "#212128",
+          DEFAULT: "rgb(var(--color-surface) / <alpha-value>)",
+          raised: "rgb(var(--color-surface-raised) / <alpha-value>)",
+          overlay: "rgb(var(--color-surface-overlay) / <alpha-value>)",
         },
+        sidebar: "rgb(var(--color-sidebar) / <alpha-value>)",
         line: {
-          DEFAULT: "#28282e",
-          strong: "#3a3a42",
+          DEFAULT: "rgb(var(--color-line) / <alpha-value>)",
+          strong: "rgb(var(--color-line-strong) / <alpha-value>)",
         },
         ink: {
-          DEFAULT: "#ececee",
-          light: "#a4a4ad",
-          faint: "#6c6c76",
+          DEFAULT: "rgb(var(--color-ink) / <alpha-value>)",
+          light: "rgb(var(--color-ink-light) / <alpha-value>)",
+          faint: "rgb(var(--color-ink-faint) / <alpha-value>)",
         },
         accent: {
-          DEFAULT: "#7c74ff",
-          soft: "#9b95ff",
-          deep: "#635bdb",
+          DEFAULT: "rgb(var(--color-accent) / <alpha-value>)",
+          soft: "rgb(var(--color-accent-soft) / <alpha-value>)",
+          deep: "rgb(var(--color-accent-deep) / <alpha-value>)",
         },
       },
       boxShadow: {
-        pop: "0 0 0 1px rgba(255,255,255,0.06), 0 12px 32px rgba(0,0,0,0.55), 0 4px 10px rgba(0,0,0,0.4)",
-        card: "0 1px 2px rgba(0,0,0,0.4)",
-        glow: "0 0 0 1px rgba(124,116,255,0.4), 0 8px 24px rgba(124,116,255,0.18)",
+        pop: "var(--shadow-pop)",
+        card: "var(--shadow-card)",
+        glow: "var(--shadow-glow)",
       },
       backgroundImage: {
         "accent-grad": "linear-gradient(135deg, #8a83ff 0%, #635bdb 100%)",

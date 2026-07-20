@@ -1,4 +1,5 @@
 import {
+  Archive,
   FolderOpen,
   Gavel,
   List,
@@ -12,8 +13,8 @@ import {
 
 export type HubTab = "chat" | "decisions" | "notes" | "media" | "search";
 export type MediaSubTab = "media" | "files" | "links";
-export type ChatBrowseTab = "all" | "favorites" | "people" | "channels";
-export type RailBrowseId = "all" | "people" | "channels";
+export type ChatBrowseTab = "all" | "favorites" | "people" | "channels" | "archive";
+export type RailBrowseId = "all" | "people" | "channels" | "archive";
 
 export type RailTreeItem =
   | { kind: "browse"; id: RailBrowseId; label: string; icon: LucideIcon; title: string }
@@ -29,7 +30,7 @@ export const RAIL: { id: HubTab; label: string; icon: LucideIcon }[] = [
 
 export const RAIL_CHAT = RAIL[0]!;
 
-/** Mini-tabulator pod Czat: ALL → Osoby/Kanały → sekcje hubu. */
+/** Mini-tabulator pod Czat: ALL → Osoby/Kanały → sekcje hubu → Archiwum. */
 export const RAIL_TREE: RailTreeItem[] = [
   {
     kind: "browse",
@@ -56,6 +57,13 @@ export const RAIL_TREE: RailTreeItem[] = [
   { kind: "tab", id: "notes", label: "Notatki", icon: StickyNote },
   { kind: "tab", id: "media", label: "Media", icon: FolderOpen },
   { kind: "tab", id: "search", label: "Wyszukaj", icon: Search },
+  {
+    kind: "browse",
+    id: "archive",
+    label: "Archiwum",
+    icon: Archive,
+    title: "Zarchiwizowane rozmowy — widoczne tylko tutaj",
+  },
 ];
 
 /** Tryb mini-paska na mobile (bez favorites — folderów nie przenosimy). */

@@ -1,8 +1,8 @@
-/** Stonowane tło weekendu na ciemnym tle (delikatny biały overlay). */
+/** Stonowane tło weekendu — token CSS dopasowany do motywu. */
 export function weekendColumnBg(day: Date): string | undefined {
   const w = day.getDay(); // 0 = niedziela, 6 = sobota
-  if (w === 6) return "rgba(255, 255, 255, 0.035)";
-  if (w === 0) return "rgba(255, 255, 255, 0.055)";
+  if (w === 6) return "var(--weekend-sat)";
+  if (w === 0) return "var(--weekend-sun)";
   return undefined;
 }
 

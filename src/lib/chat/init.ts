@@ -28,10 +28,16 @@ let booted = false;
 let currentUserId: string | null = null;
 let channel: RealtimeChannel | null = null;
 let overviewTimer: ReturnType<typeof setTimeout> | null = null;
+let resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+let reconcileInterval: ReturnType<typeof setInterval> | null = null;
+let reconcileInFlight = false;
+/** Inkrementowane przy teardown — ignoruj stare callbacki statusu kanału. */
+let channelGeneration = 0;
 const readTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingReadAt = new Map<string, string>();
 
 const MAX_SEND_ATTEMPTS = 3;
+const RECONCILE_INTERVAL_MS = 25_000;
 
 function documentVisible(): boolean {
   return typeof document === "undefined" || document.visibilityState === "visible";
@@ -64,6 +70,56 @@ export function scheduleOverviewRefresh(delayMs = 800) {
     overviewTimer = null;
     void refreshOverview();
   }, delayMs);
+}
+
+/** Dociągnij brakujące wiadomości aktywnej rozmowy (gdy realtime coś zgubił). */
+async function reconcileActiveConversation() {
+  if (!api.chatAvailable() || !currentUserId || reconcileInFlight) return;
+  const st = useChatStore.getState();
+  const convId = st.activeConversationId;
+  if (!convId) return;
+
+  reconcileInFlight = true;
+  try {
+    const msgs = st.messagesByConv[convId] ?? [];
+    if (msgs.length === 0) {
+      await loadConversationMessages(convId);
+      return;
+    }
+    let after = msgs[msgs.length - 1]!.createdAt;
+    for (let i = 0; i < 5; i++) {
+      const { messages, hasMore } = await api.fetchNewerMessages(convId, {
+        createdAt: after,
+      });
+      if (!messages.length) break;
+      const store = useChatStore.getState();
+      store.upsertConvMessages(convId, messages);
+      for (const m of messages) {
+        store.applyIncomingMessage(m, documentVisible());
+      }
+      after = messages[messages.length - 1]!.createdAt;
+      if (!hasMore) break;
+    }
+  } finally {
+    reconcileInFlight = false;
+  }
+}
+
+async function reconcileChatLive() {
+  await Promise.all([refreshOverview(), reconcileActiveConversation()]);
+}
+
+function startReconcileInterval() {
+  if (reconcileInterval) clearInterval(reconcileInterval);
+  reconcileInterval = setInterval(() => {
+    if (!documentVisible() || !currentUserId) return;
+    void reconcileChatLive();
+  }, RECONCILE_INTERVAL_MS);
+}
+
+function stopReconcileInterval() {
+  if (reconcileInterval) clearInterval(reconcileInterval);
+  reconcileInterval = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -654,6 +710,16 @@ export async function pinConversation(conversationId: string, pinned: boolean) {
   scheduleOverviewRefresh(400);
 }
 
+export async function archiveConversation(conversationId: string, archived: boolean) {
+  useChatStore.getState().patchOverviewEntry(conversationId, {
+    myArchivedAt: archived ? new Date().toISOString() : null,
+  });
+  const { error } = await api.setConversationArchived(conversationId, archived);
+  if (error) console.warn("[chat] archive failed:", error);
+  scheduleOverviewRefresh(400);
+  return { error };
+}
+
 export const MUTE_PRESETS: { label: string; minutes: number | null }[] = [
   { label: "1 godzina", minutes: 60 },
   { label: "8 godzin", minutes: 8 * 60 },
@@ -885,14 +951,42 @@ function handleIncomingMessage(msg: ChatMessage) {
 }
 
 function teardownRealtime() {
+  channelGeneration += 1;
+  if (resubscribeTimer) {
+    clearTimeout(resubscribeTimer);
+    resubscribeTimer = null;
+  }
   if (channel && supabase) {
     void supabase.removeChannel(channel);
     channel = null;
   }
 }
 
-function setupRealtime(userId: string) {
-  if (!supabase || channel) return;
+async function ensureRealtimeAuth() {
+  if (!supabase) return;
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) {
+    await supabase.realtime.setAuth(token);
+  }
+}
+
+function scheduleRealtimeResubscribe(userId: string) {
+  if (resubscribeTimer || currentUserId !== userId) return;
+  resubscribeTimer = setTimeout(() => {
+    resubscribeTimer = null;
+    if (currentUserId !== userId) return;
+    void setupRealtime(userId);
+  }, 1500);
+}
+
+async function setupRealtime(userId: string) {
+  if (!supabase) return;
+  teardownRealtime();
+  const gen = channelGeneration;
+  await ensureRealtimeAuth();
+  if (gen !== channelGeneration || currentUserId !== userId) return;
+
   channel = supabase
     .channel(`chat-${userId}`)
     .on(
@@ -1010,7 +1104,21 @@ function setupRealtime(userId: string) {
         }
       },
     )
-    .subscribe();
+    .subscribe((status) => {
+      if (gen !== channelGeneration) return;
+      if (status === "SUBSCRIBED") {
+        void reconcileChatLive();
+        return;
+      }
+      if (
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT" ||
+        status === "CLOSED"
+      ) {
+        console.warn("[chat] realtime status:", status);
+        scheduleRealtimeResubscribe(userId);
+      }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,19 +1154,21 @@ function stopPresence() {
 async function handleChatUser(userId: string | null) {
   teardownRealtime();
   stopPresence();
+  stopReconcileInterval();
   currentUserId = userId;
   await switchChatPersistUser(userId);
   if (!userId || !api.chatAvailable()) return;
   await refreshChat();
-  setupRealtime(userId);
+  await setupRealtime(userId);
   startPresence();
+  startReconcileInterval();
   void flushOutbox();
 }
 
 export function initChat() {
   if (booted) return;
   booted = true;
-  if (!api.chatAvailable()) return;
+  if (!api.chatAvailable() || !supabase) return;
 
   // Punkt styku z resztą aplikacji: authUserId w głównym store.
   useStore.subscribe((state) => {
@@ -1069,15 +1179,29 @@ export function initChat() {
   const initial = useStore.getState().authUserId;
   if (initial) void handleChatUser(initial);
 
+  const sb = supabase;
+  sb.auth.onAuthStateChange((event, session) => {
+    if (
+      (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
+      session?.access_token
+    ) {
+      void sb.realtime.setAuth(session.access_token);
+    }
+  });
+
   if (typeof window !== "undefined") {
     window.addEventListener("online", () => {
       void flushOutbox();
-      scheduleOverviewRefresh(300);
+      if (currentUserId) {
+        teardownRealtime();
+        void setupRealtime(currentUserId);
+      }
+      void reconcileChatLive();
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
         void flushOutbox();
-        scheduleOverviewRefresh(300);
+        void reconcileChatLive();
         void presenceBeat();
       }
     });

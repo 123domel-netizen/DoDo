@@ -125,7 +125,7 @@ export function MonthView({
                   if (entry.kind === "reminder") {
                     const { marker } = entry;
                     const g = marker.item.groupId ? groups[marker.item.groupId] : undefined;
-                    const color = g?.color ?? "#9A8574";
+                    const color = g?.color ?? "#C08F52";
                     return (
                       <button
                         key={marker.key}
@@ -155,10 +155,9 @@ export function MonthView({
                           setEditing(marker.item.id);
                         }}
                         title={deadlineTooltipTitle(marker.item)}
-                        className={`flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] text-red-400 ${
+                        className={`flex w-full items-center gap-1 truncate rounded bg-red-500/10 px-1.5 py-0.5 text-left text-[11px] text-red-400 ${
                           dim ? "opacity-50" : ""
                         }`}
-                        style={{ background: "rgba(239,68,68,0.12)" }}
                       >
                         <AlarmClock size={10} className="text-red-500" aria-hidden />
                         <span className="text-ink-faint">{fmtTime(marker.at)}</span>

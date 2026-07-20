@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "@/App";
 import "@/index.css";
+import { initThemeEarly } from "@/lib/theme";
 import { initCloudSync } from "@/lib/cloud";
 import { initChat } from "@/lib/chat/init";
 import { initNavigation } from "@/lib/navigation";
@@ -17,6 +18,7 @@ if (import.meta.env.DEV && "serviceWorker" in navigator) {
   }
 }
 
+initThemeEarly();
 initCloudSync();
 initNavigation();
 initChat();

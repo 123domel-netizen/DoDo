@@ -139,14 +139,14 @@ function ColorPicker({
 
 function colorName(hex: string): string {
   const names: Record<string, string> = {
-    "#5e7fa8": "Błękit",
-    "#6b9080": "Szałwia",
-    "#9a8574": "Piaskowy",
-    "#7d6b8c": "Figa",
-    "#6a8f9b": "Stal",
-    "#8a7b68": "Brąz",
-    "#857a9e": "Lawenda",
-    "#737881": "Grafit",
+    "#4a8fc4": "Błękit",
+    "#4f9e7a": "Szałwia",
+    "#c08f52": "Piaskowy",
+    "#8f6aa8": "Figa",
+    "#4599ad": "Stal",
+    "#a67d4a": "Brąz",
+    "#7a6cb8": "Lawenda",
+    "#6a7280": "Grafit",
   };
   return names[hex.toLowerCase()] ?? hex;
 }

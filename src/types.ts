@@ -193,6 +193,8 @@ export interface GoogleConnectionStatus {
   lastSyncError: string | null;
 }
 
+export type ThemePreference = "light" | "dark" | "system";
+
 export interface Settings {
   /** First visible hour in the timed grid (0-23). */
   dayStartHour: number;
@@ -210,6 +212,8 @@ export interface Settings {
    * false = ręczna wartość hourHeight.
    */
   hourHeightAuto: boolean;
+  /** UI color scheme preference. */
+  theme: ThemePreference;
   /** Bump to run one-time settings migrations. */
   settingsVersion?: number;
 }

@@ -1,4 +1,5 @@
 import { cloudEnabled, supabase } from "@/lib/supabase";
+import { mapOrgRpcError } from "@/lib/orgsPlans";
 import type {
   ChatAttachment,
   ChatDecision,
@@ -111,6 +112,7 @@ function rowToOverviewEntry(row: Row): ChatOverviewEntry {
     myRole: ((row.my_role as string) ?? "member") as ChatOverviewEntry["myRole"],
     myPinnedAt: (row.my_pinned_at as string | null) ?? null,
     myMutedUntil: (row.my_muted_until as string | null) ?? null,
+    myArchivedAt: (row.my_archived_at as string | null) ?? null,
     myMarkedUnread: (row.my_marked_unread as boolean) ?? false,
     unreadCount: Number(row.unread_count ?? 0),
     lastMessage: last
@@ -1154,7 +1156,7 @@ export async function createConversation(
     p_is_public: opts.isPublic ?? false,
     p_member_ids: opts.memberIds,
   });
-  if (error) return { error: error.message };
+  if (error) return { error: mapOrgRpcError(error.message) };
   return { id: (data as Row).id as string };
 }
 
@@ -1257,7 +1259,7 @@ function friendlyAdminError(message: string): string {
   if (message.includes("not an admin")) {
     return "Tylko administrator kanału może to zrobić.";
   }
-  return message;
+  return mapOrgRpcError(message);
 }
 
 export async function joinChannel(conversationId: string): Promise<{ error?: string }> {
@@ -1265,7 +1267,7 @@ export async function joinChannel(conversationId: string): Promise<{ error?: str
   const { error } = await supabase.rpc("join_channel", {
     p_conversation_id: conversationId,
   });
-  return error ? { error: error.message } : {};
+  return error ? { error: mapOrgRpcError(error.message) } : {};
 }
 
 export async function leaveConversation(
@@ -1308,6 +1310,18 @@ export async function setConversationPinned(
   const { error } = await supabase.rpc("set_conversation_pinned", {
     p_conversation_id: conversationId,
     p_pinned: pinned,
+  });
+  return error ? { error: error.message } : {};
+}
+
+export async function setConversationArchived(
+  conversationId: string,
+  archived: boolean,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("set_conversation_archived", {
+    p_conversation_id: conversationId,
+    p_archived: archived,
   });
   return error ? { error: error.message } : {};
 }

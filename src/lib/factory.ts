@@ -8,28 +8,38 @@ export function uid(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-/** Stonowana paleta pod ciemny motyw (bez jaskrawych kolorów Notion). */
+/** Wyrazista, ale nie jaskrawa paleta — czytelna w jasnym i ciemnym motywie. */
 export const GROUP_COLORS = [
-  "#5E7FA8",
-  "#6B9080",
-  "#9A8574",
-  "#7D6B8C",
-  "#6A8F9B",
-  "#8A7B68",
-  "#857A9E",
-  "#737881",
+  "#4A8FC4", // Błękit
+  "#4F9E7A", // Szałwia
+  "#C08F52", // Piaskowy
+  "#8F6AA8", // Figa
+  "#4599AD", // Stal
+  "#A67D4A", // Brąz
+  "#7A6CB8", // Lawenda
+  "#6A7280", // Grafit
 ];
 
 export const LEGACY_GROUP_COLOR_MAP: Record<string, string> = {
-  "#e03e3e": "#857A9E",
-  "#d9730d": "#9A8574",
-  "#dfab01": "#8A7B68",
-  "#0f7b6c": "#6B9080",
-  "#0b6e99": "#5E7FA8",
-  "#6940a5": "#7D6B8C",
-  "#ad1a72": "#857A9E",
-  "#64473a": "#8A7B68",
-  "#787774": "#737881",
+  // Notion → stonowane (v3)
+  "#e03e3e": "#7A6CB8",
+  "#d9730d": "#C08F52",
+  "#dfab01": "#A67D4A",
+  "#0f7b6c": "#4F9E7A",
+  "#0b6e99": "#4A8FC4",
+  "#6940a5": "#8F6AA8",
+  "#ad1a72": "#7A6CB8",
+  "#64473a": "#A67D4A",
+  "#787774": "#6A7280",
+  // Stonowane → lekko żywsze (v15)
+  "#5e7fa8": "#4A8FC4",
+  "#6b9080": "#4F9E7A",
+  "#9a8574": "#C08F52",
+  "#7d6b8c": "#8F6AA8",
+  "#6a8f9b": "#4599AD",
+  "#8a7b68": "#A67D4A",
+  "#857a9e": "#7A6CB8",
+  "#737881": "#6A7280",
 };
 
 export function migrateGroupColor(color: string): string {

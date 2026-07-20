@@ -1,17 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Hash, User } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { useChatStore } from "@/lib/chat/store";
+import { useStore } from "@/state/store";
+import { loadChatEligiblePeople } from "@/lib/contacts";
 import { createChannel, openConversation, startDm } from "@/lib/chat/init";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
 
 interface NewConversationDialogProps {
   open: boolean;
   onClose: () => void;
 }
 
+type Person = { userId: string; displayName: string; avatarUrl: string | null };
+
 export function NewConversationDialog({ open, onClose }: NewConversationDialogProps) {
-  const profiles = useChatStore((s) => s.profiles);
   const myUserId = useChatStore((s) => s.userId);
+  const myOrgs = useStore((s) => s.myOrgs);
 
   const [mode, setMode] = useState<"dm" | "channel">("dm");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -19,10 +24,22 @@ export function NewConversationDialog({ open, onClose }: NewConversationDialogPr
   const [isPublic, setIsPublic] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [loadingPeople, setLoadingPeople] = useState(false);
 
-  const people = Object.values(profiles)
-    .filter((p) => p.userId !== myUserId)
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, "pl"));
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoadingPeople(true);
+    void loadChatEligiblePeople({ myOrgs, myUserId }).then((list) => {
+      if (cancelled) return;
+      setPeople(list);
+      setLoadingPeople(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, myOrgs, myUserId]);
 
   const toggle = (userId: string) => {
     const next = new Set(selected);
@@ -40,6 +57,10 @@ export function NewConversationDialog({ open, onClose }: NewConversationDialogPr
 
   const submit = async () => {
     setError(null);
+    if (myOrgs.length === 0) {
+      setError("Dołącz do zespołu, aby tworzyć rozmowy.");
+      return;
+    }
     if (mode === "dm" && selected.size === 0) {
       setError("Wybierz przynajmniej jedną osobę.");
       return;
@@ -105,49 +126,51 @@ export function NewConversationDialog({ open, onClose }: NewConversationDialogPr
                 type="checkbox"
                 checked={isPublic}
                 onChange={(e) => setIsPublic(e.target.checked)}
-                className="accent-[#5E7FA8]"
+                className="accent-[#4A8FC4]"
               />
-              Kanał publiczny — widoczny dla wszystkich, każdy może dołączyć
+              Kanał publiczny — widoczny w zespole, członkowie mogą dołączyć
             </label>
           </div>
         )}
 
         <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-          {mode === "dm" ? "Do kogo?" : "Członkowie (opcjonalnie)"}
+          {mode === "dm" ? "Do kogo? (tylko zespół)" : "Członkowie (opcjonalnie)"}
         </div>
         <div className="thin-scrollbar mb-3 max-h-56 overflow-y-auto rounded-lg border border-line bg-surface-raised/50">
-          {people.length === 0 && (
+          {loadingPeople ? (
+            <div className="px-3 py-4 text-center text-xs text-ink-faint">Ładowanie…</div>
+          ) : myOrgs.length === 0 ? (
             <div className="px-3 py-4 text-center text-xs text-ink-faint">
-              Brak innych użytkowników. Zaproś osoby w Ustawienia → Zespół.
+              Nie należysz do żadnego zespołu. Poproś administratora o zaproszenie (Ustawienia →
+              Zespół).
             </div>
-          )}
-          {people.map((p) => (
-            <label
-              key={p.userId}
-              className="flex cursor-pointer items-center gap-2.5 border-b border-line/50 px-3 py-2 last:border-b-0 hover:bg-surface-raised"
-            >
-              <input
-                type="checkbox"
-                checked={selected.has(p.userId)}
-                onChange={() => toggle(p.userId)}
-                className="accent-[#5E7FA8]"
-              />
-              {p.avatarUrl ? (
-                <img
-                  src={p.avatarUrl}
-                  alt=""
-                  className="h-6 w-6 rounded-full border border-line object-cover"
+          ) : people.length === 0 ? (
+            <div className="px-3 py-4 text-center text-xs text-ink-faint">
+              Brak innych osób w zespole. Zaproś je w Ustawienia → Zespół.
+            </div>
+          ) : (
+            people.map((p) => (
+              <label
+                key={p.userId}
+                className="flex cursor-pointer items-center gap-2.5 border-b border-line/50 px-3 py-2 last:border-b-0 hover:bg-surface-raised"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(p.userId)}
+                  onChange={() => toggle(p.userId)}
+                  className="accent-[#4A8FC4]"
                 />
-              ) : (
-                <span className="flex h-6 w-6 items-center justify-center rounded-full border border-line bg-surface-overlay text-[10px] text-ink-faint">
-                  {p.displayName.slice(0, 2).toUpperCase()}
+                <PersonAvatar
+                  userId={p.userId}
+                  avatarUrl={p.avatarUrl}
+                  size={24}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                  {p.displayName || "Bez nazwy"}
                 </span>
-              )}
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                {p.displayName || "Bez nazwy"}
-              </span>
-            </label>
-          ))}
+              </label>
+            ))
+          )}
         </div>
 
         {error && <div className="mb-2 text-xs text-red-400">{error}</div>}
@@ -163,7 +186,7 @@ export function NewConversationDialog({ open, onClose }: NewConversationDialogPr
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={busy}
+            disabled={busy || myOrgs.length === 0}
             className="rounded-lg bg-accent-grad px-4 py-1.5 text-sm font-medium text-white shadow-glow transition hover:brightness-110 disabled:opacity-50"
           >
             {mode === "dm" ? "Rozpocznij" : "Utwórz kanał"}

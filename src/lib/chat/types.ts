@@ -45,6 +45,8 @@ export interface ChatOverviewEntry {
   myPinnedAt: string | null;
   /** Wyciszenie do (ISO; "infinity" = na zawsze; null = brak). */
   myMutedUntil: string | null;
+  /** Zarchiwizowana dla mnie — tylko w folderze Archiwum. */
+  myArchivedAt: string | null;
   /** Ręcznie oznaczona jako nieprzeczytana. */
   myMarkedUnread: boolean;
   unreadCount: number;

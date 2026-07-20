@@ -38,6 +38,8 @@ import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
 import { MobileChatHub } from "@/components/chat/MobileChatHub";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { dmPeerMember } from "@/lib/avatar";
 
 const FREQUENT_LIMIT = 8;
 
@@ -46,18 +48,25 @@ function NavRow({
   title,
   online,
   active,
+  myUserId,
   onOpen,
 }: {
   entry: ChatOverviewEntry;
   title: string;
   online: boolean;
   active: boolean;
+  myUserId: string | null;
   onOpen: () => void;
 }) {
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
   const label =
     entry.kind === "channel" ? (title.startsWith("#") ? title : `#${title}`) : title;
+  const peer = dmPeerMember(entry.members, myUserId, entry.kind);
+  const profiles = useChatStore((s) => s.profiles);
+  const peerAvatar = peer
+    ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
+    : null;
 
   return (
     <button
@@ -74,6 +83,13 @@ function NavRow({
           <MessageSquare size={12} />
         ) : entry.members.length > 2 ? (
           <Users size={12} />
+        ) : peer ? (
+          <PersonAvatar
+            userId={peer.userId}
+            avatarUrl={peerAvatar}
+            size={20}
+            className="border-0"
+          />
         ) : (
           <User size={12} />
         )}
@@ -235,7 +251,11 @@ function MentionsList({ onOpen }: { onOpen: (msg: ChatMessage) => void }) {
 export function ChatPanel() {
   const isMobile = useIsMobile();
   const myUserId = useChatStore((s) => s.userId);
-  const overview = useChatStore((s) => s.overview);
+  const overviewAll = useChatStore((s) => s.overview);
+  const overview = useMemo(
+    () => overviewAll.filter((c) => !c.myArchivedAt),
+    [overviewAll],
+  );
   const profiles = useChatStore((s) => s.profiles);
   const activeId = useChatStore((s) => s.activeConversationId);
   const setActiveConversation = useChatStore((s) => s.setActiveConversation);
@@ -354,6 +374,7 @@ export function ChatPanel() {
             title={titleOf(entry)}
             online={dmOnline(entry)}
             active={entry.id === activeId}
+            myUserId={myUserId}
             onOpen={() => openRow(entry)}
           />
         ))}
@@ -466,12 +487,12 @@ export function ChatPanel() {
   // Desktop 3-kolumnowy (mobile idzie przez MobileChatHub / ConversationView wyżej).
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex min-h-0 w-[25%] min-w-[9rem] max-w-[14rem] flex-col border-r border-line bg-surface">
+      <aside className="flex min-h-0 w-[25%] min-w-[9rem] max-w-[14rem] flex-col border-r border-line bg-sidebar">
         {toolbar}
         {navBody}
       </aside>
 
-      <aside className="flex min-h-0 w-[25%] min-w-[9rem] max-w-[16rem] flex-col border-r border-line bg-surface-raised/30">
+      <aside className="flex min-h-0 w-[25%] min-w-[9rem] max-w-[16rem] flex-col border-r border-line bg-sidebar/50">
         <ChatContextColumn
           conversationId={activeId}
           profiles={profiles}

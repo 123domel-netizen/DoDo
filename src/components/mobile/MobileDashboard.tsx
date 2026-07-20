@@ -32,6 +32,8 @@ import { setRouteHash } from "@/lib/navigation";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
 import { messagePreviewLabel } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { dmPeerMember } from "@/lib/avatar";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
 
 /** Łączna liczba wydarzeń w sekcjach „dzisiaj” + „nadchodzące”. */
@@ -262,7 +264,12 @@ export function MobileDashboard() {
 /** Nowe wiadomości (+ ewentualnie ostatnie 2 rozmowy, gdy łącznie < 5 czatów). */
 function DashboardChatSection() {
   const myUserId = useChatStore((s) => s.userId);
-  const overview = useChatStore((s) => s.overview);
+  const overviewAll = useChatStore((s) => s.overview);
+  const overview = useMemo(
+    () => overviewAll.filter((c) => !c.myArchivedAt),
+    [overviewAll],
+  );
+  const profiles = useChatStore((s) => s.profiles);
   const itemsMap = useStore((s) => s.items);
 
   const rows = useMemo(() => {
@@ -330,6 +337,10 @@ function DashboardChatSection() {
                     }`
               : "Brak wiadomości";
             const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+            const peer = dmPeerMember(entry.members, myUserId, entry.kind);
+            const peerAvatar = peer
+              ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
+              : null;
 
             return (
               <button
@@ -347,6 +358,13 @@ function DashboardChatSection() {
                     <MessageCircle size={12} />
                   ) : entry.members.length > 2 ? (
                     <Users size={12} />
+                  ) : peer ? (
+                    <PersonAvatar
+                      userId={peer.userId}
+                      avatarUrl={peerAvatar}
+                      size={24}
+                      className="border-0"
+                    />
                   ) : (
                     <User size={12} />
                   )}
@@ -494,7 +512,7 @@ function DashboardEventRow({
   onOpen: () => void;
 }) {
   const shared = isSharedItem(item);
-  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#5E7FA8");
+  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#4A8FC4");
   const reminderCount = effectiveReminders(item).length;
   const hasChecklist = item.checklist.length > 0;
   const showMeta =
@@ -605,7 +623,7 @@ function DashboardTodoRow({
       className={`group flex min-w-0 items-center gap-1.5 rounded-lg border border-transparent px-2 py-1 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       } ${pinned && !item.done ? "bg-accent/[0.06]" : ""}`}
-      style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
+      style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
     >
       <div className={`${DASHBOARD_LEFT_COL} items-center`}>
         <input

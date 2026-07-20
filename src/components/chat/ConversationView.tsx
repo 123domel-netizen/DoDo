@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
   ArrowDown,
   ArrowLeft,
   AtSign,
@@ -24,8 +25,11 @@ import {
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { isMuted, mergeMessages, overviewTitle, threadDisplayTitle } from "@/lib/chat/feed";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { dmPeerMember } from "@/lib/avatar";
 import {
   MUTE_PRESETS,
+  archiveConversation,
   deleteChatMessage,
   editChatMessage,
   jumpToMessage,
@@ -370,7 +374,7 @@ export function ConversationView({
   );
 
   // DM: obecność drugiej osoby (zielona kropka w nagłówku).
-  const dmOther = entry?.kind === "dm" ? entry.members.find((m) => m.userId !== myUserId) : null;
+  const dmOther = dmPeerMember(entry?.members ?? [], myUserId, entry?.kind);
   const dmOtherOnline = Boolean(dmOther && isOnline(profiles[dmOther.userId]?.lastSeenAt));
 
   // Wskaźnik „X pisze…" (Realtime broadcast, wygasa po TYPING_EXPIRE_MS).
@@ -840,7 +844,18 @@ export function ConversationView({
             {entry?.kind === "channel" ? (
               <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 28 : 15} />
             ) : entry?.kind === "dm" ? (
-              entry.members.length > 2 ? <Users size={15} /> : <User size={15} />
+              entry.members.length > 2 ? (
+                <Users size={15} />
+              ) : dmOther ? (
+                <PersonAvatar
+                  userId={dmOther.userId}
+                  avatarUrl={profiles[dmOther.userId]?.avatarUrl ?? dmOther.avatarUrl}
+                  size={28}
+                  className="border-0"
+                />
+              ) : (
+                <User size={15} />
+              )
             ) : (
               <MessageSquare size={15} />
             )}
@@ -997,6 +1012,29 @@ export function ConversationView({
                   className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
                 >
                   <MailOpen size={14} /> Oznacz jako nieprzeczytane
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !entry.myArchivedAt;
+                    void archiveConversation(conversationId, next).then(({ error }) => {
+                      if (error) {
+                        alert(error);
+                        return;
+                      }
+                      setMenuOpen(false);
+                      if (next) {
+                        useChatStore.getState().setActiveConversation(null);
+                        useChatStore.getState().setPanelMode("todo");
+                        onBack?.();
+                      }
+                    });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                >
+                  <Archive size={14} />
+                  {entry.myArchivedAt ? "Przywróć z archiwum" : "Archiwizuj"}
                 </button>
 
                 {isChannelAdmin && (

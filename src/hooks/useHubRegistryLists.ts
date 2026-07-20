@@ -29,7 +29,15 @@ export function useHubRegistryLists(opts: {
   enabled?: boolean;
 }) {
   const { hubTab, enabled = true } = opts;
-  const overview = useChatStore((s) => s.overview);
+  const overviewAll = useChatStore((s) => s.overview);
+  const overview = useMemo(
+    () => overviewAll.filter((c) => !c.myArchivedAt),
+    [overviewAll],
+  );
+  const archivedOverview = useMemo(
+    () => overviewAll.filter((c) => Boolean(c.myArchivedAt)),
+    [overviewAll],
+  );
   const registryEpoch = useChatStore((s) => s.registryEpoch);
   const items = useStore((s) => s.items);
   const groups = useStore((s) => s.groups);
@@ -114,11 +122,13 @@ export function useHubRegistryLists(opts: {
   const browseList = (id: RailBrowseId): ChatOverviewEntry[] => {
     if (id === "all") return allByRecent;
     if (id === "people") return people;
+    if (id === "archive") return archivedOverview;
     return channels;
   };
 
   return {
     overview,
+    archivedOverview,
     items,
     groups,
     tags,

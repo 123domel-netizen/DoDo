@@ -234,7 +234,7 @@ export function MobileShell() {
                 <button
                   type="button"
                   onClick={() => shift(-1)}
-                  className="pointer-events-auto rounded-md p-1.5 text-ink-faint transition hover:bg-white/[0.04] hover:text-ink"
+                  className="pointer-events-auto rounded-md p-1.5 text-ink-faint transition hover:bg-ink/5 hover:text-ink dark:hover:bg-white/[0.04]"
                   aria-label="Poprzedni"
                 >
                   <ChevronLeft size={18} />
@@ -245,7 +245,7 @@ export function MobileShell() {
                 <button
                   type="button"
                   onClick={() => shift(1)}
-                  className="pointer-events-auto rounded-md p-1.5 text-ink-faint transition hover:bg-white/[0.04] hover:text-ink"
+                  className="pointer-events-auto rounded-md p-1.5 text-ink-faint transition hover:bg-ink/5 hover:text-ink dark:hover:bg-white/[0.04]"
                   aria-label="Następny"
                 >
                   <ChevronRight size={18} />
@@ -528,7 +528,7 @@ function GroupFilterBar({
   }));
 
   const systemChips: ChipItem[] = [
-    { key: "all", label: "ALL", color: "#737881", filterId: null },
+    { key: "all", label: "ALL", color: "#6A7280", filterId: null },
     ...(share
       ? [{ key: share.id, label: "SHARE", color: SHARE_GROUP_COLOR, filterId: share.id }]
       : []),

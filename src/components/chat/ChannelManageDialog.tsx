@@ -1,9 +1,13 @@
-import { useMemo, useRef, useState } from "react";
-import { Camera, Shield, ShieldOff, UserMinus, UserPlus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Archive, Camera, Shield, ShieldOff, UserMinus, UserPlus } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { useChatStore } from "@/lib/chat/store";
+import { useStore } from "@/state/store";
+import { loadChatEligiblePeople } from "@/lib/contacts";
 import {
+  archiveConversation,
   inviteMember,
   removeMember,
   setChannelIcon,
@@ -21,15 +25,18 @@ function isAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
 }
 
+type Person = { userId: string; displayName: string; avatarUrl: string | null };
+
 export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialogProps) {
-  const profiles = useChatStore((s) => s.profiles);
   const myUserId = useChatStore((s) => s.userId);
+  const myOrgs = useStore((s) => s.myOrgs);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [pickIds, setPickIds] = useState<Set<string>>(new Set());
+  const [eligible, setEligible] = useState<Person[]>([]);
 
   const members = useMemo(
     () =>
@@ -44,12 +51,21 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
 
   const adminCount = members.filter((m) => isAdminRole(m.role)).length;
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void loadChatEligiblePeople({ myOrgs, myUserId }).then((list) => {
+      if (!cancelled) setEligible(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, myOrgs, myUserId]);
+
   const candidates = useMemo(() => {
     const inChannel = new Set(members.map((m) => m.userId));
-    return Object.values(profiles)
-      .filter((p) => p.userId !== myUserId && !inChannel.has(p.userId))
-      .sort((a, b) => a.displayName.localeCompare(b.displayName, "pl"));
-  }, [profiles, members, myUserId]);
+    return eligible.filter((p) => !inChannel.has(p.userId));
+  }, [eligible, members]);
 
   const run = async (fn: () => Promise<{ error?: string }>) => {
     setError(null);
@@ -189,8 +205,9 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
                       type="checkbox"
                       checked={pickIds.has(p.userId)}
                       onChange={() => togglePick(p.userId)}
-                      className="accent-[#5E7FA8]"
+                      className="accent-[#4A8FC4]"
                     />
+                    <PersonAvatar userId={p.userId} avatarUrl={p.avatarUrl} size={20} />
                     <span className="truncate text-xs text-ink">
                       {p.displayName || "Bez nazwy"}
                     </span>
@@ -231,17 +248,11 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
                 key={m.userId}
                 className="flex items-center gap-2 border-b border-line/50 px-2.5 py-2 last:border-b-0"
               >
-                {m.avatarUrl ? (
-                  <img
-                    src={m.avatarUrl}
-                    alt=""
-                    className="h-7 w-7 rounded-full border border-line object-cover"
-                  />
-                ) : (
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full border border-line bg-surface-overlay text-[10px] text-ink-faint">
-                    {(m.displayName || "?").slice(0, 2).toUpperCase()}
-                  </span>
-                )}
+                <PersonAvatar
+                  userId={m.userId}
+                  avatarUrl={m.avatarUrl}
+                  size={28}
+                />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs font-medium text-ink">
                     {m.displayName || "Bez nazwy"}
@@ -307,7 +318,39 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
 
         {error && <div className="mb-2 text-xs text-red-400">{error}</div>}
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (
+                !confirm(
+                  entry.myArchivedAt
+                    ? "Przywrócić kanał z archiwum?"
+                    : "Zarchiwizować kanał? Będzie widoczny tylko w sekcji Archiwum.",
+                )
+              ) {
+                return;
+              }
+              void run(async () => {
+                const { error: err } = await archiveConversation(
+                  entry.id,
+                  !entry.myArchivedAt,
+                );
+                if (err) return { error: err };
+                onClose();
+                if (!entry.myArchivedAt) {
+                  useChatStore.getState().setActiveConversation(null);
+                  useChatStore.getState().setPanelMode("todo");
+                }
+                return {};
+              });
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light transition hover:border-line-strong hover:text-ink disabled:opacity-50"
+          >
+            <Archive size={14} />
+            {entry.myArchivedAt ? "Przywróć z archiwum" : "Archiwizuj kanał"}
+          </button>
           <button
             type="button"
             onClick={onClose}

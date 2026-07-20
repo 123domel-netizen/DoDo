@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { isPast, isToday } from "date-fns";
 import {
   AlarmClock,
@@ -16,6 +16,7 @@ import { effectiveReminders } from "@/lib/reminders";
 import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
 import { baseItemId } from "@/lib/itemId";
 import { deadlineIconDimmed } from "@/lib/deadlines";
+import { itemSupportsTodoDone } from "@/lib/items";
 import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
 
 const DASHBOARD_LEFT_COL = "flex w-14 shrink-0 justify-center";
@@ -33,6 +34,19 @@ export function TodayDashboardPanel() {
     const source = itemsMap[baseId] ?? item;
     return resolveItemTags(effectiveTagIds(source, myTagIdsByItem), tagsMap);
   };
+
+  /** Zadania już widoczne w sekcji wydarzeń — bez duplikatu na liście Zadania. */
+  const shownInEvents = useMemo(() => {
+    const ids = new Set<string>();
+    for (const it of todayEvents) ids.add(baseItemId(it.id));
+    for (const it of upcomingEvents) ids.add(baseItemId(it.id));
+    return ids;
+  }, [todayEvents, upcomingEvents]);
+
+  const tasksOnly = useMemo(
+    () => tasks.filter((it) => !shownInEvents.has(baseItemId(it.id))),
+    [tasks, shownInEvents],
+  );
 
   return (
     <div className="flex h-full flex-col overflow-y-auto overflow-x-hidden thin-scrollbar">
@@ -59,6 +73,11 @@ export function TodayDashboardPanel() {
                 group={it.groupId ? groups[it.groupId] : undefined}
                 itemTags={tagsForItem(it)}
                 onOpen={() => setEditing(it.id)}
+                onToggle={
+                  itemSupportsTodoDone(it)
+                    ? () => toggleTaskDone(baseItemId(it.id))
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -81,6 +100,11 @@ export function TodayDashboardPanel() {
                   itemTags={tagsForItem(it)}
                   showEventDate
                   onOpen={() => setEditing(it.id)}
+                  onToggle={
+                    itemSupportsTodoDone(it)
+                      ? () => toggleTaskDone(baseItemId(it.id))
+                      : undefined
+                  }
                 />
               ))}
             </div>
@@ -93,11 +117,11 @@ export function TodayDashboardPanel() {
           <ListChecks size={14} />
           Zadania
         </div>
-        {tasks.length === 0 ? (
+        {tasksOnly.length === 0 ? (
           <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak zadań</p>
         ) : (
           <div className="space-y-1">
-            {tasks.map((it) => (
+            {tasksOnly.map((it) => (
               <DashboardTodoRow
                 key={it.id}
                 item={it}
@@ -223,15 +247,18 @@ function DashboardEventRow({
   itemTags,
   showEventDate,
   onOpen,
+  onToggle,
 }: {
   item: Item;
   group?: { name: string; color: string };
   itemTags: UserTag[];
   showEventDate?: boolean;
   onOpen: () => void;
+  /** Zadania / wydarzenia z „pokaż w todo” — checkbox odhaczania. */
+  onToggle?: () => void;
 }) {
   const shared = isSharedItem(item);
-  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#5E7FA8");
+  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#4A8FC4");
   const reminderCount = effectiveReminders(item).length;
   const hasChecklist = item.checklist.length > 0;
   const showMeta =
@@ -241,7 +268,78 @@ function DashboardEventRow({
     reminderCount > 0 ||
     hasChecklist ||
     itemTags.length > 0;
+  const canToggleDone = Boolean(onToggle) && itemSupportsTodoDone(item);
 
+  const timeCol = (
+    <div
+      className={`${DASHBOARD_LEFT_COL} flex-col items-center pt-0.5 text-[11px] font-medium tabular-nums text-ink-light`}
+    >
+      {canToggleDone && (
+        <input
+          type="checkbox"
+          checked={item.done}
+          onChange={onToggle}
+          disabled={shared}
+          onClick={(e) => e.stopPropagation()}
+          className={`mb-1 h-4 w-4 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
+        />
+      )}
+      {showEventDate && (
+        <div className="mb-0.5 whitespace-nowrap text-center text-[10px] leading-tight text-ink-faint">
+          {fmt(item.start, "EEE d MMM")}
+        </div>
+      )}
+      {item.allDay ? (
+        <span className="text-[10px] leading-tight text-ink-faint">Cały dzień</span>
+      ) : (
+        <>
+          <div>{fmt(item.start, "HH:mm")}</div>
+          <div className="text-ink-faint">{fmt(item.end, "HH:mm")}</div>
+        </>
+      )}
+    </div>
+  );
+
+  const body = (
+    <div className="min-w-0 flex-1 overflow-hidden">
+      <div
+        className={`text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"} ${
+          canToggleDone ? "cursor-pointer" : ""
+        }`}
+        onClick={canToggleDone ? onOpen : undefined}
+      >
+        {item.title || "(bez tytułu)"}
+        {shared && (
+          <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            SHARE
+          </span>
+        )}
+      </div>
+      {showMeta && (
+        <DashboardMetaRow>
+          <DashboardMetaDeadline item={item} />
+          <DashboardMetaGroup shared={shared} group={group} color={color} />
+          <DashboardMetaReminders item={item} />
+          <DashboardMetaChecklist item={item} />
+          <DashboardMetaTags tags={itemTags} />
+        </DashboardMetaRow>
+      )}
+    </div>
+  );
+
+  if (canToggleDone) {
+    return (
+      <div
+        className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay ${
+          shared ? "opacity-[0.72]" : ""
+        }`}
+        style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
+      >
+        {timeCol}
+        {body}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
@@ -251,42 +349,8 @@ function DashboardEventRow({
       }`}
       style={{ borderLeft: `3px solid ${color}` }}
     >
-      <div
-        className={`${DASHBOARD_LEFT_COL} flex-col items-center pt-0.5 text-[11px] font-medium tabular-nums text-ink-light`}
-      >
-        {showEventDate && (
-          <div className="mb-0.5 whitespace-nowrap text-center text-[10px] leading-tight text-ink-faint">
-            {fmt(item.start, "EEE d MMM")}
-          </div>
-        )}
-        {item.allDay ? (
-          <span className="text-[10px] leading-tight text-ink-faint">Cały dzień</span>
-        ) : (
-          <>
-            <div>{fmt(item.start, "HH:mm")}</div>
-            <div className="text-ink-faint">{fmt(item.end, "HH:mm")}</div>
-          </>
-        )}
-      </div>
-      <div className="min-w-0 flex-1 overflow-hidden">
-        <div className="text-sm font-medium text-ink">
-          {item.title || "(bez tytułu)"}
-          {shared && (
-            <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-              SHARE
-            </span>
-          )}
-        </div>
-        {showMeta && (
-          <DashboardMetaRow>
-            <DashboardMetaDeadline item={item} />
-            <DashboardMetaGroup shared={shared} group={group} color={color} />
-            <DashboardMetaReminders item={item} />
-            <DashboardMetaChecklist item={item} />
-            <DashboardMetaTags tags={itemTags} />
-          </DashboardMetaRow>
-        )}
-      </div>
+      {timeCol}
+      {body}
     </button>
   );
 }
@@ -326,7 +390,7 @@ function DashboardTodoRow({
       className={`group flex min-w-0 gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       }`}
-      style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
+      style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
     >
       <div className={`${DASHBOARD_LEFT_COL} items-center pt-0.5`}>
         <input

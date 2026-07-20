@@ -4,7 +4,7 @@ declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[];
 };
 
-const CACHE = "kalendarz-todo-v1";
+const CACHE = "kalendarz-todo-v2";
 // vite-plugin-pwa (injectManifest) replaces this with the build asset list.
 const ASSETS = (self.__WB_MANIFEST || []).map((e) => e.url);
 
@@ -22,7 +22,9 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k.startsWith("kalendarz-todo-") && k !== CACHE).map((k) => caches.delete(k))),
+      )
       .then(() => self.clients.claim()),
   );
 });

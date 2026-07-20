@@ -11,7 +11,7 @@ import {
 import { isItemDeleted } from "@/lib/items";
 
 export const ARCHIVE_GROUP_NAME = "ARCH";
-export const ARCHIVE_GROUP_COLOR = "#737881";
+export const ARCHIVE_GROUP_COLOR = "#6A7280";
 /** Poprzednia nazwa — rozpoznawana przy migracji i filtrowaniu. */
 export const LEGACY_ARCHIVE_GROUP_NAME = "Archiwum";
 

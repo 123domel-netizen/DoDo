@@ -474,7 +474,7 @@ export function ItemEditorPanel() {
               <div className="mb-1 ml-9 mt-1 flex flex-wrap gap-1.5">
                 <GroupChip
                   label="brak"
-                  color="#6c6c76"
+                  color="var(--line-strong-hex)"
                   active={!it.groupId}
                   onClick={() => update({ groupId: null })}
                 />

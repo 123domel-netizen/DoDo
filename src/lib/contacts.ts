@@ -76,3 +76,32 @@ export async function loadAssignableContacts(opts: {
   }
   return fetchTeamMembers();
 }
+
+/** Osoby do DM/kanału: unia kontaktów ze wszystkich orgów użytkownika (bez wyciszonych). */
+export async function loadChatEligiblePeople(opts: {
+  myOrgs: { id: string }[];
+  myUserId: string | null;
+}): Promise<
+  { userId: string; displayName: string; avatarUrl: string | null }[]
+> {
+  if (!cloudEnabled || !opts.myUserId || opts.myOrgs.length === 0) return [];
+  const byId = new Map<
+    string,
+    { userId: string; displayName: string; avatarUrl: string | null }
+  >();
+  for (const org of opts.myOrgs) {
+    const contacts = await fetchOrgContacts(org.id);
+    for (const c of contacts) {
+      if (c.userId === opts.myUserId || c.muted) continue;
+      if (byId.has(c.userId)) continue;
+      byId.set(c.userId, {
+        userId: c.userId,
+        displayName: (c.displayName || c.email || c.userId).trim(),
+        avatarUrl: c.avatarUrl,
+      });
+    }
+  }
+  return [...byId.values()].sort((a, b) =>
+    a.displayName.localeCompare(b.displayName, "pl"),
+  );
+}

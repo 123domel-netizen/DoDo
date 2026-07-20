@@ -56,6 +56,7 @@ function entry(partial: Partial<ChatOverviewEntry>): ChatOverviewEntry {
     myRole: "member",
     myPinnedAt: null,
     myMutedUntil: null,
+    myArchivedAt: null,
     myMarkedUnread: false,
     unreadCount: 0,
     lastMessage: null,

@@ -30,6 +30,8 @@ import type {
 } from "@/lib/chat/types";
 import { messagePreviewLabel } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { dmPeerMember } from "@/lib/avatar";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
 import { formatMessageTime, useSignedUrl } from "@/components/chat/MessageBubble";
 import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
@@ -75,12 +77,14 @@ function ConversationRow({
   title,
   authorName,
   online,
+  myUserId,
   onOpen,
 }: {
   entry: ChatOverviewEntry;
   title: string;
   authorName: string | null;
   online: boolean;
+  myUserId: string | null;
   onOpen: () => void;
 }) {
   const last = entry.lastMessage;
@@ -95,6 +99,11 @@ function ConversationRow({
     : "Brak wiadomości";
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+  const peer = dmPeerMember(entry.members, myUserId, entry.kind);
+  const profiles = useChatStore((s) => s.profiles);
+  const peerAvatar = peer
+    ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
+    : null;
 
   return (
     <button
@@ -109,6 +118,13 @@ function ConversationRow({
           <MessageSquare size={15} />
         ) : entry.members.length > 2 ? (
           <Users size={15} />
+        ) : peer ? (
+          <PersonAvatar
+            userId={peer.userId}
+            avatarUrl={peerAvatar}
+            size={32}
+            className="border-0"
+          />
         ) : (
           <User size={15} />
         )}
@@ -318,6 +334,7 @@ export function MobileChatHub() {
         title={titleOf(entry)}
         authorName={authorName}
         online={dmOnline(entry)}
+        myUserId={myUserId}
         onOpen={() => openRow(entry)}
       />
     );
@@ -402,6 +419,16 @@ export function MobileChatHub() {
           Brak rozmów prywatnych.
           <br />
           Dodaj osobę przez <span className="text-ink-light">+</span>.
+        </div>
+      );
+    }
+
+    if (mode.id === "archive" && list.length === 0) {
+      return (
+        <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+          Brak zarchiwizowanych rozmów.
+          <br />
+          Archiwizuj rozmowę z menu opcji, aby trafiła tutaj.
         </div>
       );
     }

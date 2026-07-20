@@ -22,7 +22,7 @@ export function isItemOwner(item: Item, userId: string | null | undefined): bool
 }
 
 /** Szary styl dla wpisów SHARE w kalendarzu. */
-export const SHARE_CALENDAR_COLOR = "#737881";
+export const SHARE_CALENDAR_COLOR = "#6A7280";
 export const SHARE_CALENDAR_OPACITY = 0.58;
 
 /** Zapis treści współdzielonej uczestnika — wyłącznie przez RPC. */

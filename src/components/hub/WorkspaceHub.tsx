@@ -66,12 +66,15 @@ import { formatMessageTime, useSignedUrl } from "@/components/chat/MessageBubble
 import { formatFileSize } from "@/lib/chat/upload";
 import { HubSearchPane } from "@/components/hub/HubSearchPane";
 import { HubLinksPane } from "@/components/hub/HubLinksPane";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { dmPeerMember } from "@/lib/avatar";
 import {
   RAIL,
   RAIL_TREE,
   type ChatBrowseTab,
   type MediaSubTab,
 } from "@/components/hub/hubRail";
+import { isArchiveHubFolder } from "@/lib/chat/store";
 
 function ConversationRow({
   entry,
@@ -80,6 +83,7 @@ function ConversationRow({
   online,
   active,
   folders,
+  myUserId,
   onOpen,
   onAddToFolder,
   onRemoveFromFolder,
@@ -91,6 +95,7 @@ function ConversationRow({
   online: boolean;
   active: boolean;
   folders: { id: string; name: string }[];
+  myUserId: string | null;
   onOpen: () => void;
   onAddToFolder: (folderId: string) => void;
   onRemoveFromFolder?: () => void;
@@ -109,6 +114,11 @@ function ConversationRow({
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
   const [menuOpen, setMenuOpen] = useState(false);
+  const peer = dmPeerMember(entry.members, myUserId, entry.kind);
+  const profiles = useChatStore((s) => s.profiles);
+  const peerAvatar = peer
+    ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
+    : null;
 
   return (
     <div
@@ -136,6 +146,13 @@ function ConversationRow({
             <MessageSquare size={14} />
           ) : entry.members.length > 2 ? (
             <Users size={14} />
+          ) : peer ? (
+            <PersonAvatar
+              userId={peer.userId}
+              avatarUrl={peerAvatar}
+              size={28}
+              className="border-0"
+            />
           ) : (
             <User size={14} />
           )}
@@ -357,31 +374,33 @@ export function WorkspaceHub() {
     [overview, hubMatchGroup, activeGroupFilter, items],
   );
 
-  const joinedIds = useMemo(
-    () => new Set(filteredOverview.map((c) => c.id)),
+  const archivedOverview = useMemo(
+    () => filteredOverview.filter((c) => Boolean(c.myArchivedAt)),
     [filteredOverview],
+  );
+  const activeOverview = useMemo(
+    () => filteredOverview.filter((c) => !c.myArchivedAt),
+    [filteredOverview],
+  );
+
+  const joinedIds = useMemo(
+    () => new Set(activeOverview.map((c) => c.id)),
+    [activeOverview],
   );
   const discoverable = publicChannels.filter((c) => !joinedIds.has(c.id) && !hubMatchGroup);
-  const sorted = useMemo(() => sortOverview(filteredOverview), [filteredOverview]);
-  const allByRecent = useMemo(
-    () =>
-      [...filteredOverview].sort((a, b) =>
-        (b.lastMessageAt ?? b.createdAt).localeCompare(a.lastMessageAt ?? a.createdAt),
-      ),
-    [filteredOverview],
-  );
+  const sorted = useMemo(() => sortOverview(activeOverview), [activeOverview]);
   const favorites = useMemo(
-    () => sortFavoritesAndNew(filteredOverview, new Date(), monthCounts ?? undefined),
-    [filteredOverview, monthCounts],
+    () => sortFavoritesAndNew(activeOverview, new Date(), monthCounts ?? undefined),
+    [activeOverview, monthCounts],
   );
   const people = sorted.filter((c) => c.kind === "dm");
   const channels = sorted.filter((c) => c.kind === "channel");
-  const convIds = useMemo(() => filteredOverview.map((c) => c.id), [filteredOverview]);
+  const convIds = useMemo(() => activeOverview.map((c) => c.id), [activeOverview]);
   const convIdsKey = convIds.join(",");
   /** Decyzje/notatki: wszystkie rozmowy — filtr grupy działa po etykiecie wpisu. */
   const registryConvIds = useMemo(() => overview.map((c) => c.id), [overview]);
   const registryConvIdsKey = registryConvIds.join(",");
-  const unread = totalUnread(filteredOverview);
+  const unread = totalUnread(activeOverview);
   const activeGroupName = activeGroupFilter
     ? groups.find((g) => g.id === activeGroupFilter)?.name
     : null;
@@ -455,6 +474,7 @@ export function WorkspaceHub() {
   const folderIdsInUse = useMemo(() => {
     const set = new Set<string>();
     for (const f of hubChatFolders) {
+      if (isArchiveHubFolder(f)) continue;
       for (const id of f.conversationIds) set.add(id);
     }
     return set;
@@ -548,7 +568,10 @@ export function WorkspaceHub() {
         authorName={authorName}
         online={dmOnline(entry)}
         active={entry.id === activeId}
-        folders={hubChatFolders.map((f) => ({ id: f.id, name: f.name }))}
+        folders={hubChatFolders
+          .filter((f) => !isArchiveHubFolder(f))
+          .map((f) => ({ id: f.id, name: f.name }))}
+        myUserId={myUserId}
         inFolderId={opts?.inFolderId}
         onOpen={() => openRow(entry)}
         onAddToFolder={(folderId) => addConversationToHubFolder(folderId, entry.id)}
@@ -645,14 +668,16 @@ export function WorkspaceHub() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") void runSearch();
               }}
-              placeholder={
+                  placeholder={
                 chatBrowse === "people"
                   ? "Szukaj wśród osób…"
                   : chatBrowse === "channels"
                     ? "Szukaj w kanałach…"
-                    : chatBrowse === "all"
-                      ? "Szukaj we wszystkich…"
-                      : "Szukaj w czacie…"
+                    : chatBrowse === "archive"
+                      ? "Szukaj w archiwum…"
+                      : chatBrowse === "all"
+                        ? "Szukaj we wszystkich…"
+                        : "Szukaj w czacie…"
               }
               className="w-full rounded-md border border-line bg-surface-raised py-1 pl-6 pr-6 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-accent/50"
             />
@@ -869,11 +894,13 @@ export function WorkspaceHub() {
       )
     ) : (
       <div className="thin-scrollbar flex min-h-0 flex-1 flex-col overflow-hidden">
-        {hubChatFolders.length > 0 && (
+        {hubChatFolders.filter((f) => !isArchiveHubFolder(f)).length > 0 && (
           <div className="shrink-0 border-b border-line/60">
-            {hubChatFolders.map((folder) => {
+            {hubChatFolders
+              .filter((f) => !isArchiveHubFolder(f))
+              .map((folder) => {
               const entries = folder.conversationIds
-                .map((id) => filteredOverview.find((c) => c.id === id))
+                .map((id) => activeOverview.find((c) => c.id === id))
                 .filter((e): e is ChatOverviewEntry => Boolean(e));
               const key = `folder:${folder.id}`;
               return (
@@ -912,7 +939,10 @@ export function WorkspaceHub() {
         )}
 
         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
-          {filteredOverview.length === 0 && hubChatFolders.length === 0 && (
+          {activeOverview.length === 0 &&
+            hubChatFolders.every((f) => isArchiveHubFolder(f) || f.conversationIds.length === 0) &&
+            archivedOverview.length === 0 &&
+            chatBrowse !== "archive" && (
             <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
               {hubMatchGroup && activeGroupFilter
                 ? "Brak dyskusji wpisów w tej grupie."
@@ -927,28 +957,72 @@ export function WorkspaceHub() {
           )}
 
           {chatBrowse === "all" && (
-            <>
-              {allByRecent.filter((e) => !folderIdsInUse.has(e.id)).length === 0 ? (
-                <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-                  {filteredOverview.length === 0
-                    ? hubMatchGroup && activeGroupFilter
-                      ? "Brak dyskusji wpisów w tej grupie."
-                      : "Nie masz jeszcze rozmów."
-                    : "Brak rozmów poza folderami."}
+            <div className="flex min-h-0 flex-1">
+              {/* Osoby — lewa kolumna */}
+              <div className="min-h-0 flex-1 overflow-y-auto border-r border-line/50">
+                <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                  Osoby
                 </div>
-              ) : (
-                allByRecent
-                  .filter((e) => !folderIdsInUse.has(e.id))
-                  .map((e) => renderConvRow(e))
-              )}
-            </>
+                {people.filter((e) => !folderIdsInUse.has(e.id)).length === 0 ? (
+                  <div className="px-4 py-6 text-center text-[11px] text-ink-faint">
+                    Brak rozmów prywatnych.
+                  </div>
+                ) : (
+                  people
+                    .filter((e) => !folderIdsInUse.has(e.id))
+                    .map((e) => renderConvRow(e))
+                )}
+              </div>
+              {/* Kanały — prawa kolumna */}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                  Kanały
+                </div>
+                {channels.filter((e) => !folderIdsInUse.has(e.id)).length === 0 ? (
+                  <div className="px-4 py-6 text-center text-[11px] text-ink-faint">
+                    Brak kanałów.
+                  </div>
+                ) : (
+                  channels
+                    .filter((e) => !folderIdsInUse.has(e.id))
+                    .map((e) => renderConvRow(e))
+                )}
+                {discoverable.length > 0 && (
+                  <>
+                    <div className="px-3 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+                      Do odkrycia
+                    </div>
+                    {discoverable.map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
+                          <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 32 : 15} />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                          {c.name}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void handleJoin(c.id)}
+                          className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
+                        >
+                          Dołącz
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
           )}
 
           {chatBrowse === "favorites" && (
             <>
               {favorites.filter((e) => !folderIdsInUse.has(e.id)).length === 0 ? (
                 <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-                  {filteredOverview.length === 0
+                  {activeOverview.length === 0
                     ? hubMatchGroup && activeGroupFilter
                       ? "Brak dyskusji wpisów w tej grupie."
                       : "Nie masz jeszcze rozmów."
@@ -963,58 +1037,128 @@ export function WorkspaceHub() {
           )}
 
           {chatBrowse === "people" && (
-            <>
-              {people.length === 0 ? (
-                <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-                  Brak rozmów prywatnych.
-                  <br />
-                  Dodaj osobę przez <span className="text-ink-light">+</span>.
+            people.length === 0 ? (
+              <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+                Brak rozmów prywatnych.
+                <br />
+                Dodaj osobę przez <span className="text-ink-light">+</span>.
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1">
+                <div className="min-h-0 flex-1 overflow-y-auto border-r border-line/50">
+                  <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                    Osoby
+                  </div>
+                  {people.filter((e) => !e.myPinnedAt).length === 0 ? (
+                    <div className="px-4 py-6 text-center text-[11px] text-ink-faint">
+                      Wszystkie osoby są przypięte.
+                    </div>
+                  ) : (
+                    people.filter((e) => !e.myPinnedAt).map((e) => renderConvRow(e))
+                  )}
                 </div>
-              ) : (
-                people.map((e) => renderConvRow(e))
-              )}
-            </>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                    Przypięte
+                  </div>
+                  {people.filter((e) => e.myPinnedAt).length === 0 ? (
+                    <div className="px-4 py-6 text-center text-[11px] text-ink-faint">
+                      Brak przypiętych osób.
+                    </div>
+                  ) : (
+                    people.filter((e) => e.myPinnedAt).map((e) => renderConvRow(e))
+                  )}
+                </div>
+              </div>
+            )
           )}
 
           {chatBrowse === "channels" && (
-            <>
-              {channels.length === 0 && discoverable.length === 0 ? (
-                <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-                  Brak kanałów.
-                  <br />
-                  Tu pojawią się grupy firmowe i kanały publiczne.
-                </div>
-              ) : (
-                <>
-                  {channels.map((e) => renderConvRow(e))}
-                  {discoverable.length > 0 && (
+            channels.length === 0 && discoverable.length === 0 ? (
+              <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+                Brak kanałów.
+                <br />
+                Tu pojawią się grupy firmowe i kanały publiczne.
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1">
+                <div className="min-h-0 flex-1 overflow-y-auto border-r border-line/50">
+                  <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                    Kanały
+                  </div>
+                  {channels.filter((e) => !e.myPinnedAt).length === 0 &&
+                  discoverable.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-[11px] text-ink-faint">
+                      {channels.length === 0
+                        ? "Brak kanałów."
+                        : "Wszystkie kanały są przypięte."}
+                    </div>
+                  ) : (
                     <>
-                      <div className="px-3 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
-                        Do odkrycia
-                      </div>
-                      {discoverable.map((c) => (
-                        <div
-                          key={c.id}
-                          className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
-                        >
-                          <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
-                            <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 32 : 15} />
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                            {c.name}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleJoin(c.id)}
-                            className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
-                          >
-                            Dołącz
-                          </button>
-                        </div>
-                      ))}
+                      {channels
+                        .filter((e) => !e.myPinnedAt)
+                        .map((e) => renderConvRow(e))}
+                      {discoverable.length > 0 && (
+                        <>
+                          <div className="px-3 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+                            Do odkrycia
+                          </div>
+                          {discoverable.map((c) => (
+                            <div
+                              key={c.id}
+                              className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
+                            >
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
+                                <ChannelIcon
+                                  iconUrl={c.iconUrl}
+                                  size={c.iconUrl ? 32 : 15}
+                                />
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                                {c.name}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleJoin(c.id)}
+                                className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
+                              >
+                                Dołącz
+                              </button>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </>
                   )}
-                </>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                    Przypięte
+                  </div>
+                  {channels.filter((e) => e.myPinnedAt).length === 0 ? (
+                    <div className="px-4 py-6 text-center text-[11px] text-ink-faint">
+                      Brak przypiętych kanałów.
+                    </div>
+                  ) : (
+                    channels.filter((e) => e.myPinnedAt).map((e) => renderConvRow(e))
+                  )}
+                </div>
+              </div>
+            )
+          )}
+
+          {chatBrowse === "archive" && (
+            <>
+              {archivedOverview.length === 0 ? (
+                <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+                  Brak zarchiwizowanych rozmów.
+                  <br />
+                  Archiwizuj rozmowę z menu opcji, aby trafiła tutaj.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 [&>*:nth-child(odd)]:border-r [&>*:nth-child(odd)]:border-line/50">
+                  {archivedOverview.map((e) => renderConvRow(e))}
+                </div>
               )}
             </>
           )}
@@ -1192,7 +1336,7 @@ export function WorkspaceHub() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line/80 bg-surface-raised/50 px-3">
+      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line/80 bg-sidebar/50 px-3">
         <button
           type="button"
           onClick={() => {
@@ -1244,7 +1388,7 @@ export function WorkspaceHub() {
 
       {!hubCollapsed && (
       <div className="flex min-h-0 flex-1">
-      <nav className="thin-scrollbar flex w-36 shrink-0 flex-col overflow-y-auto border-r border-line bg-surface-raised/40 p-1.5">
+      <nav className="thin-scrollbar flex w-36 shrink-0 flex-col overflow-y-auto border-r border-line bg-sidebar/60 p-1.5">
         <div className="flex flex-col gap-0.5" role="group" aria-label="Sekcje hubu">
           {RAIL_TREE.filter((item) =>
             item.kind === "browse"

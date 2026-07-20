@@ -5,6 +5,7 @@ import type { Item } from "@/types";
 import { itemMatchesGroupFilter } from "@/lib/groups";
 import { withNormalizedAllDay, itemCoversCalendarDay } from "@/lib/allDay";
 import { expandItemsForRange } from "@/lib/recurrence";
+import { itemSupportsTodoDone } from "@/lib/items";
 
 /** Łączna liczba wydarzeń w sekcjach „dzisiaj” + „nadchodzące”. */
 export const EVENTS_DISPLAY_TARGET = 5;
@@ -38,7 +39,7 @@ export function useTodayDashboardData() {
             itemMatchesGroupFilter(it, activeGroupFilter, "calendar") &&
             it.hasDueDate &&
             it.showInCalendar &&
-            (it.type !== "task" || !it.done),
+            !(itemSupportsTodoDone(it) && it.done),
         )
         .map(withNormalizedAllDay),
     [itemsMap, activeGroupFilter],

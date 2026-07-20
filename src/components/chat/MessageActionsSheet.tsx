@@ -81,7 +81,7 @@ function ActionRow({
       className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] leading-snug transition ${
         danger
           ? "text-red-400 hover:bg-red-500/10"
-          : "text-ink hover:bg-white/[0.06]"
+          : "text-ink hover:bg-ink/5 dark:hover:bg-white/[0.06]"
       }`}
     >
       <span className={`shrink-0 ${danger ? "text-red-400" : "text-ink-faint"}`}>
@@ -180,7 +180,7 @@ export function MessageActionsSheet({
         ref={menuRef}
         role="menu"
         aria-label="Akcje wiadomości"
-        className="absolute overflow-hidden rounded-xl border border-line/80 bg-surface-overlay/95 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-md"
+        className="absolute overflow-hidden rounded-xl border border-line/80 bg-surface-overlay/95 shadow-pop backdrop-blur-md"
         style={{
           width: MENU_WIDTH,
           top: pos?.top ?? -9999,
@@ -204,7 +204,7 @@ export function MessageActionsSheet({
                 e.stopPropagation();
                 act("react", emoji);
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-base transition hover:bg-white/[0.08] hover:scale-110"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-base transition hover:scale-110 hover:bg-ink/5 dark:hover:bg-white/[0.08]"
               aria-label={`Reaguj ${emoji}`}
             >
               {emoji}

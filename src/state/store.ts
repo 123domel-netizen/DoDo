@@ -5,6 +5,7 @@ import type { MyOrg } from "@/lib/orgs";
 import { loadAssignableContacts } from "@/lib/contacts";
 import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
+import { applyTheme } from "@/lib/theme";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import {
   ensureArchiveGroup,
@@ -132,7 +133,8 @@ function defaultSettings(): Settings {
     nineDayStartWeekday: 5,
     hourHeight: 52,
     hourHeightAuto: true,
-    settingsVersion: 13,
+    theme: "dark",
+    settingsVersion: 15,
   };
 }
 
@@ -262,6 +264,20 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     if (settings.hourHeightAuto === undefined) settings.hourHeightAuto = true;
     settings.settingsVersion = 13;
   }
+  if ((settings.settingsVersion ?? 0) < 14) {
+    if (!settings.theme) settings.theme = "dark";
+    settings.settingsVersion = 14;
+  }
+  if ((settings.settingsVersion ?? 0) < 15) {
+    groups = groups.map((g) => ({ ...g, color: migrateGroupColor(g.color) }));
+    tags = Object.fromEntries(
+      Object.entries(tags).map(([id, tag]) => [
+        id,
+        { ...tag, color: migrateGroupColor(tag.color) },
+      ]),
+    );
+    settings.settingsVersion = 15;
+  }
   return { settings, groups, items, activeGroupFilter, tags, myTagIdsByItem };
 }
 
@@ -300,6 +316,7 @@ export async function switchPersistUser(userId: string | null) {
     tags: migrated.tags ?? {},
     myTagIdsByItem: migrated.myTagIdsByItem ?? {},
   });
+  applyTheme(migrated.settings.theme);
 }
 
 export const useStore = create<AppState>()(
@@ -488,7 +505,10 @@ export const useStore = create<AppState>()(
 
       setActiveGroupFilter: (id) => set({ activeGroupFilter: id }),
 
-      setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+      setSettings: (patch) => {
+        set((s) => ({ settings: { ...s.settings, ...patch } }));
+        if (patch.theme !== undefined) applyTheme(patch.theme);
+      },
 
       startDraft: (partial) => {
         const item = createItem(partial);
@@ -663,6 +683,7 @@ export const useStore = create<AppState>()(
       }),
       onRehydrateStorage: () => (state) => {
         const migrated = migrateRehydratedState(state ?? undefined);
+        applyTheme(migrated.settings.theme);
         useStore.setState({
           hydrated: true,
           groups: migrated.groups,

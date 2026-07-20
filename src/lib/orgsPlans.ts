@@ -56,6 +56,15 @@ export function mapOrgRpcError(message: string | undefined | null): string {
     return "Nie można usunąć administratora zespołu. Najpierw przekaż rolę.";
   }
   if (m.includes("forbidden")) return "Brak uprawnień.";
+  if (m.includes("must belong to an org")) {
+    return "Dołącz do zespołu, aby tworzyć rozmowy.";
+  }
+  if (m.includes("members must share an org") || m.includes("target not in your org")) {
+    return "Możesz rozmawiać tylko z osobami ze swojego zespołu.";
+  }
+  if (m.includes("must share an org with a channel member")) {
+    return "Ten kanał należy do innego zespołu.";
+  }
   if (m.includes("invalid email")) return "Podaj poprawny adres e-mail.";
   if (m.includes("invalid name")) return "Podaj nazwę zespołu.";
   if (m.includes("invalid plan")) return "Nieprawidłowy plan.";

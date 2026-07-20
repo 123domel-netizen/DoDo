@@ -36,7 +36,7 @@ export function TodoPanel() {
   const patchItem = useStore((s) => s.patchItem);
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
-  const [tab, setTab] = useState<SideTab>("tasks");
+  const [tab, setTab] = useState<SideTab>("today");
   // Mobile: dolne menu już ma Dashboard / Kalendarz / Zadania — tu tylko lista zadań.
   const activeTab: SideTab = isMobile ? "tasks" : tab;
 
@@ -327,7 +327,7 @@ export function EventRow({
   const today = isToday(start);
   const tomorrow = isTomorrow(start);
   const shared = isSharedItem(item);
-  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#5E7FA8");
+  const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#4A8FC4");
   const reminderCount = effectiveReminders(item).length;
 
   const whenLabel = item.allDay
@@ -443,7 +443,7 @@ export function TodoRow({
       className={`group flex w-full gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       } ${pinned && !item.done ? "bg-accent/[0.06]" : ""}`}
-      style={{ borderLeft: `3px solid ${item.done ? "#3a3a42" : color}` }}
+      style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
     >
       {itemSupportsTodoDone(item) ? (
         <input

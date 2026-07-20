@@ -11,7 +11,7 @@ import { SHARE_GROUP_COLOR, SHARE_GROUP_NAME } from "@/lib/share";
 import { GroupsModal } from "./GroupsModal";
 import { AddGroupDialog } from "./AddGroupDialog";
 
-const SYSTEM_ACCENT = "#737881";
+const SYSTEM_ACCENT = "#6A7280";
 /** Stała wysokość przycisków systemowych ALL / ARCH (oś pionowa paska). */
 const SYSTEM_RAIL_H = "h-11 min-h-11 max-h-11";
 
@@ -95,7 +95,7 @@ export function GroupRail() {
   const shareActive = share ? activeGroupFilter === share.id : false;
 
   return (
-    <div className="flex h-full w-16 min-h-0 flex-col border-l border-line bg-surface py-2">
+    <div className="flex h-full w-16 min-h-0 flex-col border-l border-line bg-sidebar py-2">
       <button
         onClick={() => setShowManage(true)}
         className="mx-auto mb-2 shrink-0 rounded-lg p-2 text-ink-light transition hover:bg-surface-overlay hover:text-ink"

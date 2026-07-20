@@ -15,6 +15,7 @@ import { useHubHotkeys } from "@/hooks/useHubHotkeys";
 import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
 import { closeChatDetailPanel } from "@/lib/chat/init";
+import { watchSystemTheme, applyTheme } from "@/lib/theme";
 
 const WorkspaceHub = lazy(() =>
   import("@/components/hub/WorkspaceHub").then((m) => ({ default: m.WorkspaceHub })),
@@ -22,6 +23,7 @@ const WorkspaceHub = lazy(() =>
 
 export default function App() {
   const hydrated = useStore((s) => s.hydrated);
+  const theme = useStore((s) => s.settings.theme);
   const editingId = useStore((s) => s.editingId);
   const panelMode = useChatStore((s) => s.panelMode);
   const hubExpanded = useChatStore((s) => s.hubExpanded);
@@ -35,6 +37,11 @@ export default function App() {
   useEffect(() => {
     document.title = "DoDo";
   }, []);
+
+  useEffect(() => {
+    applyTheme(theme);
+    watchSystemTheme(theme, () => {});
+  }, [theme]);
 
   // Detal hubu / edytor wymuszają otwarcie prawego panelu.
   const detailForced = Boolean(editingId) || panelMode !== "todo";
@@ -103,7 +110,7 @@ export default function App() {
               )}
             </main>
             {panelOpen && (
-              <aside className="relative w-full max-w-[400px] shrink-0 border-l border-accent/15 bg-gradient-to-b from-surface-raised/80 to-surface shadow-[-6px_0_24px_rgba(0,0,0,0.12)] md:w-[380px] lg:w-[400px]">
+              <aside className="relative w-full max-w-[400px] shrink-0 border-l border-accent/20 bg-gradient-to-b from-sidebar/70 to-surface shadow-[-4px_0_20px_rgba(80,60,140,0.08)] md:w-[380px] lg:w-[400px]">
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-accent/35 via-accent/10 to-transparent" />
                 <SidePanel />
               </aside>

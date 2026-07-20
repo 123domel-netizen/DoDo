@@ -20,6 +20,7 @@ import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store"
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { bootstrapOrgs } from "@/lib/orgs";
 import { loadAssignableContacts } from "@/lib/contacts";
+import { migrateGroupColor, LEGACY_GROUP_COLOR_MAP } from "@/lib/factory";
 import {
   clearDirtyItems,
   clearDirtyParticipants,
@@ -162,7 +163,7 @@ function rowToGroup(row: Record<string, unknown>): Group {
   return {
     id: row.id as string,
     name,
-    color: (row.color as string) ?? "#5E7FA8",
+    color: migrateGroupColor((row.color as string) ?? "#4A8FC4"),
     sortOrder: (row.sort_order as number) ?? 0,
     system,
     hideFromAll: (row.hide_from_all as boolean | null) ?? undefined,
@@ -191,7 +192,7 @@ function rowToTag(row: Record<string, unknown>): UserTag {
     id: row.id as string,
     userId: row.user_id as string,
     name: (row.name as string) ?? "",
-    color: (row.color as string) ?? "#857A9E",
+    color: migrateGroupColor((row.color as string) ?? "#7A6CB8"),
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
@@ -219,9 +220,18 @@ async function pullUserTags() {
     return;
   }
   const tags: Record<string, UserTag> = {};
-  for (const row of data ?? []) tags[row.id as string] = rowToTag(row);
+  let colorsMigrated = false;
+  for (const row of data ?? []) {
+    const raw = ((row.color as string) ?? "").toLowerCase();
+    if (raw in LEGACY_GROUP_COLOR_MAP) colorsMigrated = true;
+    tags[row.id as string] = rowToTag(row);
+  }
   useStore.setState({ tags });
   lastTagsSnapshot = tagsSnapshot(tags);
+  if (colorsMigrated) {
+    lastTagsSnapshot = "";
+    await pushUserTags();
+  }
 }
 
 async function pushUserTags() {
@@ -419,6 +429,10 @@ async function pullGroups() {
     return;
   }
   const remote = (data ?? []).map(rowToGroup);
+  const colorsMigrated = (data ?? []).some((row) => {
+    const c = ((row.color as string) ?? "").toLowerCase();
+    return c in LEGACY_GROUP_COLOR_MAP;
+  });
 
   if (remote.length === 0) {
     // Pierwsze urządzenie: zasiej bazę lokalnymi grupami.
@@ -448,8 +462,8 @@ async function pullGroups() {
   if (deleteIds.length) {
     await supabase.from("groups").delete().in("id", deleteIds);
   }
-  // Dosyłka, gdy ensure dodał brakującą grupę systemową lub trzeba poprawić wiersze.
-  if (ensured.length !== remote.length - deleteIds.length || remap.size) {
+  // Dosyłka, gdy ensure dodał brakującą grupę systemową, remap lub migracja kolorów.
+  if (ensured.length !== remote.length - deleteIds.length || remap.size || colorsMigrated) {
     lastGroupsSnapshot = "";
     await pushGroupsFull();
   }

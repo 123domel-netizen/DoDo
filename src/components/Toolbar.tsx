@@ -7,10 +7,12 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import { useStore } from "@/state/store";
+import { useChatStore } from "@/lib/chat/store";
 import { enableNotificationsFlow } from "@/lib/push";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
 import { Logo } from "@/components/brand/Logo";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { ViewSettings } from "@/components/settings/ViewSettings";
 import { TagsSettings } from "@/components/settings/TagsSettings";
 import { TeamSettings } from "@/components/settings/TeamSettings";
@@ -124,7 +126,9 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
   const [user, setUser] = useState<AuthUserInfo | null>(null);
   const [ready, setReady] = useState(!cloudEnabled);
   const [open, setOpen] = useState(false);
-  const [avatarFailed, setAvatarFailed] = useState(false);
+  const profileAvatar = useChatStore((s) =>
+    user?.id ? s.profiles[user.id]?.avatarUrl : undefined,
+  );
 
   useEffect(() => {
     if (!cloudEnabled || !supabase) return;
@@ -140,10 +144,6 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
     });
     return () => sub.subscription.unsubscribe();
   }, []);
-
-  useEffect(() => {
-    setAvatarFailed(false);
-  }, [user?.avatarUrl]);
 
   if (!cloudEnabled) {
     return (
@@ -168,7 +168,6 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
   if (!user) return null;
 
   const label = user.name ?? user.email ?? "Konto";
-  const initials = label.slice(0, 1).toUpperCase();
 
   const logout = () => {
     setOpen(false);
@@ -182,21 +181,16 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised text-xs font-semibold text-ink transition hover:border-line-strong"
+          className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised transition hover:border-line-strong"
           title={user.email ?? label}
           aria-label="Konto użytkownika"
         >
-          {user.avatarUrl && !avatarFailed ? (
-            <img
-              src={user.avatarUrl}
-              alt=""
-              className="h-full w-full object-cover"
-              referrerPolicy="no-referrer"
-              onError={() => setAvatarFailed(true)}
-            />
-          ) : (
-            initials
-          )}
+          <PersonAvatar
+            userId={user.id}
+            avatarUrl={profileAvatar}
+            size={32}
+            className="border-0"
+          />
         </button>
         {open && (
           <>
@@ -207,11 +201,18 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
               onClick={() => setOpen(false)}
             />
             <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-line bg-surface-overlay p-2 shadow-pop">
-              <div className="px-2 pb-2">
-                <div className="truncate text-sm font-medium text-ink">{label}</div>
-                {user.email && user.name && (
-                  <div className="truncate text-xs text-ink-faint">{user.email}</div>
-                )}
+              <div className="flex items-center gap-2.5 px-2 pb-2">
+                <PersonAvatar
+                  userId={user.id}
+                  avatarUrl={profileAvatar}
+                  size={36}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-ink">{label}</div>
+                  {user.email && user.name && (
+                    <div className="truncate text-xs text-ink-faint">{user.email}</div>
+                  )}
+                </div>
               </div>
             </div>
           </>

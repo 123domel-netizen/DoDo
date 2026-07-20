@@ -1,4 +1,6 @@
 import { useStore } from "@/state/store";
+import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
+import { AvatarSettings } from "@/components/settings/AvatarSettings";
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(v, max));
@@ -11,7 +13,13 @@ export function ViewSettings() {
 
   return (
     <>
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+      <AvatarSettings />
+
+      <div className="mt-4">
+        <AppearanceSettings />
+      </div>
+
+      <div className="mt-4 mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
         Zakres widocznych godzin
       </div>
       <div className="flex items-center gap-2 text-sm text-ink-light">

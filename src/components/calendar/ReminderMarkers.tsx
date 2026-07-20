@@ -43,7 +43,7 @@ export function ReminderMarkers({
         if (placementForDay(probe, day, dayStartHour, dayEndHour) !== placement) return null;
 
         const g = marker.item.groupId ? groups[marker.item.groupId] : undefined;
-        const color = g?.color ?? "#9A8574";
+        const color = g?.color ?? "#C08F52";
 
         if (placement === "timed") {
           const geom = timedGeometry(probe, day, dayStartHour, dayEndHour, hourHeight);

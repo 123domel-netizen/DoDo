@@ -2,14 +2,14 @@ import type { Item, UserTag } from "@/types";
 import { isSharedItem } from "@/lib/share";
 
 export const TAG_COLORS = [
-  "#857A9E",
-  "#5E7FA8",
-  "#6B9080",
-  "#9A8574",
-  "#7D6B8C",
-  "#6A8F9B",
-  "#8A7B68",
-  "#737881",
+  "#7A6CB8",
+  "#4A8FC4",
+  "#4F9E7A",
+  "#C08F52",
+  "#8F6AA8",
+  "#4599AD",
+  "#A67D4A",
+  "#6A7280",
 ] as const;
 
 export function defaultTagColor(index = 0): string {

@@ -23,6 +23,7 @@ import { formatDuration } from "@/lib/chat/voice";
 import { isThreadUnread } from "@/lib/chat/recentThreads";
 import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
+import { PersonAvatar } from "@/components/chat/PersonAvatar";
 
 const INLINE_REACTIONS = QUICK_REACTIONS.slice(0, 3);
 
@@ -108,33 +109,26 @@ export function MessageBody({
 }
 
 function AuthorAvatar({
+  userId,
   name,
   avatarUrl,
   size = 28,
 }: {
+  userId?: string;
   name: string;
   avatarUrl?: string | null;
   size?: number;
 }) {
+  if (userId) {
+    return <PersonAvatar userId={userId} avatarUrl={avatarUrl} size={size} />;
+  }
+
   const initials = (name || "?")
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase() ?? "")
     .join("") || "?";
-
-  if (avatarUrl) {
-    return (
-      <img
-        src={avatarUrl}
-        alt=""
-        width={size}
-        height={size}
-        className="shrink-0 rounded-full border border-line object-cover"
-        style={{ width: size, height: size }}
-      />
-    );
-  }
 
   return (
     <span
@@ -333,7 +327,7 @@ function HoverToolbar({
         mine ? "right-0" : "left-0"
       }`}
     >
-      <div className="flex items-center gap-0.5 rounded-xl border border-line/80 bg-surface-overlay/95 p-0.5 shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md">
+      <div className="flex items-center gap-0.5 rounded-xl border border-line/80 bg-surface-overlay/95 p-0.5 shadow-pop backdrop-blur-md">
         {INLINE_REACTIONS.map((emoji) => (
           <button
             key={emoji}
@@ -343,7 +337,7 @@ function HoverToolbar({
               e.stopPropagation();
               onToggleReaction?.(msg, emoji);
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-sm transition hover:scale-110 hover:bg-white/[0.08]"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-sm transition hover:scale-110 hover:bg-ink/5 dark:hover:bg-white/[0.08]"
           >
             {emoji}
           </button>
@@ -357,7 +351,7 @@ function HoverToolbar({
               e.stopPropagation();
               onReply(msg);
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-white/[0.08] hover:text-ink"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-ink/5 hover:text-ink dark:hover:bg-white/[0.08]"
           >
             <CornerUpLeft size={14} />
           </button>
@@ -388,7 +382,7 @@ function HoverToolbar({
               e.stopPropagation();
               onOpenActions(msg, e.currentTarget.getBoundingClientRect());
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-white/[0.08] hover:text-ink"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-ink/5 hover:text-ink dark:hover:bg-white/[0.08]"
           >
             <MoreHorizontal size={14} />
           </button>
@@ -516,7 +510,12 @@ export function MessageBubble({
       {!mine && (
         <div className="flex w-7 shrink-0 flex-col pt-0.5">
           {showAuthor ? (
-            <AuthorAvatar name={authorName} avatarUrl={authorAvatarUrl} size={28} />
+            <AuthorAvatar
+              userId={msg.authorUserId}
+              name={authorName}
+              avatarUrl={authorAvatarUrl}
+              size={28}
+            />
           ) : (
             <span className="h-7 w-7" aria-hidden />
           )}
@@ -564,17 +563,17 @@ export function MessageBubble({
             className={`chat-msg-bubble relative box-border flow-root px-2.5 py-[7px] text-[14.5px] leading-[1.35] transition-colors ${
               mine
                 ? threadUnread
-                  ? "rounded-2xl rounded-br-[5px] border-l-4 border-white/70 bg-accent text-white shadow-[0_0_0_1px_rgba(124,116,255,0.7),0_4px_16px_rgba(124,116,255,0.4)]"
+                  ? "rounded-2xl rounded-br-[5px] border-l-4 border-white/70 bg-accent text-white shadow-glow"
                   : hasThread
-                    ? "rounded-2xl rounded-br-[5px] border-l-4 border-[#c4bfff] bg-accent/65 text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
-                    : "rounded-2xl rounded-br-[5px] bg-accent/45 text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
+                    ? "rounded-2xl rounded-br-[5px] border-l-4 border-accent-soft bg-accent/65 text-ink shadow-card"
+                    : "rounded-2xl rounded-br-[5px] bg-accent/45 text-ink shadow-card"
                 : threadUnread
-                  ? "rounded-2xl rounded-bl-[5px] border-l-4 border-accent bg-accent/40 text-ink shadow-[0_0_0_1px_rgba(124,116,255,0.55),0_4px_16px_rgba(124,116,255,0.3)]"
+                  ? "rounded-2xl rounded-bl-[5px] border-l-4 border-accent bg-accent/40 text-ink shadow-glow"
                   : hasThread
-                    ? "rounded-2xl rounded-bl-[5px] border-l-4 border-[#c4bfff] bg-accent/25 text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
+                    ? "rounded-2xl rounded-bl-[5px] border-l-4 border-accent-soft bg-accent/25 text-ink shadow-card"
                     : mentioned
-                      ? "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)] ring-1 ring-inset ring-accent/45"
-                      : "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-[0_1px_1.5px_rgba(0,0,0,0.28)]"
+                      ? "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card ring-1 ring-inset ring-accent/45"
+                      : "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card"
             } ${pending ? "opacity-60" : ""} ${failed ? "ring-1 ring-inset ring-red-500/50" : ""} ${
               flash ? "ring-2 ring-accent ring-offset-1 ring-offset-surface" : ""
             }`}
@@ -590,7 +589,7 @@ export function MessageBubble({
                       quoted.msg && onJumpTo ? onJumpTo(quoted.msg.id) : undefined
                     }
                     className={`mb-1.5 flex w-full items-start gap-1.5 rounded-md border-l-[3px] border-accent px-2 py-1 text-left ${
-                      mine ? "bg-black/20" : "bg-black/25"
+                      mine ? "bg-ink/10 dark:bg-black/20" : "bg-ink/15 dark:bg-black/25"
                     }`}
                   >
                     <CornerUpLeft size={11} className="mt-0.5 shrink-0 text-accent" />

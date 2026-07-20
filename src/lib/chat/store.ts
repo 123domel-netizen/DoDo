@@ -26,6 +26,31 @@ import type {
 /** Cache: ogon rozmowy czytelny offline; twardy limit na rozmowę. */
 const CACHE_PER_CONVERSATION = 50;
 
+export const HUB_ARCHIVE_FOLDER_ID = "system:archive";
+export const HUB_ARCHIVE_FOLDER_NAME = "Archiwum";
+
+export type HubChatFolder = {
+  id: string;
+  name: string;
+  conversationIds: string[];
+  system?: "archive";
+};
+
+export function isArchiveHubFolder(folder: { id: string; system?: string }): boolean {
+  return folder.system === "archive" || folder.id === HUB_ARCHIVE_FOLDER_ID;
+}
+
+export function ensureArchiveHubFolder(folders: HubChatFolder[]): HubChatFolder[] {
+  const archive: HubChatFolder = {
+    id: HUB_ARCHIVE_FOLDER_ID,
+    name: HUB_ARCHIVE_FOLDER_NAME,
+    conversationIds: [],
+    system: "archive",
+  };
+  const rest = folders.filter((f) => !isArchiveHubFolder(f));
+  return [archive, ...rest];
+}
+
 interface ChatState {
   hydrated: boolean;
   userId: string | null;
@@ -60,8 +85,8 @@ interface ChatState {
   hubMatchGroup: boolean;
   /** Ukryte zakładki hubu (widoczność per użytkownik; filtr grupy dodatkowo zawęża treść). */
   hubHiddenTabs: Array<"chat" | "decisions" | "notes" | "media" | "search">;
-  /** Własne foldery rozmów w zakładce Czat. */
-  hubChatFolders: { id: string; name: string; conversationIds: string[] }[];
+  /** Własne foldery rozmów w zakładce Czat (system: archive = Archiwum). */
+  hubChatFolders: HubChatFolder[];
   /** Zwińnięte sekcje listy czatu (pinned, frequent, more, channels, folder:id). */
   hubCollapsedSections: Record<string, boolean>;
   /** Bump po zapisie/usunięciu decyzji/notatki — odświeża listy hubu. */
@@ -271,7 +296,7 @@ export const useChatStore = create<ChatState>()(
       hubCollapsed: false,
       hubMatchGroup: false,
       hubHiddenTabs: [],
-      hubChatFolders: [],
+      hubChatFolders: ensureArchiveHubFolder([]),
       hubCollapsedSections: {},
       registryEpoch: 0,
       mediaConversationId: null,
@@ -606,19 +631,23 @@ export const useChatStore = create<ChatState>()(
       renameHubChatFolder: (id, name) =>
         set((s) => ({
           hubChatFolders: s.hubChatFolders.map((f) =>
-            f.id === id ? { ...f, name: name.trim() || f.name } : f,
+            f.id === id && !isArchiveHubFolder(f)
+              ? { ...f, name: name.trim() || f.name }
+              : f,
           ),
         })),
 
       removeHubChatFolder: (id) =>
         set((s) => ({
-          hubChatFolders: s.hubChatFolders.filter((f) => f.id !== id),
+          hubChatFolders: ensureArchiveHubFolder(
+            s.hubChatFolders.filter((f) => f.id !== id || isArchiveHubFolder(f)),
+          ),
         })),
 
       addConversationToHubFolder: (folderId, conversationId) =>
         set((s) => ({
           hubChatFolders: s.hubChatFolders.map((f) => {
-            if (f.id !== folderId) return f;
+            if (f.id !== folderId || isArchiveHubFolder(f)) return f;
             if (f.conversationIds.includes(conversationId)) return f;
             return { ...f, conversationIds: [...f.conversationIds, conversationId] };
           }),
@@ -627,7 +656,7 @@ export const useChatStore = create<ChatState>()(
       removeConversationFromHubFolder: (folderId, conversationId) =>
         set((s) => ({
           hubChatFolders: s.hubChatFolders.map((f) =>
-            f.id !== folderId
+            f.id !== folderId || isArchiveHubFolder(f)
               ? f
               : {
                   ...f,
@@ -653,7 +682,7 @@ export const useChatStore = create<ChatState>()(
           hubCollapsed: false,
           hubMatchGroup: false,
           hubHiddenTabs: [],
-          hubChatFolders: [],
+          hubChatFolders: ensureArchiveHubFolder([]),
           hubCollapsedSections: {},
           registryEpoch: 0,
           mediaConversationId: null,
@@ -684,6 +713,7 @@ export const useChatStore = create<ChatState>()(
         hubTab: s.hubTab,
         hubExpanded: s.hubExpanded,
         hubCollapsed: s.hubCollapsed,
+        hubLayoutVersion: 2,
         hubMatchGroup: s.hubMatchGroup,
         hubHiddenTabs: s.hubHiddenTabs,
         hubChatFolders: s.hubChatFolders,
@@ -718,15 +748,17 @@ export const useChatStore = create<ChatState>()(
           ? (hubTabNormalized as ChatState["hubTab"])
           : current.hubTab;
         const foldersRaw = p.hubChatFolders;
-        const hubChatFolders = Array.isArray(foldersRaw)
-          ? (foldersRaw as ChatState["hubChatFolders"]).filter(
-              (f) =>
-                f &&
-                typeof f.id === "string" &&
-                typeof f.name === "string" &&
-                Array.isArray(f.conversationIds),
-            )
-          : current.hubChatFolders;
+        const hubChatFolders = ensureArchiveHubFolder(
+          Array.isArray(foldersRaw)
+            ? (foldersRaw as ChatState["hubChatFolders"]).filter(
+                (f) =>
+                  f &&
+                  typeof f.id === "string" &&
+                  typeof f.name === "string" &&
+                  Array.isArray(f.conversationIds),
+              )
+            : current.hubChatFolders,
+        );
         const collapsedRaw = p.hubCollapsedSections;
         const hubCollapsedSections =
           collapsedRaw && typeof collapsedRaw === "object" && !Array.isArray(collapsedRaw)
@@ -743,7 +775,12 @@ export const useChatStore = create<ChatState>()(
           ...(p as Partial<ChatState>),
           panelMode: panelMode as ChatState["panelMode"],
           hubTab,
-          hubExpanded: Boolean(p.hubExpanded ?? current.hubExpanded),
+          // v2: hub domyślnie w mniejszej wysokości (~36vh); v1 wymuszał expanded.
+          hubExpanded:
+            typeof (p as { hubLayoutVersion?: number }).hubLayoutVersion === "number" &&
+            (p as { hubLayoutVersion?: number }).hubLayoutVersion! >= 2
+              ? Boolean(p.hubExpanded)
+              : false,
           hubCollapsed: Boolean(p.hubCollapsed ?? current.hubCollapsed),
           hubMatchGroup: Boolean(p.hubMatchGroup ?? current.hubMatchGroup),
           hubHiddenTabs,
