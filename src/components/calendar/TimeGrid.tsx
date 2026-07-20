@@ -48,6 +48,24 @@ import { ContextMenu, type MenuAction } from "./ContextMenu";
 
 const GUTTER = 56;
 
+/** Aktualny czas — odświeżany co 30 s i przy powrocie do karty. */
+function useCalendarNow(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const tick = () => setNow(new Date());
+    const id = window.setInterval(tick, 30_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+  return now;
+}
+
 interface TimeGridProps {
   days: Date[];
   items: Item[];
@@ -142,6 +160,21 @@ export function TimeGrid({
   const columnLayout = useMemo(() => dayColumnLayout(days), [days]);
   const hourSpan = Math.max(1, dayEndHour - dayStartHour);
   const gridHeight = hourSpan * hourHeight;
+  const now = useCalendarNow();
+
+  const nowIndicator = useMemo(() => {
+    const todayIndex = days.findIndex((d) => isSameDay(d, now));
+    if (todayIndex < 0) return null;
+    const mins = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    const startMin = dayStartHour * 60;
+    const endMin = dayEndHour * 60;
+    if (mins < startMin || mins > endMin) return null;
+    return {
+      topPx: ((mins - startMin) / 60) * hourHeight,
+      dayIndex: todayIndex,
+      label: fmt(now, "HH:mm"),
+    };
+  }, [days, now, dayStartHour, dayEndHour, hourHeight]);
 
   // Auto: dopasuj px/h do wysokości panelu kalendarza (do hubu).
   useLayoutEffect(() => {
@@ -480,7 +513,7 @@ export function TimeGrid({
           className={hourHeightAuto ? "min-h-0 flex-1" : undefined}
           style={hourHeightAuto ? undefined : { height: gridHeight }}
         >
-          <div className="flex" style={{ height: gridHeight }}>
+          <div className="relative flex" style={{ height: gridHeight }}>
           <div className="relative shrink-0" style={{ width: GUTTER }}>
             {hours.map((h, i) => (
               <div
@@ -642,6 +675,34 @@ export function TimeGrid({
               />
             ))}
           </div>
+
+          {nowIndicator && (
+            <div
+              className="pointer-events-none absolute inset-x-0 z-30"
+              style={{ top: nowIndicator.topPx }}
+              aria-hidden
+            >
+              <div
+                className="absolute top-1/2 flex -translate-y-1/2 items-center justify-end pr-1"
+                style={{ left: 0, width: GUTTER }}
+              >
+                <span className="rounded bg-surface px-1 text-[10px] font-semibold tabular-nums text-accent">
+                  {nowIndicator.label}
+                </span>
+              </div>
+              <div
+                className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent shadow-glow"
+                style={{ left: GUTTER }}
+              />
+              <div
+                className="absolute top-1/2 h-[2px] -translate-y-1/2 bg-accent"
+                style={{
+                  left: `calc(${GUTTER}px + (100% - ${GUTTER}px) * ${columnLayout[nowIndicator.dayIndex].leftPct / 100})`,
+                  width: `calc((100% - ${GUTTER}px) * ${columnLayout[nowIndicator.dayIndex].widthPct / 100})`,
+                }}
+              />
+            </div>
+          )}
           </div>
         </div>
 

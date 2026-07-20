@@ -16,6 +16,7 @@ import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
 import { closeChatDetailPanel } from "@/lib/chat/init";
 import { watchSystemTheme, applyTheme } from "@/lib/theme";
+import { installNotifyAudioArm } from "@/lib/chat/notifySound";
 
 const WorkspaceHub = lazy(() =>
   import("@/components/hub/WorkspaceHub").then((m) => ({ default: m.WorkspaceHub })),
@@ -37,6 +38,8 @@ export default function App() {
   useEffect(() => {
     document.title = "DoDo";
   }, []);
+
+  useEffect(() => installNotifyAudioArm(), []);
 
   useEffect(() => {
     applyTheme(theme);

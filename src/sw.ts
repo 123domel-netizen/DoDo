@@ -77,6 +77,8 @@ self.addEventListener("push", (event: PushEvent) => {
       body: data.body ?? "",
       icon: "/icon-192.png",
       badge: "/icon-192.png",
+      // Wibracja na telefonie (gdy system pozwala).
+      vibrate: [40, 60, 40],
       // tag: czat nadpisuje poprzednie powiadomienie z tej samej rozmowy.
       ...(data.tag ? { tag: data.tag } : {}),
       data: { url: data.url ?? "/" },

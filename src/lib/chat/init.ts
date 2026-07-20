@@ -5,6 +5,13 @@ import { useStore } from "@/state/store";
 import { onRouteChange, setRouteHash } from "@/lib/navigation";
 import * as api from "@/lib/chat/api";
 import { uploadAttachmentsForMessage, uploadChannelIcon } from "@/lib/chat/upload";
+import {
+  channelPresetIconUrl,
+  findChannelPreset,
+} from "@/lib/chat/channelPresets";
+import { playIncomingMessageAlert } from "@/lib/chat/notifySound";
+import { isMuted } from "@/lib/chat/feed";
+import { hasActivePushSubscription } from "@/lib/push";
 import { useChatStore, switchChatPersistUser } from "@/lib/chat/store";
 import { mergeMessages } from "@/lib/chat/feed";
 import { firstUrl } from "@/lib/chat/markdown";
@@ -930,6 +937,21 @@ export async function setChannelIcon(
   return {};
 }
 
+/** Ustaw ikonę z biblioteki propozycji (`preset:{id}`) albo wyczyść. */
+export async function setChannelIconPreset(
+  conversationId: string,
+  presetId: string | null,
+): Promise<{ error?: string }> {
+  const iconUrl = presetId ? channelPresetIconUrl(presetId) : null;
+  if (presetId && !findChannelPreset(presetId)) {
+    return { error: "Nieznana propozycja ikony." };
+  }
+  const { error } = await api.updateConversationIcon(conversationId, iconUrl);
+  if (error) return { error };
+  await refreshOverview();
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Realtime
 // ---------------------------------------------------------------------------
@@ -948,6 +970,34 @@ function handleIncomingMessage(msg: ChatMessage) {
   ) {
     markRead(msg.conversationId);
   }
+  maybePlayIncomingAlert(msg, visible);
+}
+
+/** Ping + wibracja, gdy nie jesteśmy w tej rozmowie / nie ma pusha w tle. */
+function maybePlayIncomingAlert(msg: ChatMessage, visible: boolean) {
+  const st = useChatStore.getState();
+  if (!st.userId || msg.authorUserId === st.userId) return;
+  if (msg.kind === "system" || msg.deletedAt) return;
+
+  const entry = st.overview.find((c) => c.id === msg.conversationId);
+  if (entry) {
+    if (entry.myArchivedAt) return;
+    if (isMuted(entry)) return;
+    if (entry.myNotify === "none") return;
+    if (entry.myNotify === "mentions" && !msg.mentions.includes(st.userId)) return;
+  }
+
+  const viewingLive =
+    visible &&
+    st.activeConversationId === msg.conversationId &&
+    !msg.threadRootId;
+  if (viewingLive) return;
+
+  void (async () => {
+    // Zamknięta karta + aktywny push → dźwięk/wibracja z systemu (notification).
+    if (!visible && (await hasActivePushSubscription())) return;
+    playIncomingMessageAlert();
+  })();
 }
 
 function teardownRealtime() {

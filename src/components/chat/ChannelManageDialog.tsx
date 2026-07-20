@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Camera, Shield, ShieldOff, UserMinus, UserPlus } from "lucide-react";
+import { Archive, Camera, Shield, ShieldOff, Upload, UserMinus, UserPlus } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
@@ -7,10 +7,15 @@ import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
 import { loadChatEligiblePeople } from "@/lib/contacts";
 import {
+  CHANNEL_ICON_PRESETS,
+  parseChannelPresetId,
+} from "@/lib/chat/channelPresets";
+import {
   archiveConversation,
   inviteMember,
   removeMember,
   setChannelIcon,
+  setChannelIconPreset,
   setChannelMemberRole,
 } from "@/lib/chat/init";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
@@ -35,6 +40,7 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [iconPicker, setIconPicker] = useState(false);
   const [pickIds, setPickIds] = useState<Set<string>>(new Set());
   const [eligible, setEligible] = useState<Person[]>([]);
 
@@ -50,9 +56,13 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
   );
 
   const adminCount = members.filter((m) => isAdminRole(m.role)).length;
+  const activePresetId = parseChannelPresetId(entry.iconUrl);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setIconPicker(false);
+      return;
+    }
     let cancelled = false;
     void loadChatEligiblePeople({ myOrgs, myUserId }).then((list) => {
       if (!cancelled) setEligible(list);
@@ -80,7 +90,19 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
 
   const onPickIcon = (file: File | null) => {
     if (!file) return;
-    void run(() => setChannelIcon(entry.id, file));
+    void run(async () => {
+      const res = await setChannelIcon(entry.id, file);
+      if (!res.error) setIconPicker(false);
+      return res;
+    });
+  };
+
+  const onPickPreset = (presetId: string) => {
+    void run(async () => {
+      const res = await setChannelIconPreset(entry.id, presetId);
+      if (!res.error) setIconPicker(false);
+      return res;
+    });
   };
 
   const togglePick = (userId: string) => {
@@ -122,12 +144,16 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
           <button
             type="button"
             disabled={busy}
-            onClick={() => fileRef.current?.click()}
+            onClick={() => setIconPicker((v) => !v)}
             className="group relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised text-ink-faint transition hover:border-accent/40"
             title="Zmień ikonę"
           >
             {entry.iconUrl ? (
-              <ChannelIcon iconUrl={entry.iconUrl} size={56} className="!h-full !w-full rounded-full" />
+              <ChannelIcon
+                iconUrl={entry.iconUrl}
+                size={56}
+                className="!h-full !w-full rounded-full"
+              />
             ) : (
               <ChannelIcon iconUrl={null} size={22} />
             )}
@@ -138,7 +164,7 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp,image/gif"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
@@ -152,16 +178,23 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => fileRef.current?.click()}
+                onClick={() => setIconPicker((v) => !v)}
                 className="rounded-md border border-line px-2 py-1 text-[11px] text-ink-light transition hover:border-line-strong hover:text-ink"
               >
-                Ustaw ikonę
+                {iconPicker ? "Zamknij ikony" : "Ustaw ikonę"}
               </button>
               {entry.iconUrl && (
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void run(() => setChannelIcon(entry.id, null))}
+                  onClick={() =>
+                    void run(async () => {
+                      const res = entry.iconUrl?.startsWith("preset:")
+                        ? await setChannelIconPreset(entry.id, null)
+                        : await setChannelIcon(entry.id, null);
+                      return res;
+                    })
+                  }
                   className="rounded-md border border-line px-2 py-1 text-[11px] text-ink-light transition hover:border-line-strong hover:text-ink"
                 >
                   Usuń ikonę
@@ -170,6 +203,45 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
             </div>
           </div>
         </div>
+
+        {iconPicker && (
+          <div className="mb-4 rounded-xl border border-line bg-surface-raised/60 p-3">
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+              Propozycje
+            </div>
+            <div className="grid grid-cols-8 gap-1.5">
+              {CHANNEL_ICON_PRESETS.map((p) => {
+                const active = activePresetId === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={busy}
+                    title={p.label}
+                    onClick={() => onPickPreset(p.id)}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full text-base transition hover:scale-105 disabled:opacity-50 ${
+                      active
+                        ? "ring-2 ring-accent ring-offset-1 ring-offset-surface"
+                        : "hover:ring-1 hover:ring-line-strong"
+                    }`}
+                    style={{ background: p.bg }}
+                  >
+                    <span aria-hidden>{p.emoji}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => fileRef.current?.click()}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-2 text-[12px] font-medium text-ink transition hover:border-line-strong disabled:opacity-50"
+            >
+              <Upload size={13} />
+              Wgraj własne zdjęcie…
+            </button>
+          </div>
+        )}
 
         <div className="mb-1 flex items-center justify-between">
           <div className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
