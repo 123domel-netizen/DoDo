@@ -155,34 +155,53 @@ function MessageFeed({
   inThread?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(initialBottom);
-  const lastCount = useRef(0);
+  const lastTailKey = useRef("");
   const loadingOlder = useRef(false);
   const loadingNewer = useRef(false);
   /** scrollHeight sprzed dołożenia starszych — do zakotwiczenia pozycji. */
   const anchorHeight = useRef<number | null>(null);
 
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // Start / powrót do trybu „ogon”: trzymaj dół.
+  useLayoutEffect(() => {
+    stickToBottom.current = initialBottom;
+    lastTailKey.current = "";
+    if (initialBottom) scrollToBottom();
+  }, [initialBottom, scrollToBottom]);
+
+  // Nowe wiadomości / zmiana ogona — dociągnij na dół (albo kotwica przy starszych).
+  const tailKey = `${messages.length}:${messages[messages.length - 1]?.id ?? ""}`;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (messages.length !== lastCount.current) {
-      lastCount.current = messages.length;
-      if (anchorHeight.current !== null) {
-        el.scrollTop += el.scrollHeight - anchorHeight.current;
-        anchorHeight.current = null;
-      } else if (stickToBottom.current) {
-        el.scrollTop = el.scrollHeight;
-      }
-    }
-  }, [messages]);
+    if (tailKey === lastTailKey.current) return;
+    lastTailKey.current = tailKey;
 
+    if (anchorHeight.current !== null) {
+      el.scrollTop += el.scrollHeight - anchorHeight.current;
+      anchorHeight.current = null;
+      return;
+    }
+    if (stickToBottom.current) scrollToBottom();
+  }, [tailKey, scrollToBottom]);
+
+  // Awatary / obrazki / zmiana wysokości layoutu — dociągnij, jeśli jesteśmy „przyklejeni”.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el && initialBottom) el.scrollTop = el.scrollHeight;
-    stickToBottom.current = initialBottom;
-    // przy zmianie rozmowy / trybu zawsze od nowa
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const content = contentRef.current;
+    if (!content) return;
+    const ro = new ResizeObserver(() => {
+      if (stickToBottom.current && anchorHeight.current === null) scrollToBottom();
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
 
   // Skok do podświetlonej wiadomości (cytat / media / decyzje / notatki).
   useEffect(() => {
@@ -230,6 +249,7 @@ function MessageFeed({
       }}
       className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-2"
     >
+      <div ref={contentRef}>
       {hasOlder && onLoadOlder && (
         <div className="flex justify-center pb-2">
           <button
@@ -305,6 +325,7 @@ function MessageFeed({
           </button>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -1084,7 +1105,7 @@ export function ConversationView({
       )}
 
       <MessageFeed
-        key={focus ? `focus-${focus.anchorId}` : "tail"}
+        key={focus ? `${conversationId}-focus-${focus.anchorId}` : `${conversationId}-tail`}
         messages={displayedFeed}
         myUserId={myUserId}
         profiles={profiles}

@@ -10,8 +10,13 @@ import {
   findChannelPreset,
 } from "@/lib/chat/channelPresets";
 import { playIncomingMessageAlert } from "@/lib/chat/notifySound";
+import {
+  clearChatNotifyDigest,
+  formatChatNotifyDigest,
+  pushChatNotifyDigest,
+} from "@/lib/chat/notifyDigest";
 import { isMuted } from "@/lib/chat/feed";
-import { hasActivePushSubscription } from "@/lib/push";
+import { hasActivePushSubscription, showLocalNotification, syncExistingPushSubscription } from "@/lib/push";
 import { useChatStore, switchChatPersistUser } from "@/lib/chat/store";
 import { mergeMessages } from "@/lib/chat/feed";
 import { firstUrl } from "@/lib/chat/markdown";
@@ -134,6 +139,7 @@ function stopReconcileInterval() {
 // ---------------------------------------------------------------------------
 
 export function markRead(conversationId: string) {
+  clearChatNotifyDigest(conversationId);
   const at = new Date().toISOString();
   useChatStore.getState().markReadLocal(conversationId, at);
   pendingReadAt.set(conversationId, at);
@@ -985,7 +991,7 @@ function handleIncomingMessage(msg: ChatMessage) {
   maybePlayIncomingAlert(msg, visible);
 }
 
-/** Ping + wibracja, gdy nie jesteśmy w tej rozmowie / nie ma pusha w tle. */
+/** Ping + wibracja + (w tle) lokalny toast OS, gdy nie jesteśmy w tej rozmowie. */
 function maybePlayIncomingAlert(msg: ChatMessage, visible: boolean) {
   const st = useChatStore.getState();
   if (!st.userId || msg.authorUserId === st.userId) return;
@@ -1005,10 +1011,42 @@ function maybePlayIncomingAlert(msg: ChatMessage, visible: boolean) {
     !msg.threadRootId;
   if (viewingLive) return;
 
-  void (async () => {
-    // Zamknięta karta + aktywny push → dźwięk/wibracja z systemu (notification).
-    if (!visible && (await hasActivePushSubscription())) return;
+  // Otwarta aplikacja (inna rozmowa / hub): dźwięk + wibracja w karcie.
+  if (visible) {
     playIncomingMessageAlert();
+    return;
+  }
+
+  // Karta w tle: Web Push z serwera (jeśli jest subskrypcja) albo lokalny toast ze stackiem.
+  void (async () => {
+    if (await hasActivePushSubscription()) return;
+    playIncomingMessageAlert();
+    const author =
+      st.profiles[msg.authorUserId]?.displayName ||
+      entry?.members.find((m) => m.userId === msg.authorUserId)?.displayName ||
+      "Ktoś";
+    const title =
+      entry?.kind === "channel"
+        ? `#${entry.name ?? "kanał"}`
+        : entry?.kind === "item"
+          ? "Dyskusja"
+          : author;
+    const bodyPreview =
+      msg.kind === "gif"
+        ? "GIF"
+        : msg.kind === "voice"
+          ? "Wiadomość głosowa"
+          : msg.kind === "poll"
+            ? "Ankieta"
+            : (msg.body || "Nowa wiadomość").replace(/\s+/g, " ").trim().slice(0, 100);
+    const line =
+      entry?.kind === "dm" ? bodyPreview : `${author}: ${bodyPreview}`;
+    const digest = pushChatNotifyDigest(msg.conversationId, title, line);
+    const formatted = formatChatNotifyDigest(digest);
+    showLocalNotification(formatted.title, formatted.body, {
+      tag: `chat-${msg.conversationId}`,
+      url: `/#/czat/${msg.conversationId}`,
+    });
   })();
 }
 
@@ -1225,6 +1263,7 @@ async function handleChatUser(userId: string | null) {
   startPresence();
   startReconcileInterval();
   void flushOutbox();
+  void syncExistingPushSubscription();
 }
 
 export function initChat() {

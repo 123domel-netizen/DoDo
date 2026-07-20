@@ -2,7 +2,7 @@ import type { ThemePreference } from "@/types";
 
 const THEME_CACHE_KEY = "dodo-theme";
 const THEME_PREF_KEY = "dodo-theme-pref";
-const THEME_COLORS = { light: "#f0eff5", dark: "#0b0b0d" } as const;
+const THEME_COLORS = { light: "#f0eff5", dark: "#100e16" } as const;
 
 export function resolveTheme(pref: ThemePreference): "light" | "dark" {
   if (pref === "system") {

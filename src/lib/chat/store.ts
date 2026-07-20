@@ -292,7 +292,7 @@ export const useChatStore = create<ChatState>()(
       userId: null,
       panelMode: "todo",
       hubTab: "chat",
-      hubExpanded: false,
+      hubExpanded: true,
       hubCollapsed: false,
       hubMatchGroup: false,
       hubHiddenTabs: [],
@@ -678,7 +678,7 @@ export const useChatStore = create<ChatState>()(
           userId: null,
           panelMode: "todo",
           hubTab: "chat",
-          hubExpanded: false,
+          hubExpanded: true,
           hubCollapsed: false,
           hubMatchGroup: false,
           hubHiddenTabs: [],
@@ -713,7 +713,7 @@ export const useChatStore = create<ChatState>()(
         hubTab: s.hubTab,
         hubExpanded: s.hubExpanded,
         hubCollapsed: s.hubCollapsed,
-        hubLayoutVersion: 2,
+        hubLayoutVersion: 3,
         hubMatchGroup: s.hubMatchGroup,
         hubHiddenTabs: s.hubHiddenTabs,
         hubChatFolders: s.hubChatFolders,
@@ -775,12 +775,13 @@ export const useChatStore = create<ChatState>()(
           ...(p as Partial<ChatState>),
           panelMode: panelMode as ChatState["panelMode"],
           hubTab,
-          // v2: hub domyślnie w mniejszej wysokości (~36vh); v1 wymuszał expanded.
+          // v3: hub domyślnie powiększony; od v3 pamiętamy ostatni wybór użytkownika.
           hubExpanded:
             typeof (p as { hubLayoutVersion?: number }).hubLayoutVersion === "number" &&
-            (p as { hubLayoutVersion?: number }).hubLayoutVersion! >= 2
-              ? Boolean(p.hubExpanded)
-              : false,
+            (p as { hubLayoutVersion?: number }).hubLayoutVersion! >= 3 &&
+            typeof p.hubExpanded === "boolean"
+              ? p.hubExpanded
+              : true,
           hubCollapsed: Boolean(p.hubCollapsed ?? current.hubCollapsed),
           hubMatchGroup: Boolean(p.hubMatchGroup ?? current.hubMatchGroup),
           hubHiddenTabs,

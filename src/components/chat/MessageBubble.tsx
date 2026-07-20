@@ -368,7 +368,7 @@ function HoverToolbar({
           >
             <MessageSquare size={14} />
             {replyCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[8px] font-semibold text-white">
+              <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-thread px-0.5 text-[8px] font-semibold text-white">
                 {replyCount}
               </span>
             )}
@@ -563,14 +563,14 @@ export function MessageBubble({
             className={`chat-msg-bubble relative box-border flow-root px-2.5 py-[7px] text-[14.5px] leading-[1.35] transition-colors ${
               mine
                 ? threadUnread
-                  ? "rounded-2xl rounded-br-[5px] border-l-4 border-white/70 bg-accent text-white shadow-glow"
+                  ? "rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/45 text-ink shadow-card ring-1 ring-thread/35"
                   : hasThread
-                    ? "rounded-2xl rounded-br-[5px] border-l-4 border-accent-soft bg-accent/65 text-ink shadow-card"
+                    ? "rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/28 text-ink shadow-card"
                     : "rounded-2xl rounded-br-[5px] bg-accent/45 text-ink shadow-card"
                 : threadUnread
-                  ? "rounded-2xl rounded-bl-[5px] border-l-4 border-accent bg-accent/40 text-ink shadow-glow"
+                  ? "rounded-2xl rounded-bl-[5px] border-l-4 border-thread bg-thread/30 text-ink shadow-card ring-1 ring-thread/30"
                   : hasThread
-                    ? "rounded-2xl rounded-bl-[5px] border-l-4 border-accent-soft bg-accent/25 text-ink shadow-card"
+                    ? "rounded-2xl rounded-bl-[5px] border-l-4 border-thread-soft bg-thread/16 text-ink shadow-card"
                     : mentioned
                       ? "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card ring-1 ring-inset ring-accent/45"
                       : "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card"
@@ -732,17 +732,17 @@ export function MessageBubble({
             onClick={() => onOpenThread(msg.id)}
             className={`mt-1 inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-[11px] font-semibold transition ${
               threadUnread
-                ? "bg-accent/20 text-accent hover:bg-accent/30"
-                : "text-accent/85 hover:bg-accent/10"
+                ? "bg-thread/20 text-thread hover:bg-thread/30"
+                : "text-thread/90 hover:bg-thread/10"
             } ${mine ? "self-end" : "self-start"}`}
           >
             <MessageSquare
               size={12}
-              className={threadUnread ? "fill-accent/40" : undefined}
+              className={threadUnread ? "fill-thread/35" : undefined}
             />
             {replyCount === 1 ? "1 odpowiedź" : `${replyCount} odpowiedzi`}
             {threadUnread && (
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-label="Nieodczytane" />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-thread" aria-label="Nieodczytane" />
             )}
           </button>
         )}

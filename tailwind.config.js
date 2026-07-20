@@ -38,6 +38,10 @@ export default {
           soft: "rgb(var(--color-accent-soft) / <alpha-value>)",
           deep: "rgb(var(--color-accent-deep) / <alpha-value>)",
         },
+        thread: {
+          DEFAULT: "rgb(var(--color-thread) / <alpha-value>)",
+          soft: "rgb(var(--color-thread-soft) / <alpha-value>)",
+        },
       },
       boxShadow: {
         pop: "var(--shadow-pop)",

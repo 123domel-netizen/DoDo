@@ -7,6 +7,7 @@ import { AuthGate } from "@/components/AuthGate";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
+import { NotificationPermissionPrompt } from "@/components/prompts/NotificationPermissionPrompt";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
@@ -76,6 +77,7 @@ export default function App() {
     <ErrorBoundary>
       <AuthGate>
         <GroupSelectPrompt />
+        <NotificationPermissionPrompt />
       {isMobile ? (
         <MobileShell />
       ) : (
@@ -92,8 +94,8 @@ export default function App() {
                     hubCollapsed
                       ? "h-9"
                       : hubExpanded
-                        ? "h-[min(55vh,560px)]"
-                        : "h-[min(36vh,340px)]"
+                        ? "h-[min(46vh,460px)]"
+                        : "h-[min(30vh,280px)]"
                   }`}
                 >
                   <ErrorBoundary label="hub" compact>
@@ -113,7 +115,7 @@ export default function App() {
               )}
             </main>
             {panelOpen && (
-              <aside className="relative w-full max-w-[400px] shrink-0 border-l border-accent/20 bg-gradient-to-b from-sidebar/70 to-surface shadow-[-4px_0_20px_rgba(80,60,140,0.08)] md:w-[380px] lg:w-[400px]">
+              <aside className="relative w-full max-w-[400px] shrink-0 border-l border-accent/20 bg-gradient-to-b from-sidebar/70 to-surface shadow-panel md:w-[380px] lg:w-[400px]">
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-accent/35 via-accent/10 to-transparent" />
                 <SidePanel />
               </aside>

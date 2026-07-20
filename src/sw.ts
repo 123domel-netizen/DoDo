@@ -80,7 +80,8 @@ self.addEventListener("push", (event: PushEvent) => {
       // Wibracja na telefonie (gdy system pozwala).
       vibrate: [40, 60, 40],
       // tag: czat nadpisuje poprzednie powiadomienie z tej samej rozmowy.
-      ...(data.tag ? { tag: data.tag } : {}),
+      // renotify: kolejna wiadomość znów dzwoni / wibruje.
+      ...(data.tag ? { tag: data.tag, renotify: true } : {}),
       data: { url: data.url ?? "/" },
     }),
   );

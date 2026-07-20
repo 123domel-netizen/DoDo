@@ -52,6 +52,7 @@ export function SidePanel() {
     return (
       <DetailPanelChrome label={convLabel}>
         <ConversationView
+          key={activeConversationId}
           conversationId={activeConversationId}
           onBack={() => showTodoInPanel()}
         />

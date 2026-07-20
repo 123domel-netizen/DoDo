@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { enableNotificationsFlow } from "@/lib/push";
+import { enableNotificationsFlow, hasActivePushSubscription } from "@/lib/push";
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { authUserFromSupabaseUser, signOut, type AuthUserInfo } from "@/lib/auth";
 import { Logo } from "@/components/brand/Logo";
@@ -34,8 +34,20 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
 
   const enableNotifications = async () => {
     const res = await enableNotificationsFlow();
+    setPushOn(res.mode === "push" || (await hasActivePushSubscription()));
     alert(res.message);
   };
+
+  const [pushOn, setPushOn] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void hasActivePushSubscription().then((on) => {
+      if (!cancelled) setPushOn(on);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <header className="glass relative z-30 flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
@@ -59,9 +71,15 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
 
         <button
           onClick={enableNotifications}
-          className="rounded-lg p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+          className={`rounded-lg p-1.5 transition hover:bg-surface-overlay hover:text-ink ${
+            pushOn ? "text-accent" : "text-ink-light"
+          }`}
           aria-label="Powiadomienia"
-          title="Włącz powiadomienia"
+          title={
+            pushOn
+              ? "Powiadomienia push włączone"
+              : "Włącz powiadomienia (wymagane, żeby dzwoniło przy wiadomości)"
+          }
         >
           <Bell size={18} />
         </button>

@@ -299,6 +299,7 @@ export function ChatPanel() {
     return (
       <div className="h-full min-h-0">
         <ConversationView
+          key={activeId}
           conversationId={activeId}
           onBack={() => {
             setActiveConversation(null);
@@ -505,7 +506,7 @@ export function ChatPanel() {
 
       <section className="min-h-0 min-w-0 flex-[2]">
         {activeId ? (
-          <ConversationView conversationId={activeId} pane />
+          <ConversationView key={activeId} conversationId={activeId} pane />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-xs text-ink-faint">
             Wybierz rozmowę z listy po lewej.

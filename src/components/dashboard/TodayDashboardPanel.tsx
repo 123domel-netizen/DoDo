@@ -274,16 +274,6 @@ function DashboardEventRow({
     <div
       className={`${DASHBOARD_LEFT_COL} flex-col items-center pt-0.5 text-[11px] font-medium tabular-nums text-ink-light`}
     >
-      {canToggleDone && (
-        <input
-          type="checkbox"
-          checked={item.done}
-          onChange={onToggle}
-          disabled={shared}
-          onClick={(e) => e.stopPropagation()}
-          className={`mb-1 h-4 w-4 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
-        />
-      )}
       {showEventDate && (
         <div className="mb-0.5 whitespace-nowrap text-center text-[10px] leading-tight text-ink-faint">
           {fmt(item.start, "EEE d MMM")}
@@ -327,6 +317,18 @@ function DashboardEventRow({
     </div>
   );
 
+  const toggleCol = canToggleDone ? (
+    <input
+      type="checkbox"
+      checked={item.done}
+      onChange={onToggle}
+      disabled={shared}
+      onClick={(e) => e.stopPropagation()}
+      className={`mt-0.5 h-4 w-4 shrink-0 self-start accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
+      title={item.done ? "Oznacz jako niewykonane" : "Oznacz jako wykonane"}
+    />
+  ) : null;
+
   if (canToggleDone) {
     return (
       <div
@@ -337,6 +339,7 @@ function DashboardEventRow({
       >
         {timeCol}
         {body}
+        {toggleCol}
       </div>
     );
   }

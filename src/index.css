@@ -20,6 +20,9 @@
     --color-accent: 109 99 255;
     --color-accent-soft: 134 126 255;
     --color-accent-deep: 88 78 220;
+    /* Wątki — odróżnione od accent (moje) i surface-raised (rozmówca) */
+    --color-thread: 14 148 136;
+    --color-thread-soft: 45 170 158;
 
     --line-strong-hex: #c2bed2;
     --weekend-sat: rgba(124, 116, 255, 0.045);
@@ -33,37 +36,42 @@
       0 2px 8px rgba(0, 0, 0, 0.05);
     --shadow-card: 0 1px 3px rgba(80, 60, 140, 0.08);
     --shadow-glow: 0 0 0 1px rgba(124, 116, 255, 0.38), 0 6px 20px rgba(124, 116, 255, 0.16);
+    --shadow-panel: -4px 0 20px rgba(80, 60, 140, 0.08);
   }
 
   .dark {
     color-scheme: dark;
 
-    --color-canvas: 11 11 13;
-    --color-surface: 20 20 23;
-    --color-surface-raised: 27 27 32;
-    --color-surface-overlay: 33 33 40;
-    --color-sidebar: 27 27 32;
-    --color-line: 40 40 46;
-    --color-line-strong: 58 58 66;
-    --color-ink: 236 236 238;
-    --color-ink-light: 164 164 173;
-    --color-ink-faint: 108 108 118;
-    --color-accent: 124 116 255;
-    --color-accent-soft: 155 149 255;
-    --color-accent-deep: 99 91 219;
+    /* Slack aubergine: ta sama hierarchia co jasny, z fioletowym podtonem */
+    --color-canvas: 16 14 22;
+    --color-surface: 26 24 36;
+    --color-surface-raised: 38 34 54;
+    --color-surface-overlay: 44 40 62;
+    --color-sidebar: 32 28 48;
+    --color-line: 52 48 72;
+    --color-line-strong: 74 68 102;
+    --color-ink: 238 236 246;
+    --color-ink-light: 168 164 188;
+    --color-ink-faint: 118 114 142;
+    --color-accent: 134 126 255;
+    --color-accent-soft: 162 156 255;
+    --color-accent-deep: 109 99 235;
+    --color-thread: 45 180 168;
+    --color-thread-soft: 94 200 190;
 
-    --line-strong-hex: #3a3a42;
-    --weekend-sat: rgba(255, 255, 255, 0.035);
-    --weekend-sun: rgba(255, 255, 255, 0.055);
-    --glass-bg: rgba(20, 20, 23, 0.72);
-    --selection-bg: rgba(124, 116, 255, 0.32);
-    --scrollbar-thumb: #34343c;
-    --scrollbar-thumb-hover: #44444d;
+    --line-strong-hex: #4a4466;
+    --weekend-sat: rgba(134, 126, 255, 0.045);
+    --weekend-sun: rgba(134, 126, 255, 0.08);
+    --glass-bg: rgba(26, 24, 36, 0.78);
+    --selection-bg: rgba(134, 126, 255, 0.34);
+    --scrollbar-thumb: #4a4460;
+    --scrollbar-thumb-hover: #5e5678;
 
-    --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 32px rgba(0, 0, 0, 0.55),
-      0 4px 10px rgba(0, 0, 0, 0.4);
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-glow: 0 0 0 1px rgba(124, 116, 255, 0.4), 0 8px 24px rgba(124, 116, 255, 0.18);
+    --shadow-pop: 0 0 0 1px rgba(134, 126, 255, 0.12), 0 12px 36px rgba(8, 4, 24, 0.55),
+      0 4px 12px rgba(8, 4, 24, 0.35);
+    --shadow-card: 0 1px 3px rgba(8, 4, 24, 0.45), 0 0 0 1px rgba(134, 126, 255, 0.04);
+    --shadow-glow: 0 0 0 1px rgba(134, 126, 255, 0.42), 0 8px 28px rgba(109, 99, 235, 0.22);
+    --shadow-panel: -4px 0 28px rgba(8, 4, 24, 0.4), -1px 0 0 rgba(134, 126, 255, 0.1);
   }
 
   html,
@@ -285,6 +293,12 @@
   }
   :root:not(.dark) .glass {
     box-shadow: 0 1px 0 rgba(124, 116, 255, 0.07);
+  }
+  .dark .glass {
+    box-shadow: 0 1px 0 rgba(134, 126, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+  .shadow-panel {
+    box-shadow: var(--shadow-panel);
   }
   .chat-msg-bubble {
     width: fit-content;

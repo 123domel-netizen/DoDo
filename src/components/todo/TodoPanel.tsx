@@ -323,6 +323,7 @@ export function EventRow({
   group?: { name: string; color: string };
   onOpen: () => void;
 }) {
+  const patchItem = useStore((s) => s.patchItem);
   const start = item.allDay ? allDayCalendarDate(item.start) : new Date(item.start);
   const today = isToday(start);
   const tomorrow = isTomorrow(start);
@@ -342,53 +343,80 @@ export function EventRow({
         ? `Jutro, ${fmtRange(item.start, item.end)}`
         : `${fmt(start, "EEE d MMM")}, ${fmtRange(item.start, item.end)}`;
 
+  const toggleTodo = () => {
+    if (shared) return;
+    patchItem(baseItemId(item.id), { showInTodo: !item.showInTodo });
+  };
+
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={`group flex w-full gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition hover:bg-surface-overlay ${
+    <div
+      className={`group flex w-full gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       }`}
       style={{ borderLeft: `3px solid ${color}` }}
     >
-      <CalendarClock size={15} className="mt-0.5 shrink-0 text-ink-faint" />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-ink">
-          {item.title || "(bez tytułu)"}
-          {shared && (
-            <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-              SHARE
-            </span>
-          )}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 gap-2 text-left"
+      >
+        <CalendarClock size={15} className="mt-0.5 shrink-0 text-ink-faint" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-ink">
+            {item.title || "(bez tytułu)"}
+            {shared && (
+              <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                SHARE
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-faint">
+            <span className={today ? "font-medium text-accent-soft" : ""}>{whenLabel}</span>
+            {shared ? (
+              <span className="inline-flex items-center gap-1 text-ink-faint">SHARE</span>
+            ) : group ? (
+              <span className="inline-flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                {group.name}
+              </span>
+            ) : null}
+            {item.participants.length > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <Users size={11} /> {item.participants.length}
+              </span>
+            )}
+            {reminderCount > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <Bell size={11} /> {reminderCount}
+              </span>
+            )}
+            {item.attachments.length > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <Paperclip size={11} /> {item.attachments.length}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-faint">
-          <span className={today ? "font-medium text-accent-soft" : ""}>{whenLabel}</span>
-          {shared ? (
-            <span className="inline-flex items-center gap-1 text-ink-faint">SHARE</span>
-          ) : group ? (
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-              {group.name}
-            </span>
-          ) : null}
-          {item.participants.length > 0 && (
-            <span className="inline-flex items-center gap-0.5">
-              <Users size={11} /> {item.participants.length}
-            </span>
-          )}
-          {reminderCount > 0 && (
-            <span className="inline-flex items-center gap-0.5">
-              <Bell size={11} /> {reminderCount}
-            </span>
-          )}
-          {item.attachments.length > 0 && (
-            <span className="inline-flex items-center gap-0.5">
-              <Paperclip size={11} /> {item.attachments.length}
-            </span>
-          )}
-        </div>
-      </div>
-    </button>
+      </button>
+      {!shared && (
+        <button
+          type="button"
+          onClick={toggleTodo}
+          title={item.showInTodo ? "Ukryj w ToDo" : "Pokaż w ToDo"}
+          aria-label={item.showInTodo ? "Ukryj w ToDo" : "Pokaż w ToDo"}
+          aria-pressed={item.showInTodo}
+          className={`shrink-0 self-center rounded-md p-1 transition hover:bg-surface-raised ${
+            item.showInTodo ? "text-accent" : "text-ink-faint/45 hover:text-ink-faint"
+          }`}
+        >
+          <ListChecks
+            size={15}
+            className={item.showInTodo ? "fill-accent/25" : ""}
+            strokeWidth={item.showInTodo ? 2.25 : 1.75}
+          />
+        </button>
+      )}
+    </div>
   );
 }
 

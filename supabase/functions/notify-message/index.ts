@@ -1,10 +1,8 @@
 // Supabase Edge Function: notify-message
 // Wywoływana triggerem pg_net po INSERT do public.messages (0017_chat_push.sql).
 // Wysyła Web Push do członków rozmowy (poza autorem i wyciszonymi).
-// CHAT5: wyciszenia czasowe (muted_until), tryb „tylko wzmianki",
-// etykiety ankiet/GIF-ów/głosówek, wyróżnienie wzmianki w treści.
-// Collapse: tag = chat-{conversationId} — system nadpisuje poprzednie
-// powiadomienie z tej samej rozmowy zamiast układać stos.
+// Stack jak Messenger: przy 2+ nieprzeczytanych w treści jest liczba + linie
+// od najnowszej do starszej (max 5), tag=chat-{id} nadpisuje poprzedni toast.
 //
 // Wdrożenie:
 //   supabase functions deploy notify-message --no-verify-jwt
@@ -27,6 +25,13 @@ interface PushSub {
   endpoint: string;
   keys: { p256dh: string; auth: string };
 }
+
+type MsgRow = {
+  kind: string;
+  body: string | null;
+  author_user_id: string;
+  created_at: string;
+};
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -52,6 +57,15 @@ function kindBody(kind: string, body: string, max: number): string {
     default:
       return truncate(body, max);
   }
+}
+
+function lineForMsg(
+  m: MsgRow,
+  convKind: string,
+  authorName: string,
+): string {
+  const preview = kindBody(m.kind, m.body ?? "", convKind === "dm" ? 100 : 80);
+  return convKind === "dm" ? preview : `${authorName}: ${preview}`;
 }
 
 Deno.serve(async (req) => {
@@ -95,61 +109,92 @@ Deno.serve(async (req) => {
   // − (tryb „tylko wzmianki" bez wzmianki).
   const { data: members } = await admin
     .from("conversation_members")
-    .select("user_id, notify, muted_until")
+    .select("user_id, notify, muted_until, last_read_at")
     .eq("conversation_id", conv.id)
     .is("left_at", null)
     .neq("user_id", msg.author_user_id)
     .neq("notify", "none");
   const now = Date.now();
-  const recipientIds = (members ?? [])
-    .filter((m) => {
-      const mutedUntil = m.muted_until as string | null;
-      if (mutedUntil) {
-        if (mutedUntil === "infinity") return false;
-        const t = new Date(mutedUntil).getTime();
-        if (!Number.isNaN(t) && t > now) return false;
-      }
-      if (m.notify === "mentions" && !mentions.includes(m.user_id as string)) {
-        return false;
-      }
-      return true;
-    })
-    .map((m) => m.user_id as string);
-  if (!recipientIds.length) return json({ ok: true, sent: 0 });
+  const recipients = (members ?? []).filter((m) => {
+    const mutedUntil = m.muted_until as string | null;
+    if (mutedUntil) {
+      if (mutedUntil === "infinity") return false;
+      const t = new Date(mutedUntil).getTime();
+      if (!Number.isNaN(t) && t > now) return false;
+    }
+    if (m.notify === "mentions" && !mentions.includes(m.user_id as string)) {
+      return false;
+    }
+    return true;
+  });
+  if (!recipients.length) return json({ ok: true, sent: 0 });
 
-  const { data: authorProfile } = await admin
+  const recipientIds = recipients.map((m) => m.user_id as string);
+
+  // Ostatnie wiadomości rozmowy — do stacku per odbiorca względem last_read_at.
+  const { data: recentRows } = await admin
+    .from("messages")
+    .select("kind, body, author_user_id, created_at")
+    .eq("conversation_id", conv.id)
+    .is("deleted_at", null)
+    .neq("kind", "system")
+    .order("created_at", { ascending: false })
+    .limit(25);
+
+  const recent = (recentRows ?? []) as MsgRow[];
+  const authorIds = [...new Set(recent.map((r) => r.author_user_id))];
+  const { data: authorProfiles } = await admin
     .from("profiles")
-    .select("display_name")
-    .eq("user_id", msg.author_user_id)
-    .maybeSingle();
-  const authorName = (authorProfile?.display_name as string) || "Ktoś";
+    .select("user_id, display_name")
+    .in("user_id", authorIds.length ? authorIds : [msg.author_user_id]);
+  const nameById = new Map<string, string>();
+  for (const p of authorProfiles ?? []) {
+    nameById.set(p.user_id as string, (p.display_name as string) || "Ktoś");
+  }
+  const authorName = nameById.get(msg.author_user_id as string) || "Ktoś";
 
-  let title: string;
+  let baseTitle: string;
   if (conv.kind === "channel") {
-    title = `#${conv.name ?? "kanał"}`;
+    baseTitle = `#${conv.name ?? "kanał"}`;
   } else if (conv.kind === "item") {
     const { data: item } = await admin
       .from("items")
       .select("title")
       .eq("id", conv.item_id)
       .maybeSingle();
-    title = `Dyskusja: ${truncate((item?.title as string) || "wpis", 60)}`;
+    baseTitle = `Dyskusja: ${truncate((item?.title as string) || "wpis", 60)}`;
   } else {
-    title = authorName;
+    baseTitle = authorName;
   }
 
-  const baseBody =
-    conv.kind === "dm"
-      ? kindBody(msg.kind as string, msg.body ?? "", 140)
-      : `${authorName}: ${kindBody(msg.kind as string, msg.body ?? "", 120)}`;
-
-  const buildPayload = (mentioned: boolean) =>
-    JSON.stringify({
-      title: mentioned ? `@ ${title}` : title,
-      body: (mentioned ? `Oznaczono Cię — ${baseBody}` : baseBody) || "Nowa wiadomość",
+  const buildPayload = (userId: string, mentioned: boolean) => {
+    const member = recipients.find((m) => m.user_id === userId);
+    const lastRead = (member?.last_read_at as string | null) ?? null;
+    const unread = recent
+      .filter((r) => !lastRead || r.created_at > lastRead)
+      .slice(0, 5);
+    const lines = (unread.length ? unread : recent.slice(0, 1)).map((r) =>
+      lineForMsg(r, conv.kind as string, nameById.get(r.author_user_id) || "Ktoś"),
+    );
+    const count = unread.length || 1;
+    const titleBase = mentioned ? `@ ${baseTitle}` : baseTitle;
+    const title = count > 1 ? `${titleBase} · ${count}` : titleBase;
+    let body: string;
+    if (count <= 1) {
+      body = (mentioned ? `Oznaczono Cię — ${lines[0]}` : lines[0]) || "Nowa wiadomość";
+    } else {
+      const head = mentioned
+        ? `Oznaczono Cię · ${count} nowe wiadomości`
+        : `${count} nowe wiadomości`;
+      body = [head, ...lines].join("\n");
+    }
+    return JSON.stringify({
+      title,
+      body,
       url: `/#/czat/${conv.id}`,
       tag: `chat-${conv.id}`,
     });
+  };
 
   const { data: subsData } = await admin
     .from("push_subscriptions")
@@ -161,7 +206,7 @@ Deno.serve(async (req) => {
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: sub.keys } as webpush.PushSubscription,
-        buildPayload(mentions.includes(sub.user_id)),
+        buildPayload(sub.user_id, mentions.includes(sub.user_id)),
       );
       sent++;
     } catch (e) {
