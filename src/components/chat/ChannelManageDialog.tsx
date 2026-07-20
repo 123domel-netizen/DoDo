@@ -17,6 +17,7 @@ import {
   setChannelIcon,
   setChannelIconPreset,
   setChannelMemberRole,
+  setChannelName,
 } from "@/lib/chat/init";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
 
@@ -41,6 +42,7 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [iconPicker, setIconPicker] = useState(false);
+  const [nameDraft, setNameDraft] = useState(entry.name ?? "");
   const [pickIds, setPickIds] = useState<Set<string>>(new Set());
   const [eligible, setEligible] = useState<Person[]>([]);
 
@@ -57,12 +59,14 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
 
   const adminCount = members.filter((m) => isAdminRole(m.role)).length;
   const activePresetId = parseChannelPresetId(entry.iconUrl);
+  const nameDirty = nameDraft.trim() !== (entry.name ?? "").trim();
 
   useEffect(() => {
     if (!open) {
       setIconPicker(false);
       return;
     }
+    setNameDraft(entry.name ?? "");
     let cancelled = false;
     void loadChatEligiblePeople({ myOrgs, myUserId }).then((list) => {
       if (!cancelled) setEligible(list);
@@ -70,7 +74,7 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
     return () => {
       cancelled = true;
     };
-  }, [open, myOrgs, myUserId]);
+  }, [open, myOrgs, myUserId, entry.name, entry.id]);
 
   const candidates = useMemo(() => {
     const inChannel = new Set(members.map((m) => m.userId));
@@ -105,6 +109,11 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
     });
   };
 
+  const saveName = () => {
+    if (!nameDirty || busy) return;
+    void run(() => setChannelName(entry.id, nameDraft));
+  };
+
   const togglePick = (userId: string) => {
     const next = new Set(pickIds);
     if (next.has(userId)) next.delete(userId);
@@ -137,7 +146,7 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
         <div className="mb-3 text-sm font-semibold text-ink">Zarządzaj kanałem</div>
         <div className="mb-4 text-[11px] text-ink-faint">
           Administratorzy mogą dodawać i usuwać osoby, nadawać uprawnienia oraz zmieniać
-          ikonę. Zawsze musi zostać przynajmniej jeden administrator.
+          nazwę i ikonę. Zawsze musi zostać przynajmniej jeden administrator.
         </div>
 
         <div className="mb-4 flex items-center gap-3">
@@ -173,7 +182,36 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
             }}
           />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-ink">{entry.name}</div>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={nameDraft}
+                disabled={busy}
+                maxLength={80}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    saveName();
+                  }
+                  if (e.key === "Escape") {
+                    setNameDraft(entry.name ?? "");
+                  }
+                }}
+                className="min-w-0 flex-1 rounded-md border border-line bg-surface-raised px-2 py-1 text-sm font-medium text-ink outline-none focus:border-accent/50 disabled:opacity-50"
+                aria-label="Nazwa kanału"
+              />
+              {nameDirty && (
+                <button
+                  type="button"
+                  disabled={busy || !nameDraft.trim()}
+                  onClick={saveName}
+                  className="shrink-0 rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-white transition hover:bg-accent/90 disabled:opacity-50"
+                >
+                  Zapisz
+                </button>
+              )}
+            </div>
             <div className="mt-1 flex flex-wrap gap-1.5">
               <button
                 type="button"

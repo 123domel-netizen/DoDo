@@ -952,6 +952,18 @@ export async function setChannelIconPreset(
   return {};
 }
 
+export async function setChannelName(
+  conversationId: string,
+  name: string,
+): Promise<{ error?: string }> {
+  const trimmed = name.trim();
+  const { error } = await api.updateConversationName(conversationId, trimmed);
+  if (error) return { error };
+  useChatStore.getState().patchOverviewEntry(conversationId, { name: trimmed });
+  await refreshOverview();
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Realtime
 // ---------------------------------------------------------------------------

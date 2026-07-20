@@ -1249,6 +1249,22 @@ export async function updateConversationIcon(
   return error ? { error: error.message } : {};
 }
 
+export async function updateConversationName(
+  conversationId: string,
+  name: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const trimmed = name.trim();
+  if (!trimmed) return { error: "Nazwa nie może być pusta." };
+  if (trimmed.length > 80) return { error: "Nazwa może mieć max 80 znaków." };
+  const { error } = await supabase
+    .from("conversations")
+    .update({ name: trimmed })
+    .eq("id", conversationId)
+    .eq("kind", "channel");
+  return error ? { error: friendlyAdminError(error.message) } : {};
+}
+
 function friendlyAdminError(message: string): string {
   if (message.includes("last admin") || message.includes("at least one admin")) {
     return "Kanał musi mieć przynajmniej jednego administratora.";
