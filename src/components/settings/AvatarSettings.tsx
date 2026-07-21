@@ -6,7 +6,7 @@ import { cloudEnabled } from "@/lib/supabase";
 import {
   AVATAR_PRESETS,
   activeAvatarPresetId,
-  diceBearAvatarUrl,
+  avatarPresetUrl,
   resolveAvatarUrl,
 } from "@/lib/avatar";
 import {
@@ -123,7 +123,7 @@ export function AvatarSettings() {
                   }`}
                 >
                   <img
-                    src={diceBearAvatarUrl(p.seed)}
+                    src={avatarPresetUrl(p.id) ?? undefined}
                     alt={p.label}
                     className="h-9 w-9 object-cover"
                     referrerPolicy="no-referrer"

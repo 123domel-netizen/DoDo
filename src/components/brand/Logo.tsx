@@ -1,40 +1,34 @@
 interface LogoProps {
   size?: number;
-  /** Obraz zawiera już napis „DoDo” — domyślnie bez dodatkowego tekstu. */
+  /** Zostawione dla kompatybilności — napis jest zawsze w komponencie. */
   showName?: boolean;
   className?: string;
 }
 
-const LOGO_ASPECT = 220 / 87;
-
-export function Logo({ size = 28, showName = false, className = "" }: LogoProps) {
-  const height = size;
-  const width = Math.round(size * LOGO_ASPECT);
+/**
+ * Znak z brand-logo-source (PNG), napis „DoDo” w CSS (text-ink) —
+ * kolor zawsze zgodny z motywem, bez pomyłek light/dark w plikach.
+ */
+export function Logo({ size = 28, className = "" }: LogoProps) {
+  const mark = Math.round(size * 1.05);
+  const fontSize = Math.round(size * 0.72);
 
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
-      {/* Ciemny motyw: biały napis; jasny: ciemny napis */}
-      <span className="contents" role="img" aria-label="DoDo">
-        <img
-          src="/logo.png"
-          alt=""
-          width={width}
-          height={height}
-          className="hidden shrink-0 object-contain dark:block"
-          draggable={false}
-        />
-        <img
-          src="/logo-light.png"
-          alt=""
-          width={width}
-          height={height}
-          className="block shrink-0 object-contain dark:hidden"
-          draggable={false}
-        />
+    <div className={`flex items-center gap-2 ${className}`} role="img" aria-label="DoDo">
+      <img
+        src="/logo-mark.png?v=3"
+        alt=""
+        width={mark}
+        height={mark}
+        className="shrink-0 object-contain"
+        draggable={false}
+      />
+      <span
+        className="font-bold tracking-tight text-ink"
+        style={{ fontSize, lineHeight: 1, letterSpacing: "-0.03em" }}
+      >
+        DoDo
       </span>
-      {showName && (
-        <span className="text-[15px] font-semibold tracking-tight text-ink">DoDo</span>
-      )}
     </div>
   );
 }

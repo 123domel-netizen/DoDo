@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "release:sync": "node scripts/sync-app-release.mjs",
     "deploy": "npm run build && npx wrangler pages deploy dist --project-name dodo && npm run release:sync",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -30,6 +31,7 @@
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
+    "sharp": "^0.35.3",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",

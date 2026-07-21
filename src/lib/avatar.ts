@@ -12,39 +12,84 @@ export interface AvatarPreset {
   id: string;
   label: string;
   seed: string;
+  /** Stała mina — emocje „z biura”, max 2 smutne. */
+  mouth: string;
+  eyes: string;
 }
 
-/** Stała galeria ludzików do wyboru (poza unikalnym defaultem z userId). */
+/**
+ * Galeria min jak w firmie: sukces, fokus, kawa, spotkanie, bug, piątek…
+ * Max 2 wyraźnie smutne (deadline / poniedziałek).
+ */
 export const AVATAR_PRESETS: AvatarPreset[] = [
-  { id: "felix", label: "Felix", seed: "Felix" },
-  { id: "luna", label: "Luna", seed: "Luna" },
-  { id: "milo", label: "Milo", seed: "Milo" },
-  { id: "nova", label: "Nova", seed: "Nova" },
-  { id: "oreo", label: "Oreo", seed: "Oreo" },
-  { id: "pixel", label: "Pixel", seed: "Pixel" },
-  { id: "quinn", label: "Quinn", seed: "Quinn" },
-  { id: "rio", label: "Rio", seed: "Rio" },
-  { id: "sage", label: "Sage", seed: "Sage" },
-  { id: "toby", label: "Toby", seed: "Toby" },
-  { id: "uma", label: "Uma", seed: "Uma" },
-  { id: "vince", label: "Vince", seed: "Vince" },
-  { id: "wren", label: "Wren", seed: "Wren" },
-  { id: "yael", label: "Yael", seed: "Yael" },
-  { id: "zane", label: "Zane", seed: "Zane" },
-  { id: "bubbles", label: "Bubbles", seed: "Bubbles" },
+  { id: "shipped", label: "Po deployu", seed: "OfficeShipped", mouth: "smileLol", eyes: "stars" },
+  { id: "focus", label: "Deep work", seed: "OfficeFocus", mouth: "plain", eyes: "glasses" },
+  { id: "coffee", label: "Po kawie", seed: "OfficeCoffee", mouth: "smileTeeth", eyes: "shades" },
+  { id: "meeting", label: "Spotkanie", seed: "OfficeMeeting", mouth: "shout", eyes: "plain" },
+  { id: "bug", label: "Znowu bug", seed: "OfficeBug", mouth: "pissed", eyes: "pissed" },
+  { id: "friday", label: "Piątek", seed: "OfficeFriday", mouth: "kissHeart", eyes: "wink" },
+  { id: "vacation", label: "Urlop w głowie", seed: "OfficeVacation", mouth: "lilSmile", eyes: "shades" },
+  { id: "nerd", label: "Nerd mode", seed: "OfficeNerd", mouth: "cute", eyes: "glasses" },
+  { id: "win", label: "Wygrana", seed: "OfficeWin", mouth: "wideSmile", eyes: "love" },
+  { id: "joke", label: "Żart na Slacku", seed: "OfficeJoke", mouth: "tongueOut", eyes: "wink2" },
+  { id: "oneonone", label: "1:1", seed: "OfficeOneOnOne", mouth: "shy", eyes: "cute" },
+  { id: "sick", label: "WFH chory", seed: "OfficeSick", mouth: "sick", eyes: "closed" },
+  { id: "mask", label: "Zoom face", seed: "OfficeMask", mouth: "faceMask", eyes: "plain" },
+  { id: "sleep", label: "Po nockce", seed: "OfficeSleep", mouth: "plain", eyes: "sleepClose" },
+  { id: "monday", label: "Poniedziałek", seed: "OfficeMonday", mouth: "sad", eyes: "sad" },
+  { id: "deadline", label: "Deadline", seed: "OfficeDeadline", mouth: "drip", eyes: "tearDrop" },
 ];
 
-export function diceBearAvatarUrl(seed: string): string {
-  return `https://${DICEBEAR_HOST}/9.x/${DICEBEAR_STYLE}/svg?seed=${encodeURIComponent(seed)}`;
+export type DiceBearOpts = {
+  mouth?: readonly string[];
+  eyes?: readonly string[];
+};
+
+export function diceBearAvatarUrl(seed: string, opts?: DiceBearOpts): string {
+  const params = new URLSearchParams();
+  params.set("seed", seed);
+  if (opts?.mouth?.length) params.set("mouth", opts.mouth.join(","));
+  if (opts?.eyes?.length) params.set("eyes", opts.eyes.join(","));
+  return `https://${DICEBEAR_HOST}/9.x/${DICEBEAR_STYLE}/svg?${params.toString()}`;
 }
 
+/** Domyślny ludzik: mieszanka „biurowych” min (bez smutku). */
+const DEFAULT_MOUTH = [
+  "lilSmile",
+  "cute",
+  "wideSmile",
+  "smileTeeth",
+  "smileLol",
+  "tongueOut",
+  "shy",
+  "shout",
+  "plain",
+  "pissed",
+] as const;
+const DEFAULT_EYES = [
+  "cute",
+  "wink",
+  "wink2",
+  "plain",
+  "love",
+  "stars",
+  "shades",
+  "glasses",
+  "closed",
+  "pissed",
+] as const;
+
 export function defaultAvatarUrl(userId: string): string {
-  return diceBearAvatarUrl(userId || "anon");
+  return diceBearAvatarUrl(userId || "anon", {
+    mouth: DEFAULT_MOUTH,
+    eyes: DEFAULT_EYES,
+  });
 }
 
 export function avatarPresetUrl(presetId: string): string | null {
   const p = AVATAR_PRESETS.find((x) => x.id === presetId);
-  return p ? diceBearAvatarUrl(p.seed) : null;
+  if (!p) return null;
+  return diceBearAvatarUrl(p.seed, { mouth: [p.mouth], eyes: [p.eyes] });
 }
 
 /** Publiczny URL DiceBear fun-emoji (wybrany ludzik). */
