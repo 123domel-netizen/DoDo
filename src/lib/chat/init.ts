@@ -1210,9 +1210,24 @@ async function setupRealtime(userId: string) {
       { event: "*", schema: "public", table: "conversation_members" },
       (payload) => {
         const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
-        if (row && (row.user_id as string) === currentUserId) {
+        if (!row) return;
+        if ((row.user_id as string) === currentUserId) {
           scheduleOverviewRefresh();
+          return;
         }
+        // Odczyt innych członków → odśwież ptaszki w liście rozmów.
+        const convId = row.conversation_id as string | undefined;
+        if (!convId) return;
+        const st = useChatStore.getState();
+        const entry = st.overview.find((c) => c.id === convId);
+        if (!entry) return;
+        const lastReadAt = (row.last_read_at as string | null | undefined) ?? null;
+        const userId = row.user_id as string;
+        st.patchOverviewEntry(convId, {
+          members: entry.members.map((m) =>
+            m.userId === userId ? { ...m, lastReadAt } : m,
+          ),
+        });
       },
     )
     .subscribe((status) => {

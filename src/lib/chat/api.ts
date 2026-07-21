@@ -130,6 +130,7 @@ function rowToOverviewEntry(row: Row): ChatOverviewEntry {
       role: ((m.role as string) ?? "member") as ChatMemberInfo["role"],
       displayName: (m.displayName as string) ?? "",
       avatarUrl: (m.avatarUrl as string | null) ?? null,
+      lastReadAt: (m.lastReadAt as string | null) ?? null,
     })),
   };
 }

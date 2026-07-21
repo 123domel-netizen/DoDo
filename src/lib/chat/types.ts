@@ -15,6 +15,8 @@ export interface ChatMemberInfo {
   role: "owner" | "admin" | "member";
   displayName: string;
   avatarUrl: string | null;
+  /** Do ptaszków odczytu (ostatnia wiadomość vs last_read_at). */
+  lastReadAt: string | null;
 }
 
 export interface ChatLastMessage {

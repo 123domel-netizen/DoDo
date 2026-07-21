@@ -271,8 +271,8 @@ describe("overviewTitle", () => {
           kind: "dm",
           name: null,
           members: [
-            { userId: "me", role: "member", displayName: "Ja", avatarUrl: null },
-            { userId: "u2", role: "member", displayName: "Ola", avatarUrl: null },
+            { userId: "me", role: "member", displayName: "Ja", avatarUrl: null, lastReadAt: null },
+            { userId: "u2", role: "member", displayName: "Ola", avatarUrl: null, lastReadAt: null },
           ],
         }),
         "me",

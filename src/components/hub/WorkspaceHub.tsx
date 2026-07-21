@@ -50,7 +50,8 @@ import {
   type ConversationAttachment,
 } from "@/lib/chat/api";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
-import { PresenceDot } from "@/components/chat/PresenceDot";
+import { ConversationKindMark } from "@/components/chat/PresenceDot";
+import { ReadReceiptTicks } from "@/components/chat/ReadReceiptTicks";
 import { setRouteHash } from "@/lib/navigation";
 import type {
   ChatDecision,
@@ -173,17 +174,18 @@ function ConversationRow({
                 showUnread ? "font-semibold text-ink" : "font-medium text-ink"
               }`}
             >
-              <PresenceDot presence={presence} />
+              <ConversationKindMark kind={entry.kind} presence={presence} />
               {entry.myPinnedAt && <Pin size={11} className="shrink-0 text-accent" />}
               <span className="truncate">{title}</span>
               {muted && <BellOff size={11} className="shrink-0 text-ink-faint" />}
             </span>
             {entry.lastMessageAt && (
               <span
-                className={`shrink-0 text-[10px] ${
+                className={`flex shrink-0 items-center gap-1 text-[10px] ${
                   showUnread ? "font-semibold text-accent" : "text-ink-faint"
                 }`}
               >
+                <ReadReceiptTicks entry={entry} myUserId={myUserId} />
                 {formatMessageTime(entry.lastMessageAt)}
               </span>
             )}

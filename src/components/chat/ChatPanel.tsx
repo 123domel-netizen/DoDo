@@ -24,7 +24,8 @@ import {
   searchAll,
 } from "@/lib/chat/api";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
-import { PresenceDot } from "@/components/chat/PresenceDot";
+import { ConversationKindMark } from "@/components/chat/PresenceDot";
+import { ReadReceiptTicks } from "@/components/chat/ReadReceiptTicks";
 import { setRouteHash } from "@/lib/navigation";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import type {
@@ -64,8 +65,7 @@ function NavRow({
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
   const avatarLayout = conversationRowAvatarLayout(showUnread, true);
-  const label =
-    entry.kind === "channel" ? (title.startsWith("#") ? title : `#${title}`) : title;
+  const label = title;
   const peer = dmPeerMember(entry.members, myUserId, entry.kind);
   const peerAvatar = peer
     ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
@@ -107,10 +107,11 @@ function NavRow({
           showUnread ? "font-semibold text-ink" : "text-ink-light"
         }`}
       >
-        <PresenceDot presence={presence} />
+        <ConversationKindMark kind={entry.kind} presence={presence} />
         <span className="truncate">{label}</span>
       </span>
       {muted && <BellOff size={10} className="shrink-0 text-ink-faint" />}
+      <ReadReceiptTicks entry={entry} myUserId={myUserId} />
       {entry.unreadCount > 0 ? (
         <span className="flex h-3.5 min-w-[0.875rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold text-white">
           {entry.unreadCount > 99 ? "99+" : entry.unreadCount}

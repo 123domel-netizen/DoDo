@@ -67,13 +67,15 @@ export function TodoPanel() {
       });
     }
 
+    const active = base.filter((it) => !it.done);
+
     const now = new Date();
     const from = subDays(now, 30);
     const to = addMonths(now, 6);
 
     const expanded: Item[] = [];
-    for (const it of base) {
-      if (hasRecurrence(it) && it.hasDueDate && !it.done) {
+    for (const it of active) {
+      if (hasRecurrence(it) && it.hasDueDate) {
         expanded.push(...expandItemsForRange([it], from, to, "todo"));
       } else {
         expanded.push(it);
@@ -85,7 +87,6 @@ export function TodoPanel() {
       const bp = b.pinnedAt ? 1 : 0;
       if (ap !== bp) return bp - ap;
       if (a.pinnedAt && b.pinnedAt) return b.pinnedAt.localeCompare(a.pinnedAt);
-      if (a.done !== b.done) return a.done ? 1 : -1;
       if (!a.hasDueDate && !b.hasDueDate) return 0;
       if (!a.hasDueDate) return 1;
       if (!b.hasDueDate) return -1;
@@ -324,12 +325,14 @@ export function EventRow({
   onOpen: () => void;
 }) {
   const patchItem = useStore((s) => s.patchItem);
+  const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const start = item.allDay ? allDayCalendarDate(item.start) : new Date(item.start);
   const today = isToday(start);
   const tomorrow = isTomorrow(start);
   const shared = isSharedItem(item);
   const color = shared ? SHARE_CALENDAR_COLOR : (group?.color ?? "#4A8FC4");
   const reminderCount = effectiveReminders(item).length;
+  const canToggleDone = itemSupportsTodoDone(item);
 
   const whenLabel = item.allDay
     ? today
@@ -353,7 +356,7 @@ export function EventRow({
       className={`group flex w-full gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       }`}
-      style={{ borderLeft: `3px solid ${color}` }}
+      style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
     >
       <button
         type="button"
@@ -362,7 +365,9 @@ export function EventRow({
       >
         <CalendarClock size={15} className="mt-0.5 shrink-0 text-ink-faint" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-ink">
+          <div
+            className={`text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
+          >
             {item.title || "(bez tytułu)"}
             {shared && (
               <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
@@ -398,6 +403,17 @@ export function EventRow({
           </div>
         </div>
       </button>
+      {canToggleDone && (
+        <input
+          type="checkbox"
+          checked={item.done}
+          disabled={shared}
+          onChange={() => toggleTaskDone(baseItemId(item.id))}
+          onClick={(e) => e.stopPropagation()}
+          className={`h-4 w-4 shrink-0 self-center accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
+          title={item.done ? "Oznacz jako niewykonane" : "Oznacz jako wykonane"}
+        />
+      )}
       {!shared && (
         <button
           type="button"

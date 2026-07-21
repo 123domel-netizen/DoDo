@@ -173,10 +173,16 @@ export function itemMatchesGroupFilter(
     return item.groupId === filterGroupId;
   }
 
-  // ALL: moje itemy + SHARE; ARCH w ToDo nadal ukryty poniżej.
+  // ALL: moje itemy + SHARE; ARCH tylko w zakładce ARCH (nie w liście zadań / dashboard).
   if (isSharedItem(item)) return true;
 
-  if (scope === "todo" && archiveId && item.groupId === archiveId) return false;
+  if (
+    (scope === "todo" || scope === "tasks" || scope === "dashboard") &&
+    archiveId &&
+    item.groupId === archiveId
+  ) {
+    return false;
+  }
 
   const group = groupById(item.groupId);
   if (group && !isShareGroup(group)) {

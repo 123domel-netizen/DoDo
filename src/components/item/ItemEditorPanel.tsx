@@ -1721,12 +1721,6 @@ function CompactDeadlineField({
             </>
           ) : (
             <div className="space-y-2">
-              <input
-                type="datetime-local"
-                value={customValue}
-                onChange={(e) => setCustomValue(e.target.value)}
-                className="w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-ink outline-none"
-              />
               <div className="flex gap-1">
                 <button
                   type="button"
@@ -1747,6 +1741,12 @@ function CompactDeadlineField({
                   Wstecz
                 </button>
               </div>
+              <input
+                type="datetime-local"
+                value={customValue}
+                onChange={(e) => setCustomValue(e.target.value)}
+                className="w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-ink outline-none"
+              />
             </div>
           )}
         </div>
