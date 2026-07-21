@@ -27,13 +27,14 @@ type MediaTab = "photos" | "files" | "links" | "galleries";
 interface GalleryListRow {
   id: string;
   title: string;
+  itemCount: number;
 }
 
 async function fetchConversationGalleries(conversationId: string): Promise<GalleryListRow[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("galleries")
-    .select("id, title")
+    .select("id, title, item_count")
     .eq("conversation_id", conversationId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
@@ -42,6 +43,7 @@ async function fetchConversationGalleries(conversationId: string): Promise<Galle
   return ((data as Record<string, unknown>[]) ?? []).map((r) => ({
     id: r.id as string,
     title: (r.title as string) || "Galeria",
+    itemCount: Number(r.item_count ?? 0),
   }));
 }
 

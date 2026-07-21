@@ -49,7 +49,6 @@ export function GalleryCreateDialog({
   const [prepProgress, setPrepProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [galleryId, setGalleryId] = useState<string | null>(null);
-  const [messageId, setMessageId] = useState<string | null>(null);
   const [items, setItems] = useState<UploadItem[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(true);
@@ -71,7 +70,6 @@ export function GalleryCreateDialog({
     setPreviews([]);
     setError(null);
     setGalleryId(null);
-    setMessageId(null);
     setItems([]);
     setSubmitting(false);
     setPrepProgress(null);
@@ -178,7 +176,6 @@ export function GalleryCreateDialog({
       });
 
       setGalleryId(gallery.id);
-      setMessageId(newMessageId ?? null);
       setItems(nextItems);
       setStep("uploading");
       setSubmitting(false);
