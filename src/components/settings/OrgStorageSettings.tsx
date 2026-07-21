@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Cloud, CloudOff, ExternalLink, HardDrive } from "lucide-react";
 import {
   disconnectStorage,
+  fetchGraphConfigured,
   fetchStorageStatus,
   saveStorageConnection,
   type StorageStatus,
@@ -34,9 +35,15 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
   const refresh = useCallback(async () => {
     setLoading(true);
     const res = await fetchStorageStatus(orgId);
+    setLoading(false);
+    if (res.error) {
+      setError(res.error);
+      // Nie kasuj poprzedniego statusu przy chwilowej awarii — unikaj fałszywego „Podłącz”.
+      return null;
+    }
+    setError(null);
     const s = res.data ?? null;
     setStatus(s);
-    setLoading(false);
     return s;
   }, [orgId]);
 
@@ -55,6 +62,9 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
     setError(null);
     setInfo(null);
     setEditing(true);
+    void fetchGraphConfigured(orgId).then((ok) => {
+      setStatus((prev) => (prev ? { ...prev, graphConfigured: ok } : prev));
+    });
   };
 
   const save = async () => {
@@ -185,6 +195,13 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
                 </div>
                 <div className="truncate text-[11px] text-ink-faint">
                   {status.baseFolderName ?? "Folder zespołu"}
+                </div>
+              </>
+            ) : status?.baseFolderId ? (
+              <>
+                <div className="truncate text-sm text-ink">Magazyn odłączony</div>
+                <div className="truncate text-[11px] text-ink-faint">
+                  {status.baseFolderName ?? "Folder zespołu"} — kliknij Podłącz, by wznowić
                 </div>
               </>
             ) : (

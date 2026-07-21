@@ -157,8 +157,80 @@ async function callGalleryApi<T = Record<string, unknown>>(
 // Magazyn (org_storage_connections) — Ustawienia → Zespół → Magazyn plików
 // ---------------------------------------------------------------------------
 
+type StorageRow = {
+  status: string;
+  provider: string;
+  site_id: string | null;
+  drive_id: string | null;
+  base_folder_id: string | null;
+  base_folder_name: string | null;
+  connected_at: string | null;
+  updated_at: string | null;
+};
+
+function rowToStorageStatus(r: StorageRow | null, graphConfigured: boolean): StorageStatus {
+  if (!r) {
+    return {
+      connected: false,
+      status: null,
+      provider: null,
+      siteId: null,
+      driveId: null,
+      baseFolderId: null,
+      baseFolderName: null,
+      connectedAt: null,
+      updatedAt: null,
+      graphConfigured,
+    };
+  }
+  const status = r.status === "disconnected" ? "disconnected" : "active";
+  return {
+    connected: status === "active" && Boolean(r.base_folder_id),
+    status,
+    provider: r.provider,
+    siteId: r.site_id,
+    driveId: r.drive_id,
+    baseFolderId: r.base_folder_id,
+    baseFolderName: r.base_folder_name,
+    connectedAt: r.connected_at,
+    updatedAt: r.updated_at,
+    graphConfigured,
+  };
+}
+
+/**
+ * Status magazynu: bezpośredni odczyt tabeli (RLS), nie Edge.
+ * Edge bywa niedostępny — wcześniej UI wtedy pokazywał „Brak magazynu”
+ * mimo aktywnego połączenia w bazie.
+ */
 export async function fetchStorageStatus(orgId: string): Promise<ApiResult<StorageStatus>> {
-  return callGalleryApi<StorageStatus>("storage_status", { orgId });
+  if (!supabase) return { error: "Brak chmury." };
+
+  const { data, error } = await supabase
+    .from("org_storage_connections")
+    .select(
+      "status, provider, site_id, drive_id, base_folder_id, base_folder_name, connected_at, updated_at",
+    )
+    .eq("org_id", orgId)
+    .eq("provider", "sharepoint")
+    .maybeSingle();
+
+  if (error) {
+    // Fallback: Edge (service role) — gdy SELECT przez RLS zawiedzie.
+    const edge = await callGalleryApi<StorageStatus>("storage_status", { orgId });
+    if (edge.data) return edge;
+    return { error: error.message || edge.error || "Nie udało się odczytać magazynu." };
+  }
+
+  return {
+    data: rowToStorageStatus((data as StorageRow | null) ?? null, /* graphConfigured */ true),
+  };
+}
+
+/** Czy serwer ma sekrety Graph — tylko przy edycji formularza. */
+export async function fetchGraphConfigured(orgId: string): Promise<boolean> {
+  const edge = await callGalleryApi<StorageStatus>("storage_status", { orgId });
+  return edge.data?.graphConfigured ?? true;
 }
 
 export async function saveStorageConnection(input: {
