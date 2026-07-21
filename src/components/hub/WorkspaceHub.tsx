@@ -49,7 +49,8 @@ import {
   searchAll,
   type ConversationAttachment,
 } from "@/lib/chat/api";
-import { isOnline } from "@/lib/chat/presence";
+import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
+import { PresenceDot } from "@/components/chat/PresenceDot";
 import { setRouteHash } from "@/lib/navigation";
 import type {
   ChatDecision,
@@ -75,12 +76,12 @@ import {
   type MediaSubTab,
 } from "@/components/hub/hubRail";
 import { isArchiveHubFolder } from "@/lib/chat/store";
+import { conversationRowAvatarLayout } from "@/lib/chat/conversationRowVisual";
 
 function ConversationRow({
   entry,
   title,
   authorName,
-  online,
   active,
   folders,
   myUserId,
@@ -92,7 +93,6 @@ function ConversationRow({
   entry: ChatOverviewEntry;
   title: string;
   authorName: string | null;
-  online: boolean;
   active: boolean;
   folders: { id: string; name: string }[];
   myUserId: string | null;
@@ -101,6 +101,9 @@ function ConversationRow({
   onRemoveFromFolder?: () => void;
   inFolderId?: string;
 }) {
+  const presenceNow = usePresenceNow();
+  const profiles = useChatStore((s) => s.profiles);
+  const presence = dmPeerPresence(entry, myUserId, profiles, presenceNow);
   const last = entry.lastMessage;
   const preview = last
     ? last.deletedAt
@@ -113,9 +116,9 @@ function ConversationRow({
     : "Brak wiadomości";
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+  const avatarLayout = conversationRowAvatarLayout(showUnread);
   const [menuOpen, setMenuOpen] = useState(false);
   const peer = dmPeerMember(entry.members, myUserId, entry.kind);
-  const profiles = useChatStore((s) => s.profiles);
   const peerAvatar = peer
     ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
     : null;
@@ -136,30 +139,30 @@ function ConversationRow({
         className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
       >
         <span
-          className={`relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-surface-raised text-ink-faint ${
+          className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full border bg-surface-raised text-ink-faint transition-all duration-200 ease-out ${avatarLayout.shell} ${
             showUnread ? "border-accent/50 ring-2 ring-accent/25" : "border-line"
           }`}
         >
           {entry.kind === "channel" ? (
-            <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 28 : 14} />
+            <ChannelIcon
+              iconUrl={entry.iconUrl}
+              size={entry.iconUrl ? avatarLayout.person : avatarLayout.fallback}
+            />
           ) : entry.kind === "item" ? (
-            <MessageSquare size={14} />
+            <MessageSquare size={avatarLayout.fallback} />
           ) : entry.members.length > 2 ? (
-            <Users size={14} />
+            <Users size={avatarLayout.fallback} />
           ) : peer ? (
             <PersonAvatar
               userId={peer.userId}
               avatarUrl={peerAvatar}
-              size={28}
+              size={avatarLayout.person}
               className="border-0"
             />
           ) : (
-            <User size={14} />
+            <User size={avatarLayout.fallback} />
           )}
-          {online && (
-            <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface bg-green-500" />
-          )}
-          {showUnread && !online && (
+          {showUnread && (
             <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface bg-accent" />
           )}
         </span>
@@ -170,6 +173,7 @@ function ConversationRow({
                 showUnread ? "font-semibold text-ink" : "font-medium text-ink"
               }`}
             >
+              <PresenceDot presence={presence} />
               {entry.myPinnedAt && <Pin size={11} className="shrink-0 text-accent" />}
               <span className="truncate">{title}</span>
               {muted && <BellOff size={11} className="shrink-0 text-ink-faint" />}
@@ -499,12 +503,6 @@ export function WorkspaceHub() {
   const titleOf = (entry: ChatOverviewEntry) =>
     overviewTitle(entry, myUserId, (id) => items[id]?.title);
 
-  const dmOnline = (entry: ChatOverviewEntry): boolean => {
-    if (entry.kind !== "dm") return false;
-    const other = entry.members.find((m) => m.userId !== myUserId);
-    return Boolean(other && isOnline(profiles[other.userId]?.lastSeenAt));
-  };
-
   const openRow = (entry: ChatOverviewEntry) => {
     void openConversation(entry.id);
     setRouteHash({ view: "conversation", conversationId: entry.id });
@@ -566,7 +564,6 @@ export function WorkspaceHub() {
         entry={entry}
         title={titleOf(entry)}
         authorName={authorName}
-        online={dmOnline(entry)}
         active={entry.id === activeId}
         folders={hubChatFolders
           .filter((f) => !isArchiveHubFolder(f))

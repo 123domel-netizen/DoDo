@@ -5,6 +5,7 @@ import {
   ARCHIVE_GROUP_NAME,
   findArchiveGroup,
   findShareGroup,
+  isGroupVisibleInSidebar,
   sortGroupsForRail,
 } from "@/lib/groups";
 import { SHARE_GROUP_COLOR, SHARE_GROUP_NAME } from "@/lib/share";
@@ -87,7 +88,7 @@ export function GroupRail() {
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
 
-  const userGroups = sortGroupsForRail(groups);
+  const userGroups = sortGroupsForRail(groups).filter(isGroupVisibleInSidebar);
   const archive = findArchiveGroup(groups);
   const share = findShareGroup(groups);
   const allActive = activeGroupFilter === null;

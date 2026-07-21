@@ -1,9 +1,24 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+function resolveBuildVersion(): string {
+  if (process.env.APP_BUILD_VERSION?.trim()) return process.env.APP_BUILD_VERSION.trim();
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+  } catch {
+    return process.env.npm_package_version ?? "dev";
+  }
+}
+
+const appBuildVersion = resolveBuildVersion();
+
 export default defineConfig({
+  define: {
+    __APP_BUILD_VERSION__: JSON.stringify(appBuildVersion),
+  },
   plugins: [
     react(),
     VitePWA({

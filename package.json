@@ -8,6 +8,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "release:sync": "node scripts/sync-app-release.mjs",
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name dodo && npm run release:sync",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -48,7 +48,7 @@ export function HubLinksPane() {
           if (!allowed.has(l.conversationId)) return false;
           const item = items[l.itemId];
           if (!item) return true;
-          return itemMatchesGroupFilter(item, activeGroupFilter, "todo");
+          return itemMatchesGroupFilter(item, activeGroupFilter, "tasks");
         });
       }
       setRows(next);

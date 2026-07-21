@@ -18,7 +18,8 @@ import { useChatStore } from "@/lib/chat/store";
 import { isMuted, overviewTitle } from "@/lib/chat/feed";
 import { jumpToMessage, openConversation } from "@/lib/chat/init";
 import { fetchMyMentions, joinChannel, searchAll } from "@/lib/chat/api";
-import { isOnline } from "@/lib/chat/presence";
+import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
+import { PresenceDot } from "@/components/chat/PresenceDot";
 import { setRouteHash } from "@/lib/navigation";
 import { formatFileSize } from "@/lib/chat/upload";
 import type {
@@ -31,6 +32,7 @@ import type {
 import { messagePreviewLabel } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { conversationRowAvatarLayout } from "@/lib/chat/conversationRowVisual";
 import { dmPeerMember } from "@/lib/avatar";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
 import { formatMessageTime, useSignedUrl } from "@/components/chat/MessageBubble";
@@ -76,17 +78,18 @@ function ConversationRow({
   entry,
   title,
   authorName,
-  online,
   myUserId,
   onOpen,
 }: {
   entry: ChatOverviewEntry;
   title: string;
   authorName: string | null;
-  online: boolean;
   myUserId: string | null;
   onOpen: () => void;
 }) {
+  const presenceNow = usePresenceNow();
+  const profiles = useChatStore((s) => s.profiles);
+  const presence = dmPeerPresence(entry, myUserId, profiles, presenceNow);
   const last = entry.lastMessage;
   const preview = last
     ? last.deletedAt
@@ -99,8 +102,8 @@ function ConversationRow({
     : "Brak wiadomości";
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+  const avatarLayout = conversationRowAvatarLayout(showUnread);
   const peer = dmPeerMember(entry.members, myUserId, entry.kind);
-  const profiles = useChatStore((s) => s.profiles);
   const peerAvatar = peer
     ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
     : null;
@@ -111,25 +114,29 @@ function ConversationRow({
       onClick={onOpen}
       className="flex w-full items-center gap-2.5 border-b border-line/50 px-3 py-2.5 text-left transition hover:bg-surface-raised"
     >
-      <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised text-ink-faint">
+      <span
+        className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full border bg-surface-raised text-ink-faint transition-all duration-200 ease-out ${avatarLayout.shell} ${
+          showUnread ? "border-accent/50 ring-2 ring-accent/25" : "border-line"
+        }`}
+      >
         {entry.kind === "channel" ? (
-          <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 32 : 15} />
+          <ChannelIcon
+            iconUrl={entry.iconUrl}
+            size={entry.iconUrl ? avatarLayout.person : avatarLayout.fallback}
+          />
         ) : entry.kind === "item" ? (
-          <MessageSquare size={15} />
+          <MessageSquare size={avatarLayout.fallback} />
         ) : entry.members.length > 2 ? (
-          <Users size={15} />
+          <Users size={avatarLayout.fallback} />
         ) : peer ? (
           <PersonAvatar
             userId={peer.userId}
             avatarUrl={peerAvatar}
-            size={32}
+            size={avatarLayout.person}
             className="border-0"
           />
         ) : (
-          <User size={15} />
-        )}
-        {online && (
-          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-green-500" />
+          <User size={avatarLayout.fallback} />
         )}
       </span>
       <span className="min-w-0 flex-1">
@@ -139,6 +146,7 @@ function ConversationRow({
               showUnread ? "font-semibold text-ink" : "font-medium text-ink"
             }`}
           >
+            <PresenceDot presence={presence} />
             {entry.myPinnedAt && <Pin size={11} className="shrink-0 text-accent" />}
             <span className="truncate">{title}</span>
             {muted && <BellOff size={11} className="shrink-0 text-ink-faint" />}
@@ -262,12 +270,6 @@ export function MobileChatHub() {
   const titleOf = (entry: ChatOverviewEntry) =>
     overviewTitle(entry, myUserId, (id) => items[id]?.title);
 
-  const dmOnline = (entry: ChatOverviewEntry): boolean => {
-    if (entry.kind !== "dm") return false;
-    const other = entry.members.find((m) => m.userId !== myUserId);
-    return Boolean(other && isOnline(profiles[other.userId]?.lastSeenAt));
-  };
-
   const openRow = (entry: ChatOverviewEntry) => {
     void openConversation(entry.id);
     setRouteHash({ view: "conversation", conversationId: entry.id });
@@ -333,7 +335,6 @@ export function MobileChatHub() {
         entry={entry}
         title={titleOf(entry)}
         authorName={authorName}
-        online={dmOnline(entry)}
         myUserId={myUserId}
         onOpen={() => openRow(entry)}
       />

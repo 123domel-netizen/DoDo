@@ -5,6 +5,7 @@ import {
   ensureShareGroup,
   isArchiveGroup,
   isGoogleGroup,
+  resolveGroupVisibility,
   stripGoogleGroups,
 } from "@/lib/groups";
 import { isShareGroup, updateSharedItemContent, updateOwnParticipationReminders } from "@/lib/share";
@@ -143,6 +144,7 @@ function rowToItem(row: Record<string, unknown>, shareRole: Item["shareRole"] = 
 }
 
 function groupToRow(group: Group) {
+  const v = resolveGroupVisibility(group);
   return {
     id: group.id,
     user_id: userId,
@@ -150,7 +152,12 @@ function groupToRow(group: Group) {
     color: group.color,
     sort_order: group.sortOrder,
     system: group.system ?? null,
-    hide_from_all: group.hideFromAll ?? false,
+    hide_from_all: !v.showInAll,
+    show_in_sidebar: v.showInSidebar,
+    show_in_tasks: v.showInTasks,
+    show_in_events: v.showInEvents,
+    show_in_dashboard: v.showInDashboard,
+    show_in_all: v.showInAll,
   };
 }
 
@@ -160,19 +167,45 @@ function rowToGroup(row: Record<string, unknown>): Group {
   const system: Group["system"] =
     base.system ??
     (isArchiveGroup(base) ? "archive" : isShareGroup(base) ? "share" : isGoogleGroup(base) ? "google" : undefined);
+  const hideFromAll = (row.hide_from_all as boolean | null) ?? false;
+  const showInAllCol = row.show_in_all as boolean | null | undefined;
   return {
     id: row.id as string,
     name,
     color: migrateGroupColor((row.color as string) ?? "#4A8FC4"),
     sortOrder: (row.sort_order as number) ?? 0,
     system,
-    hideFromAll: (row.hide_from_all as boolean | null) ?? undefined,
+    hideFromAll: hideFromAll || undefined,
+    showInSidebar: (row.show_in_sidebar as boolean | null) ?? undefined,
+    showInTasks: (row.show_in_tasks as boolean | null) ?? undefined,
+    showInEvents: (row.show_in_events as boolean | null) ?? undefined,
+    showInDashboard: (row.show_in_dashboard as boolean | null) ?? undefined,
+    showInAll:
+      showInAllCol !== null && showInAllCol !== undefined
+        ? showInAllCol
+        : hideFromAll
+          ? false
+          : undefined,
   };
 }
 
 function groupsSnapshot(groups: Group[]): string {
   return JSON.stringify(
-    groups.map((g) => [g.id, g.name, g.color, g.sortOrder, g.system ?? null, g.hideFromAll ?? false]),
+    groups.map((g) => {
+      const v = resolveGroupVisibility(g);
+      return [
+        g.id,
+        g.name,
+        g.color,
+        g.sortOrder,
+        g.system ?? null,
+        v.showInAll,
+        v.showInSidebar,
+        v.showInTasks,
+        v.showInEvents,
+        v.showInDashboard,
+      ];
+    }),
   );
 }
 

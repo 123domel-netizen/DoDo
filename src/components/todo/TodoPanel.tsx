@@ -55,7 +55,7 @@ export function TodoPanel() {
 
   const todos = useMemo(() => {
     const base = Object.values(itemsMap).filter(
-      (it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "todo"),
+      (it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "tasks"),
     );
 
     if (inArchiveView) {
@@ -99,7 +99,7 @@ export function TodoPanel() {
     return itemsForUpcomingEventsList(
       Object.values(itemsMap).filter(
         (it) =>
-          itemMatchesGroupFilter(it, activeGroupFilter, "calendar") &&
+          itemMatchesGroupFilter(it, activeGroupFilter, "events") &&
           (it.type !== "task" || !it.done),
       ),
       now,

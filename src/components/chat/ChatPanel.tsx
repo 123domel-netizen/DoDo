@@ -23,7 +23,8 @@ import {
   joinChannel,
   searchAll,
 } from "@/lib/chat/api";
-import { isOnline } from "@/lib/chat/presence";
+import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
+import { PresenceDot } from "@/components/chat/PresenceDot";
 import { setRouteHash } from "@/lib/navigation";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import type {
@@ -40,30 +41,32 @@ import { MobileChatHub } from "@/components/chat/MobileChatHub";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { dmPeerMember } from "@/lib/avatar";
+import { conversationRowAvatarLayout } from "@/lib/chat/conversationRowVisual";
 
 const FREQUENT_LIMIT = 8;
 
 function NavRow({
   entry,
   title,
-  online,
   active,
   myUserId,
   onOpen,
 }: {
   entry: ChatOverviewEntry;
   title: string;
-  online: boolean;
   active: boolean;
   myUserId: string | null;
   onOpen: () => void;
 }) {
+  const presenceNow = usePresenceNow();
+  const profiles = useChatStore((s) => s.profiles);
+  const presence = dmPeerPresence(entry, myUserId, profiles, presenceNow);
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+  const avatarLayout = conversationRowAvatarLayout(showUnread, true);
   const label =
     entry.kind === "channel" ? (title.startsWith("#") ? title : `#${title}`) : title;
   const peer = dmPeerMember(entry.members, myUserId, entry.kind);
-  const profiles = useChatStore((s) => s.profiles);
   const peerAvatar = peer
     ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
     : null;
@@ -76,33 +79,36 @@ function NavRow({
         active ? "bg-accent/15 text-ink" : "hover:bg-surface-raised"
       }`}
     >
-      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full text-ink-faint">
+      <span
+        className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-ink-faint transition-all duration-200 ease-out ${avatarLayout.shell}`}
+      >
         {entry.kind === "channel" ? (
-          <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 20 : 12} />
+          <ChannelIcon
+            iconUrl={entry.iconUrl}
+            size={entry.iconUrl ? avatarLayout.person : avatarLayout.fallback}
+          />
         ) : entry.kind === "item" ? (
-          <MessageSquare size={12} />
+          <MessageSquare size={avatarLayout.fallback} />
         ) : entry.members.length > 2 ? (
-          <Users size={12} />
+          <Users size={avatarLayout.fallback} />
         ) : peer ? (
           <PersonAvatar
             userId={peer.userId}
             avatarUrl={peerAvatar}
-            size={20}
+            size={avatarLayout.person}
             className="border-0"
           />
         ) : (
-          <User size={12} />
-        )}
-        {online && (
-          <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-surface bg-green-500" />
+          <User size={avatarLayout.fallback} />
         )}
       </span>
       <span
-        className={`min-w-0 flex-1 truncate text-[12px] leading-tight ${
+        className={`flex min-w-0 flex-1 items-center gap-1 truncate text-[12px] leading-tight ${
           showUnread ? "font-semibold text-ink" : "text-ink-light"
         }`}
       >
-        {label}
+        <PresenceDot presence={presence} />
+        <span className="truncate">{label}</span>
       </span>
       {muted && <BellOff size={10} className="shrink-0 text-ink-faint" />}
       {entry.unreadCount > 0 ? (
@@ -355,12 +361,6 @@ export function ChatPanel() {
     setRouteHash({ view: "conversation", conversationId: msg.conversationId });
   };
 
-  const dmOnline = (entry: ChatOverviewEntry): boolean => {
-    if (entry.kind !== "dm") return false;
-    const other = entry.members.find((m) => m.userId !== myUserId);
-    return Boolean(other && isOnline(profiles[other.userId]?.lastSeenAt));
-  };
-
   const titleOf = (entry: ChatOverviewEntry) =>
     overviewTitle(entry, myUserId, (id) => items[id]?.title);
 
@@ -373,7 +373,6 @@ export function ChatPanel() {
             key={entry.id}
             entry={entry}
             title={titleOf(entry)}
-            online={dmOnline(entry)}
             active={entry.id === activeId}
             myUserId={myUserId}
             onOpen={() => openRow(entry)}

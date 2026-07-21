@@ -1,7 +1,15 @@
+import type { Group } from "@/types";
 import { Modal } from "@/components/ui/Modal";
 import { useStore } from "@/state/store";
 import { GROUP_COLORS } from "@/lib/factory";
-import { findArchiveGroup, findShareGroup, isGroupColorLocked, isGroupStructureLocked, sortGroupsForRail } from "@/lib/groups";
+import {
+  findArchiveGroup,
+  findShareGroup,
+  isGroupColorLocked,
+  isGroupStructureLocked,
+  resolveGroupVisibility,
+  sortGroupsForRail,
+} from "@/lib/groups";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 
 export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -21,11 +29,11 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
   ];
 
   return (
-    <Modal open={open} onClose={onClose} width={460}>
+    <Modal open={open} onClose={onClose} width={520}>
       <div className="p-5">
         <h2 className="mb-1 text-lg font-semibold">Grupy</h2>
         <p className="mb-3 text-[11px] text-ink-faint">
-          Kolejność na pionowym pasku po prawej — strzałkami góra/dół.
+          Kolejność na pionowym pasku po prawej — strzałkami góra/dół. Widoczność przy filtrze ALL.
         </p>
         <div className="space-y-2">
           {displayGroups.map((g) => {
@@ -36,7 +44,14 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
             const canMoveDown = !structureLocked && userIndex >= 0 && userIndex < userGroups.length - 1;
 
             return (
-              <div key={g.id} className="space-y-1">
+              <div
+                key={g.id}
+                className={`space-y-2 rounded-xl border p-2 ${
+                  structureLocked
+                    ? "border-line/40 bg-surface-raised/20"
+                    : "border-line/60 bg-surface-raised/30"
+                }`}
+              >
                 <div className="flex items-center gap-1.5">
                   {!structureLocked ? (
                   <div className="flex shrink-0 flex-col">
@@ -92,6 +107,12 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
                   </button>
                 )}
                 </div>
+                {!structureLocked && (
+                  <GroupVisibilityToggles
+                    group={g}
+                    onChange={(patch) => patchGroup(g.id, patch)}
+                  />
+                )}
               </div>
             );
           })}
@@ -105,6 +126,51 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
         </button>
       </div>
     </Modal>
+  );
+}
+
+function GroupVisibilityToggles({
+  group,
+  onChange,
+}: {
+  group: Group;
+  onChange: (patch: Partial<Group>) => void;
+}) {
+  const v = resolveGroupVisibility(group);
+  const toggles: { key: keyof Group; label: string; checked: boolean }[] = [
+    { key: "showInSidebar", label: "Pasek", checked: v.showInSidebar },
+    { key: "showInTasks", label: "Zadania", checked: v.showInTasks },
+    { key: "showInEvents", label: "Wydarzenia", checked: v.showInEvents },
+    { key: "showInDashboard", label: "Dashboard", checked: v.showInDashboard },
+    { key: "showInAll", label: "ALL", checked: v.showInAll },
+  ];
+
+  const setToggle = (key: keyof Group, on: boolean) => {
+    if (key === "showInAll") {
+      onChange({ showInAll: on, hideFromAll: on ? false : true });
+    } else {
+      onChange({ [key]: on });
+    }
+  };
+
+  return (
+    <div className="flex w-full flex-wrap gap-1 rounded-lg border border-line bg-surface-raised/60 p-1">
+        {toggles.map(({ key, label, checked }) => (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={checked}
+            onClick={() => setToggle(key, !checked)}
+            className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
+              checked
+                ? "bg-accent text-white shadow-glow"
+                : "text-ink-faint hover:bg-surface-overlay hover:text-ink-light"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+    </div>
   );
 }
 

@@ -93,7 +93,7 @@ export function MobileDashboard() {
       Object.values(itemsMap)
         .filter(
           (it) =>
-            itemMatchesGroupFilter(it, activeGroupFilter, "calendar") &&
+            itemMatchesGroupFilter(it, activeGroupFilter, "dashboard") &&
             it.hasDueDate &&
             it.showInCalendar &&
             (it.type !== "task" || !it.done),
@@ -126,7 +126,7 @@ export function MobileDashboard() {
   const tasks = useMemo(
     () =>
       Object.values(itemsMap)
-        .filter((it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "todo"))
+        .filter((it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "dashboard"))
         .filter((it) => !it.done)
         .sort((a, b) => {
           const ap = a.pinnedAt ? 1 : 0;

@@ -48,7 +48,7 @@ export function CalendarView({
   const filteredItems = useMemo(
     () =>
       Object.values(itemsMap).filter((it) =>
-        itemMatchesGroupFilter(it, activeGroupFilter),
+        itemMatchesGroupFilter(it, activeGroupFilter, "events"),
       ),
     [itemsMap, activeGroupFilter],
   );

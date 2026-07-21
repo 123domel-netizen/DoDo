@@ -91,8 +91,66 @@ export function stripGoogleGroups(groups: Group[]): Group[] {
   return groups.filter((g) => !isGoogleGroup(g));
 }
 
-/** Zakres filtra: w ToDo widok ALL ukrywa ARCH; kalendarz pokazuje wszystko. */
-export type GroupFilterScope = "calendar" | "todo";
+/** Zakres filtra widoczności grupy przy filtrze ALL. */
+export type GroupFilterScope = "calendar" | "todo" | "tasks" | "events" | "dashboard";
+
+export interface ResolvedGroupVisibility {
+  showInSidebar: boolean;
+  showInTasks: boolean;
+  showInEvents: boolean;
+  showInDashboard: boolean;
+  showInAll: boolean;
+}
+
+export function defaultGroupVisibility(): ResolvedGroupVisibility {
+  return {
+    showInSidebar: true,
+    showInTasks: true,
+    showInEvents: true,
+    showInDashboard: true,
+    showInAll: true,
+  };
+}
+
+export function resolveGroupVisibility(group: Group): ResolvedGroupVisibility {
+  const showInAll =
+    group.hideFromAll === true ? false : group.showInAll !== false;
+  return {
+    showInSidebar: group.showInSidebar !== false,
+    showInTasks: group.showInTasks !== false,
+    showInEvents: group.showInEvents !== false,
+    showInDashboard: group.showInDashboard !== false,
+    showInAll,
+  };
+}
+
+export function isGroupVisibleInSidebar(group: Group): boolean {
+  if (isSystemGroup(group)) return true;
+  return resolveGroupVisibility(group).showInSidebar;
+}
+
+function visibilityForScope(
+  visibility: ResolvedGroupVisibility,
+  scope: GroupFilterScope,
+): boolean {
+  switch (scope) {
+    case "todo":
+    case "tasks":
+      return visibility.showInTasks;
+    case "calendar":
+    case "events":
+      return visibility.showInEvents;
+    case "dashboard":
+      return visibility.showInDashboard;
+    default:
+      return true;
+  }
+}
+
+function groupById(groupId: string | null | undefined): Group | undefined {
+  if (!groupId) return undefined;
+  return useStore.getState().groups.find((g) => g.id === groupId);
+}
 
 /** null = ALL; inaczej tylko elementy z danej grupy. */
 export function itemMatchesGroupFilter(
@@ -119,6 +177,14 @@ export function itemMatchesGroupFilter(
   if (isSharedItem(item)) return true;
 
   if (scope === "todo" && archiveId && item.groupId === archiveId) return false;
+
+  const group = groupById(item.groupId);
+  if (group && !isShareGroup(group)) {
+    const visibility = resolveGroupVisibility(group);
+    if (!visibility.showInAll) return false;
+    if (!visibilityForScope(visibility, scope)) return false;
+  }
+
   return true;
 }
 

@@ -1225,7 +1225,7 @@ async function setupRealtime(userId: string) {
 // Obecność online (heartbeat co 2 min przy widocznej karcie; online = < 5 min)
 // ---------------------------------------------------------------------------
 
-const PRESENCE_INTERVAL_MS = 120_000;
+const PRESENCE_INTERVAL_MS = 60_000;
 let presenceTimer: ReturnType<typeof setInterval> | null = null;
 
 async function presenceBeat() {

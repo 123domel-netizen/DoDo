@@ -7,6 +7,7 @@ import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem 
 import { idbStorage } from "@/lib/idbStorage";
 import { applyTheme } from "@/lib/theme";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
+import { defaultGroupVisibility } from "@/lib/groups";
 import {
   ensureArchiveGroup,
   ensureShareGroup,
@@ -455,6 +456,7 @@ export const useStore = create<AppState>()(
           name,
           color,
           sortOrder: maxOrder + 1,
+          ...defaultGroupVisibility(),
         };
         set((s) => ({ groups: [...s.groups, group] }));
         return group;

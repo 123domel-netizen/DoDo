@@ -162,8 +162,14 @@ export interface Group {
   sortOrder: number;
   /** Grupa systemowa (archiwum / SHARE). */
   system?: "archive" | "google" | "share";
-  /** Tylko GOOGLE: gdy true, elementy nie widać przy filtrze ALL (domyślnie włączone). */
+  /** @deprecated Użyj showInAll — odwrotność. */
   hideFromAll?: boolean;
+  /** Widoczność grupy — domyślnie wszystkie true. */
+  showInSidebar?: boolean;
+  showInTasks?: boolean;
+  showInEvents?: boolean;
+  showInDashboard?: boolean;
+  showInAll?: boolean;
 }
 
 export type CalendarViewKind = "day" | "week" | "eleven" | "month";

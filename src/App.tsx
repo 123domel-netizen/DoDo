@@ -8,6 +8,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { NotificationPermissionPrompt } from "@/components/prompts/NotificationPermissionPrompt";
+import { AppUpdatePrompt } from "@/components/prompts/AppUpdatePrompt";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
@@ -78,6 +79,7 @@ export default function App() {
       <AuthGate>
         <GroupSelectPrompt />
         <NotificationPermissionPrompt />
+        <AppUpdatePrompt />
       {isMobile ? (
         <MobileShell />
       ) : (
