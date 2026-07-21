@@ -186,12 +186,50 @@ export async function uploadSmallFile(
 
 /** Krótkotrwały URL pobrania (pre-authenticated) — nie wymaga tokenu klienta. */
 export async function getDownloadUrl(driveId: string, itemId: string): Promise<string> {
-  const data = await graphFetch<GraphDriveItem>(
-    `/drives/${driveId}/items/${itemId}?$select=id,@microsoft.graph.downloadUrl`,
+  // 1) Pełny driveItem — $select bywa zawodny dla instance attribute downloadUrl
+  //    (app-only / SharePoint czasem zwraca item bez tej adnotacji przy $select).
+  try {
+    const data = await graphFetch<GraphDriveItem>(
+      `/drives/${driveId}/items/${itemId}`,
+    );
+    const direct = data["@microsoft.graph.downloadUrl"];
+    if (direct) return direct;
+  } catch (e) {
+    if (!(e instanceof GraphError && e.status === 404)) {
+      // 404 = brak pliku; inne błędy — spróbuj jeszcze /content
+    } else {
+      throw e;
+    }
+  }
+
+  // 2) Fallback: GET .../content → 302 Location (ten sam pre-auth URL).
+  //    Działa z tokenem app-only po stronie Edge; Location można podać klientowi.
+  const token = await getGraphToken();
+  const res = await fetch(
+    `${GRAPH_BASE}/drives/${driveId}/items/${itemId}/content`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: "manual",
+    },
   );
-  const url = data["@microsoft.graph.downloadUrl"];
-  if (!url) throw new GraphError("Brak adresu pobierania z Graph.", 502);
-  return url;
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get("Location") ?? res.headers.get("location");
+    if (location) return location;
+  }
+  // Niektóre runtime'y mogą śledzić redirect — wtedy nie trzymamy body w pamięci
+  // (to ścieżka awaryjna; docelowo zawsze 302).
+  if (res.status === 200) {
+    throw new GraphError(
+      "Graph zwrócił treść pliku zamiast URL (brak Location). Spróbuj ponownie.",
+      502,
+    );
+  }
+  const errBody = await parseJsonOrNull(res);
+  const msg =
+    (errBody as { error?: { message?: string } } | null)?.error?.message ??
+    res.statusText;
+  throw new GraphError(`Brak adresu pobierania z Graph: ${msg}`, res.status || 502);
 }
 
 /** Usuwa element (plik/folder) — brak błędu gdy element już nie istnieje. */

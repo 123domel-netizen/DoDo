@@ -73,6 +73,12 @@ import { formatMessageTime, useSignedUrl } from "@/components/chat/MessageBubble
 import { formatFileSize } from "@/lib/chat/upload";
 import { HubSearchPane } from "@/components/hub/HubSearchPane";
 import { HubLinksPane } from "@/components/hub/HubLinksPane";
+import { HubRegistryFilterBar } from "@/components/hub/HubRegistryFilterBar";
+import {
+  EMPTY_HUB_LIST_FILTERS,
+  matchesHubListFilters,
+  type HubListFilterState,
+} from "@/lib/chat/hubListFilters";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { dmPeerMember } from "@/lib/avatar";
 import {
@@ -376,6 +382,8 @@ export function WorkspaceHub() {
   const [monthCounts, setMonthCounts] = useState<Record<string, number> | null>(null);
   /** Filtr tagu na listach Decyzje / Notatki (null = wszystkie). */
   const [hubTagFilter, setHubTagFilter] = useState<string | null>(null);
+  /** Szukaj + rozmowa + data (Decyzje / Notatki / Media). */
+  const [listFilters, setListFilters] = useState<HubListFilterState>(EMPTY_HUB_LIST_FILTERS);
 
   const filteredOverview = useMemo(
     () =>
@@ -421,6 +429,20 @@ export function WorkspaceHub() {
     () => Object.values(tags).sort((a, b) => a.name.localeCompare(b.name, "pl")),
     [tags],
   );
+
+  const filterConversations = useMemo(() => {
+    const source = hubTab === "media" ? activeOverview : overview;
+    return [...source]
+      .map((c) => ({
+        id: c.id,
+        title: overviewTitle(c, myUserId, (id) => items[id]?.title),
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title, "pl"));
+  }, [hubTab, activeOverview, overview, myUserId, items]);
+
+  useEffect(() => {
+    setListFilters(EMPTY_HUB_LIST_FILTERS);
+  }, [hubTab]);
 
   // Gdy aktywna zakładka jest ukryta / usunięta — przełącz na pierwszą widoczną.
   useEffect(() => {
@@ -730,11 +752,20 @@ export function WorkspaceHub() {
 
       {(hubTab === "decisions" || hubTab === "notes") && (
         <>
-          <span className="min-w-0 flex-1 truncate px-1 text-xs font-semibold text-ink">
-            {hubTab === "decisions" ? "Decyzje" : "Notatki"}
-          </span>
+          <HubRegistryFilterBar
+            query={listFilters.query}
+            onQueryChange={(q) => setListFilters((f) => ({ ...f, query: q }))}
+            conversationId={listFilters.conversationId}
+            onConversationId={(id) => setListFilters((f) => ({ ...f, conversationId: id }))}
+            datePreset={listFilters.datePreset}
+            onDatePreset={(p) => setListFilters((f) => ({ ...f, datePreset: p }))}
+            conversations={filterConversations}
+            placeholder={
+              hubTab === "decisions" ? "Szukaj w decyzjach…" : "Szukaj w notatkach…"
+            }
+          />
           {allUserTags.length > 0 && (
-            <div className="flex max-w-[45%] shrink-0 items-center gap-0.5 overflow-x-auto">
+            <div className="flex max-w-[40%] shrink-0 items-center gap-0.5 overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setHubTagFilter(null)}
@@ -773,36 +804,48 @@ export function WorkspaceHub() {
       )}
 
       {hubTab === "media" && (
-        <div
-          className="flex min-w-0 flex-1 items-center gap-0.5"
-          role="tablist"
-          aria-label="Media"
-        >
-          {(
-            [
-              { id: "media" as const, label: "Media", icon: ImageIcon },
-              { id: "galleries" as const, label: "Galerie", icon: Images },
-              { id: "files" as const, label: "Pliki", icon: FolderOpen },
-              { id: "links" as const, label: "Linki", icon: Link2 },
-            ] as const
-          ).map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={mediaSubTab === id}
-              onClick={() => setMediaSubTab(id)}
-              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
-                mediaSubTab === id
-                  ? "bg-accent/15 text-ink"
-                  : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-              }`}
-            >
-              <Icon size={12} />
-              {label}
-            </button>
-          ))}
-        </div>
+        <>
+          <div
+            className="flex max-w-[48%] shrink-0 items-center gap-0.5 overflow-x-auto"
+            role="tablist"
+            aria-label="Media"
+          >
+            {(
+              [
+                { id: "media" as const, label: "Media", icon: ImageIcon },
+                { id: "galleries" as const, label: "Galerie", icon: Images },
+                { id: "files" as const, label: "Pliki", icon: FolderOpen },
+                { id: "links" as const, label: "Linki", icon: Link2 },
+              ] as const
+            ).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={mediaSubTab === id}
+                onClick={() => setMediaSubTab(id)}
+                className={`inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition ${
+                  mediaSubTab === id
+                    ? "bg-accent/15 text-ink"
+                    : "text-ink-faint hover:bg-surface-raised hover:text-ink"
+                }`}
+              >
+                <Icon size={12} />
+                {label}
+              </button>
+            ))}
+          </div>
+          <HubRegistryFilterBar
+            query={listFilters.query}
+            onQueryChange={(q) => setListFilters((f) => ({ ...f, query: q }))}
+            conversationId={listFilters.conversationId}
+            onConversationId={(id) => setListFilters((f) => ({ ...f, conversationId: id }))}
+            datePreset={listFilters.datePreset}
+            onDatePreset={(p) => setListFilters((f) => ({ ...f, datePreset: p }))}
+            conversations={filterConversations}
+            placeholder="Szukaj w mediach…"
+          />
+        </>
       )}
 
       {hubTab === "search" && (
@@ -1191,7 +1234,18 @@ export function WorkspaceHub() {
         return false;
       }
       if (hubTagFilter && !row.tagIds.includes(hubTagFilter)) return false;
-      return true;
+      const at =
+        kind === "decision"
+          ? (row as ChatDecision).decidedAt
+          : (row as ChatNote).notedAt;
+      const textParts =
+        kind === "decision"
+          ? [row.body, (row as ChatDecision).note]
+          : [(row as ChatNote).title, row.body];
+      return matchesHubListFilters(
+        { conversationId: row.conversationId, at, textParts },
+        listFilters,
+      );
     });
     if (!list.length) {
       return (
@@ -1205,9 +1259,9 @@ export function WorkspaceHub() {
     if (!filtered.length) {
       return (
         <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-          Brak wpisów dla wybranego filtra grupy/tagu.
+          Brak wpisów dla wybranych filtrów.
           <br />
-          Wyłącz „Grupa” lub filtr tagu, albo przypisz etykiety w szczegółach.
+          Wyłącz „Grupa”, filtr tagu / rozmowy / daty, albo wyczyść wyszukiwanie.
         </div>
       );
     }
@@ -1312,23 +1366,37 @@ export function WorkspaceHub() {
       kind === "media"
         ? media.filter((a) => isVisualMedia(a.mimeType))
         : media.filter((a) => !isVisualMedia(a.mimeType));
-    if (!list.length) {
+    const filtered = list.filter((att) =>
+      matchesHubListFilters(
+        {
+          conversationId: att.conversationId,
+          at: att.createdAt,
+          textParts: [att.fileName],
+        },
+        listFilters,
+      ),
+    );
+    if (!filtered.length) {
       return (
         <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-          {kind === "media" ? "Brak zdjęć i filmów." : "Brak innych plików."}
+          {list.length === 0
+            ? kind === "media"
+              ? "Brak zdjęć i filmów."
+              : "Brak innych plików."
+            : "Brak wyników dla wybranych filtrów."}
         </div>
       );
     }
     return (
       <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
-        {list.map((att) => {
+        {filtered.map((att) => {
           const conv = overview.find((c) => c.id === att.conversationId);
           return (
             <button
               key={att.id}
               type="button"
               onClick={() => openMediaInPanel(att.conversationId)}
-              className="flex w-full items-center gap-2.5 border-b border-line/50 px-3 py-2 text-left transition hover:bg-surface-raised"
+              className="flex w-full items-center gap-2.5 border-b border-line/50 px-3 py-1.5 text-left transition hover:bg-surface-raised"
             >
               <MediaThumb att={att} />
               <span className="min-w-0 flex-1">
@@ -1358,26 +1426,39 @@ export function WorkspaceHub() {
         </div>
       );
     }
-    return (
-      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {galleries.map((g) => {
-            const conv = overview.find((c) => c.id === g.conversationId);
-            return (
-              <div key={g.id} className="min-w-0">
-                <GalleryCard
-                  galleryId={g.id}
-                  title={g.title}
-                  onOpen={(id) => setGalleryViewerId(id)}
-                />
-                <div className="mt-1 truncate px-0.5 text-[10px] text-ink-faint">
-                  {conv ? titleOf(conv) : "Rozmowa"} · {formatMessageTime(g.createdAt)}
-                  {g.itemCount > 0 ? ` · ${g.itemCount} zdjęć` : ""}
-                </div>
-              </div>
-            );
-          })}
+    const filtered = galleries.filter((g) =>
+      matchesHubListFilters(
+        {
+          conversationId: g.conversationId,
+          at: g.createdAt,
+          textParts: [g.title],
+        },
+        listFilters,
+      ),
+    );
+    if (!filtered.length) {
+      return (
+        <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+          Brak galerii dla wybranych filtrów.
         </div>
+      );
+    }
+    return (
+      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
+        {filtered.map((g) => {
+          const conv = overview.find((c) => c.id === g.conversationId);
+          return (
+            <GalleryCard
+              key={g.id}
+              galleryId={g.id}
+              title={g.title}
+              onOpen={(id) => setGalleryViewerId(id)}
+              variant="row"
+              itemCountHint={g.itemCount}
+              meta={`${conv ? titleOf(conv) : "Rozmowa"} · ${formatMessageTime(g.createdAt)}`}
+            />
+          );
+        })}
       </div>
     );
   };
@@ -1499,7 +1580,7 @@ export function WorkspaceHub() {
         {hubTab === "notes" && registryList("note")}
         {hubTab === "media" &&
           (mediaSubTab === "links" ? (
-            <HubLinksPane />
+            <HubLinksPane listFilters={listFilters} />
           ) : mediaSubTab === "galleries" ? (
             galleryList()
           ) : (

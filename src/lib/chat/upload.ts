@@ -1,13 +1,17 @@
 import { supabase } from "@/lib/supabase";
 import { uid } from "@/lib/factory";
 import type { ChatAttachment } from "@/lib/chat/types";
+import {
+  galleryPerfMark,
+  galleryPerfNow,
+} from "@/lib/chat/galleryUploadPerf";
 
 /**
  * CHAT3-FILES: załączniki czatu w Supabase Storage.
  * Ścieżka: {conversationId}/{messageId}/{uuid}-{nazwa}. Obrazy kompresowane
  * po stronie klienta (obrona przed limitem egress) + miniatura do feedu.
  *
- * Galerie SharePoint: prepareGalleryPhoto — główne ≤2560 + miniatura ~480 WebP.
+ * Galerie SharePoint: prepareGalleryPhoto — główne ≤2560 JPEG + miniatura ~480 WebP.
  */
 
 export const CHAT_BUCKET = "chat-attachments";
@@ -151,8 +155,10 @@ export interface PrepareImageOptions {
   thumbMaxDim?: number;
   mainQuality?: number;
   thumbQuality?: number;
-  /** Główne zdjęcie jako WebP (galeria) lub JPEG (chat — szersza kompatybilność). */
+  /** Główne jako WebP (chat) lub JPEG (galeria — lepsza kompatybilność / SharePoint). */
   preferWebpMain?: boolean;
+  /** Loguj etapy prepare do [gallery-perf]. */
+  trackGalleryPerf?: boolean;
 }
 
 export async function prepareUpload(
@@ -164,21 +170,35 @@ export async function prepareUpload(
   const mainQuality = options.mainQuality ?? 0.82;
   const thumbQuality = options.thumbQuality ?? 0.8;
   const preferWebpMain = options.preferWebpMain ?? true;
+  const trackPerf = options.trackGalleryPerf === true;
 
   const mimeOk = isRasterImageMime(file.type) || /^image\//i.test(file.type);
   if (mimeOk) {
     let release: (() => void) | null = null;
     try {
+      const tRead = galleryPerfNow();
+      // File/Blob jest już w pamięci przeglądarki — „odczyt” = start decode
+      if (trackPerf) galleryPerfMark("read_file", tRead, file.name);
+
+      const tDecode = galleryPerfNow();
       const decoded = await decodeDrawable(file);
+      if (trackPerf) galleryPerfMark("decode", tDecode, file.name);
       release = decoded.release;
+
+      const tMain = galleryPerfNow();
       const main = await scaleDrawable(decoded.src, maxDim, {
         preferWebp: preferWebpMain,
         quality: mainQuality,
       });
+      if (trackPerf) galleryPerfMark("scale_main", tMain, file.name);
+
+      const tThumb = galleryPerfNow();
       const thumb = await scaleDrawable(decoded.src, thumbMaxDim, {
         preferWebp: true,
         quality: thumbQuality,
       });
+      if (trackPerf) galleryPerfMark("scale_thumb", tThumb, file.name);
+
       if (main) {
         const mimeType = main.blob.type || "image/jpeg";
         const stem = fileStem(file.name);
@@ -218,17 +238,20 @@ export interface PreparedGalleryPhoto {
 }
 
 /**
- * Galeria: ≤2560 px główne + ~480 px WebP miniatura.
+ * Galeria: ≤2560 px główne (lekki JPEG) + ~480 px WebP miniatura.
  * Bez upscale, z EXIF Orientation. Awaria miniatury nie rzuca.
  */
 export async function prepareGalleryPhoto(file: File): Promise<PreparedGalleryPhoto> {
+  const t0 = galleryPerfNow();
   const prepared = await prepareUpload(file, {
     maxDim: GALLERY_MAIN_MAX_DIM,
     thumbMaxDim: GALLERY_THUMB_MAX_DIM,
-    mainQuality: 0.85,
+    mainQuality: 0.84,
     thumbQuality: 0.72,
-    preferWebpMain: true,
+    preferWebpMain: false,
+    trackGalleryPerf: true,
   });
+  galleryPerfMark("prepare_total", t0, file.name);
   const main = new File([prepared.data], prepared.fileName, {
     type: prepared.mimeType,
     lastModified: file.lastModified,

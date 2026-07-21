@@ -11,9 +11,18 @@ import { fetchRecentItemLinks, type RecentItemLink } from "@/lib/chat/api";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
 import { setRouteHash } from "@/lib/navigation";
 import { itemMatchesGroupFilter } from "@/lib/groups";
+import {
+  EMPTY_HUB_LIST_FILTERS,
+  matchesHubListFilters,
+  type HubListFilterState,
+} from "@/lib/chat/hubListFilters";
 
-/** Lista powiązań wiadomość ↔ zadanie/wydarzenie. */
-export function HubLinksPane() {
+/** Lista powiązań wiadomość ↔ zadanie/wydarzenie — zwarty wiersz jak Media/All. */
+export function HubLinksPane({
+  listFilters = EMPTY_HUB_LIST_FILTERS,
+}: {
+  listFilters?: HubListFilterState;
+} = {}) {
   const items = useStore((s) => s.items);
   const setEditing = useStore((s) => s.setEditing);
   const myUserId = useChatStore((s) => s.userId);
@@ -80,37 +89,57 @@ export function HubLinksPane() {
     );
   }
 
+  const visible = rows.filter((row) => {
+    const item = items[row.itemId];
+    return matchesHubListFilters(
+      {
+        conversationId: row.conversationId,
+        at: row.createdAt,
+        textParts: [item?.title],
+      },
+      listFilters,
+    );
+  });
+
+  if (!visible.length) {
+    return (
+      <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+        Brak powiązań dla wybranych filtrów.
+      </div>
+    );
+  }
+
   return (
     <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
-      {rows.map((row) => {
+      {visible.map((row) => {
         const item = items[row.itemId];
         const ItemIcon = item?.type === "event" ? CalendarDays : CheckSquare;
+        const label = item?.title?.trim() || "Wpis (może być usunięty)";
         return (
           <div
             key={`${row.messageId}-${row.itemId}`}
-            className="flex flex-col gap-1 border-b border-line/50 px-3 py-2.5"
+            className="flex w-full items-center gap-2.5 border-b border-line/50 px-3 py-1.5"
           >
-            <div className="flex items-start gap-2">
-              <Link2 size={12} className="mt-1 shrink-0 text-accent" />
-              <div className="min-w-0 flex-1">
-                <button
-                  type="button"
-                  onClick={() => setEditing(row.itemId)}
-                  className="flex w-full items-center gap-1.5 text-left text-sm text-ink hover:underline"
-                >
-                  <ItemIcon size={13} className="shrink-0 text-ink-faint" />
-                  <span className="truncate">
-                    {item?.title?.trim() || "Wpis (może być usunięty)"}
-                  </span>
-                </button>
-                <p className="mt-0.5 truncate text-[10px] text-ink-faint">
-                  {row.kind === "created_from" ? "utworzono z wiadomości" : "powiązanie"} ·{" "}
-                  {titleOf(row.conversationId)} · {formatMessageTime(row.createdAt)}
-                </p>
-              </div>
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-surface-raised text-ink-faint">
+              <ItemIcon size={14} />
+            </span>
+            <div className="min-w-0 flex-1 leading-tight">
+              <button
+                type="button"
+                onClick={() => setEditing(row.itemId)}
+                className="block w-full truncate text-left text-[13px] font-medium text-ink hover:underline"
+              >
+                {label}
+              </button>
+              <p className="mt-px truncate text-[11px] text-ink-faint">
+                {titleOf(row.conversationId)} ·{" "}
+                {row.kind === "created_from" ? "z wiadomości" : "powiązanie"} ·{" "}
+                {formatMessageTime(row.createdAt)}
+              </p>
             </div>
             <button
               type="button"
+              title="Pokaż wiadomość"
               onClick={() => {
                 void openConversation(row.conversationId).then(() => {
                   void jumpToMessage(row.conversationId, row.messageId);
@@ -120,9 +149,9 @@ export function HubLinksPane() {
                   conversationId: row.conversationId,
                 });
               }}
-              className="self-start rounded-md border border-line px-2 py-1 text-[10px] text-ink-light transition hover:text-ink"
+              className="shrink-0 rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
             >
-              Pokaż wiadomość
+              <Link2 size={14} />
             </button>
           </div>
         );

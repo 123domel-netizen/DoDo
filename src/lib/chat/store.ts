@@ -478,7 +478,32 @@ export const useChatStore = create<ChatState>()(
         })),
 
       markMessageState: (msg) =>
-        set((s) => ({ ...patchEverywhere(s, msg), ...reconcilePinned(s, msg) })),
+        set((s) => {
+          // Przeniesienie: conversation_id się zmienia — usuń ze starych list.
+          let messagesByConv = s.messagesByConv;
+          let pinnedByConv = s.pinnedByConv;
+          for (const [convId, list] of Object.entries(s.messagesByConv)) {
+            if (convId === msg.conversationId) continue;
+            if (!list.some((m) => m.id === msg.id)) continue;
+            messagesByConv = {
+              ...messagesByConv,
+              [convId]: list.filter((m) => m.id !== msg.id),
+            };
+          }
+          for (const [convId, list] of Object.entries(s.pinnedByConv)) {
+            if (convId === msg.conversationId) continue;
+            if (!list.some((m) => m.id === msg.id)) continue;
+            pinnedByConv = {
+              ...pinnedByConv,
+              [convId]: list.filter((m) => m.id !== msg.id),
+            };
+          }
+          const next = { ...s, messagesByConv, pinnedByConv };
+          return {
+            ...patchEverywhere(next, msg),
+            ...reconcilePinned(next, msg),
+          };
+        }),
 
       attachToMessage: (att) =>
         set((s) => {

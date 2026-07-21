@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AtSign,
   BellOff,
@@ -44,6 +44,12 @@ import { GalleryViewer } from "@/components/chat/GalleryViewer";
 import { RegistryDetailSheet } from "@/components/hub/RegistryDetailPanel";
 import { HubSearchPane } from "@/components/hub/HubSearchPane";
 import { HubLinksPane } from "@/components/hub/HubLinksPane";
+import { HubRegistryFilterBar } from "@/components/hub/HubRegistryFilterBar";
+import {
+  EMPTY_HUB_LIST_FILTERS,
+  matchesHubListFilters,
+  type HubListFilterState,
+} from "@/lib/chat/hubListFilters";
 import {
   RAIL_TREE,
   isMobileHubModeActive,
@@ -255,6 +261,7 @@ export function MobileChatHub() {
   const [registryDetail, setRegistryDetail] = useState<RegistryFocus | null>(null);
   const [mediaConvId, setMediaConvId] = useState<string | null>(null);
   const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
+  const [listFilters, setListFilters] = useState<HubListFilterState>(EMPTY_HUB_LIST_FILTERS);
 
   const hubTab = mode.kind === "tab" ? mode.id : "chat";
   const {
@@ -274,6 +281,20 @@ export function MobileChatHub() {
     setHubTagFilter,
   } = useHubRegistryLists({ hubTab, enabled: true });
 
+  useEffect(() => {
+    setListFilters(EMPTY_HUB_LIST_FILTERS);
+  }, [hubTab]);
+
+  const filterConversations = useMemo(
+    () =>
+      [...overview]
+        .map((c) => ({
+          id: c.id,
+          title: overviewTitle(c, myUserId, (id) => items[id]?.title),
+        }))
+        .sort((a, b) => a.title.localeCompare(b.title, "pl")),
+    [overview, myUserId, items],
+  );
   const titleOf = (entry: ChatOverviewEntry) =>
     overviewTitle(entry, myUserId, (id) => items[id]?.title);
 
@@ -476,7 +497,18 @@ export function MobileChatHub() {
     }
     const filtered = list.filter((row) => {
       if (hubTagFilter && !row.tagIds.includes(hubTagFilter)) return false;
-      return true;
+      const at =
+        kind === "decision"
+          ? (row as ChatDecision).decidedAt
+          : (row as ChatNote).notedAt;
+      const textParts =
+        kind === "decision"
+          ? [row.body, (row as ChatDecision).note]
+          : [(row as ChatNote).title, row.body];
+      return matchesHubListFilters(
+        { conversationId: row.conversationId, at, textParts },
+        listFilters,
+      );
     });
     if (!list.length) {
       return (
@@ -490,7 +522,7 @@ export function MobileChatHub() {
     if (!filtered.length) {
       return (
         <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-          Brak wpisów dla wybranego filtra tagu.
+          Brak wpisów dla wybranych filtrów.
         </div>
       );
     }
@@ -515,7 +547,7 @@ export function MobileChatHub() {
               key={row.id}
               type="button"
               onClick={() => openRegistryRow(kind, row)}
-              className="flex w-full flex-col gap-0.5 border-b border-line/50 px-3 py-2.5 text-left transition hover:bg-surface-raised"
+              className="flex w-full flex-col gap-0.5 border-b border-line/50 px-3 py-1.5 text-left transition hover:bg-surface-raised"
             >
               <span className="line-clamp-2 text-sm text-ink">
                 {kind === "note" ? (row as ChatNote).title || row.body : row.body}
@@ -569,23 +601,37 @@ export function MobileChatHub() {
       kind === "media"
         ? media.filter((a) => isVisualMedia(a.mimeType))
         : media.filter((a) => !isVisualMedia(a.mimeType));
-    if (!list.length) {
+    const filtered = list.filter((att) =>
+      matchesHubListFilters(
+        {
+          conversationId: att.conversationId,
+          at: att.createdAt,
+          textParts: [att.fileName],
+        },
+        listFilters,
+      ),
+    );
+    if (!filtered.length) {
       return (
         <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-          {kind === "media" ? "Brak zdjęć i filmów." : "Brak innych plików."}
+          {list.length === 0
+            ? kind === "media"
+              ? "Brak zdjęć i filmów."
+              : "Brak innych plików."
+            : "Brak wyników dla wybranych filtrów."}
         </div>
       );
     }
     return (
       <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
-        {list.map((att) => {
+        {filtered.map((att) => {
           const conv = overview.find((c) => c.id === att.conversationId);
           return (
             <button
               key={att.id}
               type="button"
               onClick={() => setMediaConvId(att.conversationId)}
-              className="flex w-full items-center gap-2.5 border-b border-line/50 px-3 py-2 text-left transition hover:bg-surface-raised"
+              className="flex w-full items-center gap-2.5 border-b border-line/50 px-3 py-1.5 text-left transition hover:bg-surface-raised"
             >
               <MediaThumb att={att} />
               <span className="min-w-0 flex-1">
@@ -613,26 +659,39 @@ export function MobileChatHub() {
         </div>
       );
     }
-    return (
-      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
-        <div className="grid grid-cols-1 gap-2">
-          {galleries.map((g) => {
-            const conv = overview.find((c) => c.id === g.conversationId);
-            return (
-              <div key={g.id} className="min-w-0">
-                <GalleryCard
-                  galleryId={g.id}
-                  title={g.title}
-                  onOpen={(id) => setGalleryViewerId(id)}
-                />
-                <div className="mt-1 truncate px-0.5 text-[10px] text-ink-faint">
-                  {conv ? titleOf(conv) : "Rozmowa"} · {formatMessageTime(g.createdAt)}
-                  {g.itemCount > 0 ? ` · ${g.itemCount} zdjęć` : ""}
-                </div>
-              </div>
-            );
-          })}
+    const filtered = galleries.filter((g) =>
+      matchesHubListFilters(
+        {
+          conversationId: g.conversationId,
+          at: g.createdAt,
+          textParts: [g.title],
+        },
+        listFilters,
+      ),
+    );
+    if (!filtered.length) {
+      return (
+        <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+          Brak galerii dla wybranych filtrów.
         </div>
+      );
+    }
+    return (
+      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
+        {filtered.map((g) => {
+          const conv = overview.find((c) => c.id === g.conversationId);
+          return (
+            <GalleryCard
+              key={g.id}
+              galleryId={g.id}
+              title={g.title}
+              onOpen={(id) => setGalleryViewerId(id)}
+              variant="row"
+              itemCountHint={g.itemCount}
+              meta={`${conv ? titleOf(conv) : "Rozmowa"} · ${formatMessageTime(g.createdAt)}`}
+            />
+          );
+        })}
       </div>
     );
   };
@@ -756,70 +815,101 @@ export function MobileChatHub() {
         </div>
       )}
 
-      {(mode.kind === "tab" && (mode.id === "decisions" || mode.id === "notes")) &&
-        allUserTags.length > 0 && (
-          <div className="flex items-center gap-0.5 overflow-x-auto border-b border-line px-2 py-1.5 no-scrollbar">
-            <button
-              type="button"
-              onClick={() => setHubTagFilter(null)}
-              className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-medium transition ${
-                hubTagFilter === null
-                  ? "bg-accent/15 text-ink"
-                  : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-              }`}
-            >
-              Tagi
-            </button>
-            {allUserTags.map((t) => (
+      {(mode.kind === "tab" && (mode.id === "decisions" || mode.id === "notes")) && (
+        <>
+          <div className="flex items-center gap-1 border-b border-line px-2 py-1.5">
+            <HubRegistryFilterBar
+              query={listFilters.query}
+              onQueryChange={(q) => setListFilters((f) => ({ ...f, query: q }))}
+              conversationId={listFilters.conversationId}
+              onConversationId={(id) => setListFilters((f) => ({ ...f, conversationId: id }))}
+              datePreset={listFilters.datePreset}
+              onDatePreset={(p) => setListFilters((f) => ({ ...f, datePreset: p }))}
+              conversations={filterConversations}
+              placeholder={
+                mode.id === "decisions" ? "Szukaj w decyzjach…" : "Szukaj w notatkach…"
+              }
+            />
+          </div>
+          {allUserTags.length > 0 && (
+            <div className="flex items-center gap-0.5 overflow-x-auto border-b border-line px-2 py-1.5 no-scrollbar">
               <button
-                key={t.id}
                 type="button"
-                title={t.name}
-                onClick={() => setHubTagFilter((cur) => (cur === t.id ? null : t.id))}
-                className={`inline-flex max-w-[5.5rem] shrink-0 items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-[10px] font-medium transition ${
-                  hubTagFilter === t.id
+                onClick={() => setHubTagFilter(null)}
+                className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-medium transition ${
+                  hubTagFilter === null
                     ? "bg-accent/15 text-ink"
                     : "text-ink-faint hover:bg-surface-raised hover:text-ink"
                 }`}
               >
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: t.color }} />
-                <span className="truncate">{t.name}</span>
+                Tagi
+              </button>
+              {allUserTags.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  title={t.name}
+                  onClick={() => setHubTagFilter((cur) => (cur === t.id ? null : t.id))}
+                  className={`inline-flex max-w-[5.5rem] shrink-0 items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-[10px] font-medium transition ${
+                    hubTagFilter === t.id
+                      ? "bg-accent/15 text-ink"
+                      : "text-ink-faint hover:bg-surface-raised hover:text-ink"
+                  }`}
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: t.color }} />
+                  <span className="truncate">{t.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {mode.kind === "tab" && mode.id === "media" && (
+        <>
+          <div
+            className="flex items-center gap-0.5 border-b border-line px-2 py-1.5"
+            role="tablist"
+            aria-label="Media"
+          >
+            {(
+              [
+                { id: "media" as const, label: "Media", icon: ImageIcon },
+                { id: "galleries" as const, label: "Galerie", icon: Images },
+                { id: "files" as const, label: "Pliki", icon: FolderOpen },
+                { id: "links" as const, label: "Linki", icon: Link2 },
+              ] as const
+            ).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={mediaSubTab === id}
+                onClick={() => setMediaSubTab(id)}
+                className={`inline-flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${
+                  mediaSubTab === id
+                    ? "bg-accent/15 text-ink"
+                    : "text-ink-faint hover:bg-surface-raised hover:text-ink"
+                }`}
+              >
+                <Icon size={12} />
+                {label}
               </button>
             ))}
           </div>
-        )}
-
-      {mode.kind === "tab" && mode.id === "media" && (
-        <div
-          className="flex items-center gap-0.5 border-b border-line px-2 py-1.5"
-          role="tablist"
-          aria-label="Media"
-        >
-          {(
-            [
-              { id: "media" as const, label: "Media", icon: ImageIcon },
-              { id: "galleries" as const, label: "Galerie", icon: Images },
-              { id: "files" as const, label: "Pliki", icon: FolderOpen },
-              { id: "links" as const, label: "Linki", icon: Link2 },
-            ] as const
-          ).map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={mediaSubTab === id}
-              onClick={() => setMediaSubTab(id)}
-              className={`inline-flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${
-                mediaSubTab === id
-                  ? "bg-accent/15 text-ink"
-                  : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-              }`}
-            >
-              <Icon size={12} />
-              {label}
-            </button>
-          ))}
-        </div>
+          <div className="flex items-center gap-1 border-b border-line px-2 py-1.5">
+            <HubRegistryFilterBar
+              query={listFilters.query}
+              onQueryChange={(q) => setListFilters((f) => ({ ...f, query: q }))}
+              conversationId={listFilters.conversationId}
+              onConversationId={(id) => setListFilters((f) => ({ ...f, conversationId: id }))}
+              datePreset={listFilters.datePreset}
+              onDatePreset={(p) => setListFilters((f) => ({ ...f, datePreset: p }))}
+              conversations={filterConversations}
+              placeholder="Szukaj w mediach…"
+            />
+          </div>
+        </>
       )}
 
       {mode.kind === "tab" && mode.id === "search" && (
@@ -876,7 +966,7 @@ export function MobileChatHub() {
           registryBody("note")
         ) : mode.id === "media" ? (
           mediaSubTab === "links" ? (
-            <HubLinksPane />
+            <HubLinksPane listFilters={listFilters} />
           ) : mediaSubTab === "galleries" ? (
             galleryBody()
           ) : (

@@ -186,13 +186,15 @@ export function ConversationMediaView({
 
         {!loading && tab === "galleries" && (
           galleries && galleries.length > 0 ? (
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="flex flex-col">
               {galleries.map((g) => (
                 <GalleryCard
                   key={g.id}
                   galleryId={g.id}
                   title={g.title}
                   onOpen={(id) => setGalleryViewerId(id)}
+                  variant="row"
+                  itemCountHint={g.itemCount}
                 />
               ))}
             </div>

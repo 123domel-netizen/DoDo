@@ -1,5 +1,13 @@
-import { supabase } from "@/lib/supabase";
+import { supabase, cloudEnabled } from "@/lib/supabase";
 import { prepareGalleryPhoto, type PreparedGalleryPhoto } from "@/lib/chat/upload";
+import {
+  galleryPerfMark,
+  galleryPerfNow,
+  galleryPerfReset,
+  galleryPerfSummary,
+} from "@/lib/chat/galleryUploadPerf";
+import { prepareThenUploadPool } from "@/lib/chat/galleryUploadPool";
+import { setGalleryLocalThumb } from "@/lib/chat/galleryLocalThumbs";
 
 /**
  * CHAT: galerie zdjęć w czacie (SharePoint V1) — klient Edge Function
@@ -9,10 +17,14 @@ import { prepareGalleryPhoto, type PreparedGalleryPhoto } from "@/lib/chat/uploa
  *
  * Miniatury: własne, w `{folder-galerii}/_thumbnails/` — nie Graph thumbs
  * (przewidywalne i przenośne na OneDrive / Google Drive).
+ *
+ * Upload: multipart/form-data (binarnie), bez Base64. Współbieżność max 3.
  */
 
-export const MAX_GALLERY_UPLOAD_BYTES = 12 * 1024 * 1024; // ~12 MB (base64 JSON)
+export const MAX_GALLERY_UPLOAD_BYTES = 12 * 1024 * 1024; // ~12 MB
 export const MAX_GALLERY_ITEMS_PER_CALL = 60;
+/** Max równoległych uploadów do gallery-api / Graph. */
+export const GALLERY_UPLOAD_CONCURRENCY = 3;
 
 export type GalleryStatus =
   | "draft"
@@ -192,7 +204,10 @@ export interface CreateGalleryResult {
 export async function createGallery(
   input: CreateGalleryInput,
 ): Promise<ApiResult<CreateGalleryResult>> {
-  return callGalleryApi<CreateGalleryResult>("gallery_create", { ...input });
+  const t0 = galleryPerfNow();
+  const res = await callGalleryApi<CreateGalleryResult>("gallery_create", { ...input });
+  galleryPerfMark("gallery_create", t0);
+  return res;
 }
 
 export async function addGalleryItems(
@@ -230,18 +245,20 @@ export async function deleteGalleryStorage(
 }
 
 // ---------------------------------------------------------------------------
-// Upload bajtów (JSON + base64 — prościej w Deno niż multipart)
+// Upload bajtów (multipart/form-data — bez Base64)
 // ---------------------------------------------------------------------------
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buf = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+
+async function extractFetchError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string } | null;
+    if (body && typeof body.error === "string") return body.error;
+  } catch {
+    // ignore
   }
-  return btoa(binary);
+  return `Błąd uploadu (${res.status}).`;
 }
 
 export interface UploadGalleryItemResult {
@@ -249,8 +266,18 @@ export interface UploadGalleryItemResult {
   gallery: Gallery;
 }
 
+export interface UploadGalleryItemOptions {
+  /** Nadpisz nazwę/mime po prepare (create mógł dostać oryginał HEIC). */
+  fileName?: string;
+  mimeType?: string;
+  width?: number | null;
+  height?: number | null;
+  /** Domyślnie true — przy pipeline ustaw false i wywołaj recompute na końcu. */
+  recompute?: boolean;
+}
+
 /**
- * Wysyła zdjęcie główne (+ opcjonalną miniaturę) do pending itemu.
+ * Wysyła zdjęcie główne (+ opcjonalną miniaturę) binarnie (multipart).
  * Awaria miniatury nie zwraca błędu — item i tak jest `ready` z `thumbStatus=failed`.
  */
 export async function uploadGalleryItem(
@@ -258,7 +285,11 @@ export async function uploadGalleryItem(
   itemId: string,
   file: Blob,
   thumb?: Blob | null,
+  options: UploadGalleryItemOptions = {},
 ): Promise<ApiResult<UploadGalleryItemResult>> {
+  if (!cloudEnabled || !supabase || !supabaseUrl || !supabaseAnonKey) {
+    return { error: "Brak chmury." };
+  }
   if (file.size > MAX_GALLERY_UPLOAD_BYTES) {
     return {
       error: `Plik przekracza limit ${Math.round(MAX_GALLERY_UPLOAD_BYTES / (1024 * 1024))} MB.`,
@@ -267,19 +298,54 @@ export async function uploadGalleryItem(
   if (thumb && thumb.size > MAX_GALLERY_UPLOAD_BYTES) {
     thumb = null;
   }
-  const contentBase64 = await blobToBase64(file);
-  const body: Record<string, unknown> = {
-    galleryId,
-    itemId,
-    contentBase64,
-  };
-  if (thumb) {
-    body.thumbBase64 = await blobToBase64(thumb);
-    body.thumbMimeType = thumb.type || "image/webp";
-  } else {
-    body.skipThumb = true;
+
+  const tTotal = galleryPerfNow();
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return { error: "Brak sesji — zaloguj się ponownie." };
+
+    const form = new FormData();
+    form.append("action", "gallery_upload_item");
+    form.append("galleryId", galleryId);
+    form.append("itemId", itemId);
+    form.append("recompute", options.recompute === false ? "0" : "1");
+    if (options.fileName) form.append("fileName", options.fileName);
+    if (options.mimeType) form.append("mimeType", options.mimeType);
+    if (options.width != null) form.append("width", String(options.width));
+    if (options.height != null) form.append("height", String(options.height));
+
+    const mainName = options.fileName || "photo.jpg";
+    form.append("file", file, mainName);
+    if (thumb) {
+      form.append("thumb", thumb, "thumb.webp");
+      form.append("thumbMimeType", thumb.type || "image/webp");
+    } else {
+      form.append("skipThumb", "1");
+    }
+
+    const tHttp = galleryPerfNow();
+    const res = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: supabaseAnonKey,
+      },
+      body: form,
+    });
+    galleryPerfMark("upload_http", tHttp, itemId);
+
+    if (!res.ok) {
+      return { error: await extractFetchError(res) };
+    }
+    const row = (await res.json()) as Record<string, unknown>;
+    if (typeof row.error === "string") return { error: row.error };
+    galleryPerfMark("upload_item_total", tTotal, itemId);
+    return { data: row as unknown as UploadGalleryItemResult };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Błąd komunikacji z serwerem." };
   }
-  return callGalleryApi<UploadGalleryItemResult>("gallery_upload_item", body);
 }
 
 /** Ponowna wysyłka samej miniatury (np. po awarii). */
@@ -288,15 +354,46 @@ export async function uploadGalleryThumb(
   itemId: string,
   thumb: Blob,
 ): Promise<ApiResult<UploadGalleryItemResult>> {
+  if (!cloudEnabled || !supabase || !supabaseUrl || !supabaseAnonKey) {
+    return { error: "Brak chmury." };
+  }
   if (thumb.size > MAX_GALLERY_UPLOAD_BYTES) {
     return { error: "Miniatura przekracza limit rozmiaru." };
   }
-  return callGalleryApi<UploadGalleryItemResult>("gallery_upload_thumb", {
-    galleryId,
-    itemId,
-    thumbBase64: await blobToBase64(thumb),
-    thumbMimeType: thumb.type || "image/webp",
-  });
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return { error: "Brak sesji — zaloguj się ponownie." };
+
+    const form = new FormData();
+    form.append("action", "gallery_upload_thumb");
+    form.append("galleryId", galleryId);
+    form.append("itemId", itemId);
+    form.append("thumb", thumb, "thumb.webp");
+    form.append("thumbMimeType", thumb.type || "image/webp");
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: supabaseAnonKey,
+      },
+      body: form,
+    });
+    if (!res.ok) return { error: await extractFetchError(res) };
+    const row = (await res.json()) as Record<string, unknown>;
+    if (typeof row.error === "string") return { error: row.error };
+    return { data: row as unknown as UploadGalleryItemResult };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Błąd komunikacji z serwerem." };
+  }
+}
+
+export async function recomputeGalleryCounts(
+  galleryId: string,
+): Promise<ApiResult<{ gallery: Gallery }>> {
+  return callGalleryApi("gallery_recompute", { galleryId });
 }
 
 /**
@@ -331,6 +428,7 @@ export async function retryGalleryThumb(
 // ---------------------------------------------------------------------------
 
 export type { PreparedGalleryPhoto };
+export { prepareGalleryPhoto };
 
 export async function prepareGalleryImages(
   files: File[],
@@ -354,4 +452,79 @@ export async function prepareGalleryImages(
     onProgress?.(i + 1, total);
   }
   return out;
+}
+
+export interface PipelineUploadCallbacks {
+  onItemStart?: (itemId: string, index: number) => void;
+  onItemDone?: (
+    itemId: string,
+    index: number,
+    result: { ok: true } | { ok: false; error: string },
+  ) => void;
+  onPrepareProgress?: (done: number, total: number) => void;
+}
+
+/**
+ * Pipeline: create już zrobione — prepare sekwencyjnie + upload max 3 równolegle.
+ * Lokalne miniatury ustawiane zaraz po prepare.
+ */
+export async function runGalleryUploadPipeline(
+  galleryId: string,
+  files: File[],
+  itemIds: string[],
+  callbacks: PipelineUploadCallbacks = {},
+): Promise<void> {
+  galleryPerfReset();
+  const tPipe = galleryPerfNow();
+  const n = Math.min(files.length, itemIds.length);
+  let prepareDone = 0;
+
+  await prepareThenUploadPool(files.slice(0, n), {
+    uploadConcurrency: GALLERY_UPLOAD_CONCURRENCY,
+    prepare: async (file, index) => {
+      try {
+        const photo = await prepareGalleryPhoto(file);
+        const itemId = itemIds[index]!;
+        if (photo.thumb) setGalleryLocalThumb(galleryId, itemId, photo.thumb);
+        else setGalleryLocalThumb(galleryId, itemId, file);
+        prepareDone++;
+        callbacks.onPrepareProgress?.(prepareDone, n);
+        return photo;
+      } catch {
+        prepareDone++;
+        callbacks.onPrepareProgress?.(prepareDone, n);
+        const itemId = itemIds[index]!;
+        setGalleryLocalThumb(galleryId, itemId, file);
+        return {
+          main: file,
+          thumb: null,
+          width: null,
+          height: null,
+          thumbFailed: true,
+        } satisfies PreparedGalleryPhoto;
+      }
+    },
+    upload: async (photo, index) => {
+      const itemId = itemIds[index]!;
+      callbacks.onItemStart?.(itemId, index);
+      const isLast = index === n - 1;
+      const res = await uploadGalleryItem(galleryId, itemId, photo.main, photo.thumb, {
+        fileName: photo.main.name,
+        mimeType: photo.main.type || "image/jpeg",
+        width: photo.width,
+        height: photo.height,
+        // Ostatni upload przelicza status; przy race i tak wołamy recompute na końcu.
+        recompute: isLast,
+      });
+      if (res.error) {
+        callbacks.onItemDone?.(itemId, index, { ok: false, error: res.error });
+      } else {
+        callbacks.onItemDone?.(itemId, index, { ok: true });
+      }
+    },
+  });
+
+  await recomputeGalleryCounts(galleryId);
+  galleryPerfMark("pipeline_total", tPipe, `${n} photos`);
+  galleryPerfSummary(`gallery ${galleryId} · ${n} zdjęć`);
 }

@@ -760,6 +760,55 @@ export async function unmuteConversation(conversationId: string) {
   scheduleOverviewRefresh(400);
 }
 
+/** Przekaż wątek do innej rozmowy (autor = przekazujący). */
+export async function forwardChatThread(
+  msg: ChatMessage,
+  targetConversationId: string,
+): Promise<{ error?: string; newRootId?: string }> {
+  const rootId = msg.threadRootId ?? msg.id;
+  const { data, error } = await api.forwardMessageThread(rootId, targetConversationId);
+  if (error) return { error };
+  scheduleOverviewRefresh(200);
+  void loadConversationMessages(targetConversationId);
+  return { newRootId: data?.newRootId };
+}
+
+/** Przenieś wątek (voice + załączniki); stub w źródle. */
+export async function moveChatThread(
+  msg: ChatMessage,
+  targetConversationId: string,
+): Promise<{ error?: string; rootId?: string }> {
+  const rootId = msg.threadRootId ?? msg.id;
+  const fromId = msg.conversationId;
+  const { data, error } = await api.moveMessageThread(rootId, targetConversationId);
+  if (error) return { error };
+
+  useChatStore.setState((s) => {
+    const drop = (list: ChatMessage[]) =>
+      list.filter((m) => m.id !== rootId && m.threadRootId !== rootId);
+    const messagesByConv = { ...s.messagesByConv };
+    if (messagesByConv[fromId]) {
+      messagesByConv[fromId] = drop(messagesByConv[fromId]);
+    }
+    const pinnedByConv = { ...s.pinnedByConv };
+    if (pinnedByConv[fromId]) {
+      pinnedByConv[fromId] = drop(pinnedByConv[fromId]);
+    }
+    const threadByRoot = { ...s.threadByRoot };
+    delete threadByRoot[rootId];
+    let focusFeed = s.focusFeed;
+    if (focusFeed?.conversationId === fromId) {
+      focusFeed = { ...focusFeed, messages: drop(focusFeed.messages) };
+    }
+    return { messagesByConv, pinnedByConv, threadByRoot, focusFeed };
+  });
+
+  scheduleOverviewRefresh(200);
+  void loadConversationMessages(fromId);
+  void loadConversationMessages(targetConversationId);
+  return { rootId: data?.rootId ?? rootId };
+}
+
 export async function markUnread(conversationId: string) {
   useChatStore.getState().patchOverviewEntry(conversationId, { myMarkedUnread: true });
   const { error } = await api.markConversationUnread(conversationId);

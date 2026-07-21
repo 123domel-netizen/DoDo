@@ -98,6 +98,39 @@ export interface LinkPreview {
   siteName: string | null;
 }
 
+/** Snapshot treści przy przekazywaniu / przenoszeniu. */
+export interface MessagePreviewSnapshot {
+  kind: MessageKind;
+  body: string;
+  payload?: MessagePayload;
+  attachmentCount?: number;
+  authorUserId?: string;
+  createdAt?: string;
+  /** Opcjonalnie — pełne metadane załączników (po przeniesieniu ze zaktualizowanymi ścieżkami). */
+  attachments?: ChatAttachment[];
+}
+
+/** Meta „Przesłano dalej” — wiadomość jest od przekazującego. */
+export interface MessageForwardMeta {
+  fromMessageId: string;
+  fromConversationId: string;
+  forwardedAt: string;
+  originalAuthorUserId: string;
+  preview?: MessagePreviewSnapshot;
+  /** Odpowiedź w przekazanym wątku — meta roota. */
+  threadRootForward?: MessageForwardMeta;
+}
+
+/** Meta przeniesienia (na wiadomości w celu lub w stubie źródła). */
+export interface MessageMovedMeta {
+  toConversationId?: string;
+  toMessageId?: string;
+  fromConversationId?: string;
+  movedAt: string;
+  movedBy: string;
+  preview?: MessagePreviewSnapshot;
+}
+
 /** Dane zależne od kindu wiadomości (kolumna messages.payload). */
 export interface MessagePayload {
   poll?: { options: PollOption[] };
@@ -110,6 +143,11 @@ export interface MessagePayload {
     kind: "decision" | "note";
     id: string;
   };
+  /** Przekazanie — baner „Przesłano dalej”. */
+  forward?: MessageForwardMeta;
+  /** Stub w źródle po przeniesieniu. */
+  movedStub?: boolean;
+  moved?: MessageMovedMeta;
 }
 
 /** Status galerii: cały zestaw zdjęć zapisywanych w magazynie zespołu. */

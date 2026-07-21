@@ -7,6 +7,7 @@ import {
   CornerUpLeft,
   Download,
   ExternalLink,
+  Forward,
   MessageSquare,
   MoreHorizontal,
   Pin,
@@ -14,19 +15,182 @@ import {
 } from "lucide-react";
 import { format, isToday } from "date-fns";
 import { pl } from "date-fns/locale";
-import type { ChatAttachment, ChatMessage } from "@/lib/chat/types";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  MessagePayload,
+} from "@/lib/chat/types";
+import { messagePreviewLabel } from "@/lib/chat/types";
 import { formatFileSize, signedUrlFor } from "@/lib/chat/upload";
 import { parseMarkdownLite } from "@/lib/chat/markdown";
 import { mentionsUser } from "@/lib/chat/mentions";
 import { aggregatePoll, groupReactions, QUICK_REACTIONS } from "@/lib/chat/polls";
 import { formatDuration } from "@/lib/chat/voice";
 import { isThreadUnread } from "@/lib/chat/recentThreads";
+import { fetchMessageById } from "@/lib/chat/api";
 import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { GalleryCard } from "@/components/chat/GalleryCard";
 
 const INLINE_REACTIONS = QUICK_REACTIONS.slice(0, 3);
+
+/** Odtwórz wiadomość ze snapshota przeniesienia (fallback zanim dojdzie live fetch). */
+function messageFromMovedPreview(stub: ChatMessage): ChatMessage | null {
+  const moved = stub.payload.moved;
+  const snap = moved?.preview;
+  if (!snap?.kind) return null;
+  const payload = (snap.payload ?? {}) as MessagePayload;
+  return {
+    id: moved?.toMessageId ?? stub.id,
+    conversationId: moved?.toConversationId ?? stub.conversationId,
+    authorUserId: snap.authorUserId ?? stub.authorUserId,
+    kind: snap.kind,
+    body: typeof snap.body === "string" ? snap.body : "",
+    payload,
+    mentions: [],
+    threadRootId: null,
+    replyToMessageId: null,
+    createdAt: snap.createdAt ?? stub.createdAt,
+    editedAt: null,
+    deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
+    threadTitle: null,
+    threadArchivedAt: null,
+    attachments: snap.attachments,
+  };
+}
+
+/** Treść wiadomości (bez chrome akcji) — używana też w stubie przeniesienia. */
+function MessageContentPreview({
+  msg,
+  mentionNames = [],
+  onOpenGallery,
+}: {
+  msg: ChatMessage;
+  mentionNames?: string[];
+  onOpenGallery?: (galleryId: string) => void;
+}) {
+  const voiceAtt =
+    msg.kind === "voice"
+      ? (msg.attachments ?? []).find((a) => a.mimeType.startsWith("audio/"))
+      : undefined;
+
+  return (
+    <>
+      {msg.kind === "poll" ? (
+        <>
+          <div className="font-medium">
+            <MessageBody body={msg.body} mentionNames={mentionNames} />
+          </div>
+          <PollBlock msg={msg} myUserId={null} />
+        </>
+      ) : msg.kind === "gif" && msg.payload.gif ? (
+        <img
+          src={msg.payload.gif.url}
+          alt="GIF"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          className="max-h-44 w-auto max-w-full rounded-xl"
+        />
+      ) : msg.kind === "gallery" && msg.payload.gallery?.galleryId ? (
+        <GalleryCard
+          galleryId={msg.payload.gallery.galleryId}
+          title={msg.body}
+          onOpen={onOpenGallery}
+          variant="bubble"
+        />
+      ) : msg.kind === "gallery" ? (
+        <span className="text-xs text-ink-faint">
+          {messagePreviewLabel("gallery", msg.body)}
+        </span>
+      ) : msg.kind === "voice" ? (
+        voiceAtt ? (
+          <VoiceAttachment
+            att={voiceAtt}
+            durationSec={msg.payload.voice?.durationSec}
+          />
+        ) : (
+          <span className="text-xs text-ink-faint">🎤 Wiadomość głosowa</span>
+        )
+      ) : (
+        msg.body && <MessageBody body={msg.body} mentionNames={mentionNames} />
+      )}
+
+      {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {msg.attachments!.map((att) => (
+            <AttachmentTile key={att.id} att={att} />
+          ))}
+        </div>
+      )}
+
+      {msg.kind === "text" && <LinkPreviewCard msg={msg} />}
+    </>
+  );
+}
+
+function MovedStubBubble({
+  stub,
+  mentionNames = [],
+  onOpenGallery,
+}: {
+  stub: ChatMessage;
+  mentionNames?: string[];
+  onOpenGallery?: (galleryId: string) => void;
+}) {
+  const fromPreview = messageFromMovedPreview(stub);
+  const [live, setLive] = useState<ChatMessage | null>(null);
+
+  useEffect(() => {
+    const id = stub.payload.moved?.toMessageId;
+    if (!id) return;
+    let cancelled = false;
+    void fetchMessageById(id).then((m) => {
+      if (!cancelled && m && !m.deletedAt) setLive(m);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [stub.payload.moved?.toMessageId]);
+
+  const display = live ?? fromPreview;
+  const isGallery = display?.kind === "gallery" && Boolean(display.payload.gallery?.galleryId);
+
+  return (
+    <div className="my-2.5 flex justify-center px-3">
+      <div
+        className={`max-w-[min(88%,22rem)] opacity-[0.72] ${
+          isGallery ? "w-full max-w-[min(96%,18.5rem)]" : ""
+        }`}
+      >
+        <p className="mb-1 text-center text-[11px] font-medium text-ink-faint">
+          Przeniesiono wiadomość
+        </p>
+        {display ? (
+          <div
+            className={
+              isGallery
+                ? "overflow-visible bg-transparent p-0"
+                : "rounded-2xl border border-line/60 bg-surface-raised/50 px-2.5 py-[7px] text-[14.5px] leading-[1.35] text-ink shadow-card"
+            }
+          >
+            <MessageContentPreview
+              msg={display}
+              mentionNames={mentionNames}
+              onOpenGallery={onOpenGallery}
+            />
+          </div>
+        ) : (
+          <div className="rounded-xl border border-line/60 bg-surface-raised/40 px-3.5 py-2 text-center text-[12px] text-ink-light">
+            {stub.body || "Przeniesiono wiadomość"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function formatMessageTime(iso: string): string {
   const d = new Date(iso);
@@ -454,6 +618,15 @@ export function MessageBubble({
   });
 
   if (msg.kind === "system") {
+    if (msg.payload?.movedStub) {
+      return (
+        <MovedStubBubble
+          stub={msg}
+          mentionNames={mentionNames}
+          onOpenGallery={onOpenGallery}
+        />
+      );
+    }
     const registryKind =
       msg.payload?.registry?.kind ??
       (msg.body.startsWith("📝 Zapisano notatkę")
@@ -502,6 +675,45 @@ export function MessageBubble({
       : undefined;
   const canAct = !deleted && !pending && !failed;
 
+  const isGallery = msg.kind === "gallery" && !deleted;
+  const galleryNeedsChrome = isGallery && (hasThread || threadUnread || Boolean(quoted));
+  let bubbleClass: string;
+  if (isGallery && !galleryNeedsChrome) {
+    bubbleClass = "overflow-visible bg-transparent p-0 shadow-none";
+  } else if (isGallery && galleryNeedsChrome) {
+    const pad = "overflow-visible px-1.5 pb-2 pt-1.5";
+    if (mine) {
+      bubbleClass = threadUnread
+        ? `${pad} rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/45 text-ink shadow-card ring-1 ring-thread/35`
+        : hasThread
+          ? `${pad} rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/28 text-ink shadow-card`
+          : `${pad} rounded-2xl rounded-br-[5px] bg-accent/30 text-ink shadow-card`;
+    } else {
+      bubbleClass = threadUnread
+        ? `${pad} rounded-2xl rounded-bl-[5px] border-l-4 border-thread bg-thread/30 text-ink shadow-card ring-1 ring-thread/30`
+        : hasThread
+          ? `${pad} rounded-2xl rounded-bl-[5px] border-l-4 border-thread-soft bg-thread/16 text-ink shadow-card`
+          : `${pad} rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card`;
+    }
+  } else {
+    const pad = "px-2.5 py-[7px]";
+    if (mine) {
+      bubbleClass = threadUnread
+        ? `${pad} rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/45 text-ink shadow-card ring-1 ring-thread/35`
+        : hasThread
+          ? `${pad} rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/28 text-ink shadow-card`
+          : `${pad} rounded-2xl rounded-br-[5px] bg-accent/45 text-ink shadow-card`;
+    } else {
+      bubbleClass = threadUnread
+        ? `${pad} rounded-2xl rounded-bl-[5px] border-l-4 border-thread bg-thread/30 text-ink shadow-card ring-1 ring-thread/30`
+        : hasThread
+          ? `${pad} rounded-2xl rounded-bl-[5px] border-l-4 border-thread-soft bg-thread/16 text-ink shadow-card`
+          : mentioned
+            ? `${pad} rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card ring-1 ring-inset ring-accent/45`
+            : `${pad} rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card`;
+    }
+  }
+
   return (
     <div
       data-message-id={msg.id}
@@ -526,8 +738,12 @@ export function MessageBubble({
       )}
 
       <div
-        className={`relative flex min-w-0 max-w-[min(88%,22rem)] flex-col ${
+        className={`relative flex min-w-0 flex-col ${
           mine ? "items-end" : "items-start"
+        } ${
+          msg.kind === "gallery" && !deleted
+            ? "max-w-[min(96%,18.5rem)]"
+            : "max-w-[min(88%,22rem)]"
         }`}
       >
         {showAuthor && (
@@ -563,21 +779,9 @@ export function MessageBubble({
                   }
                 : undefined
             }
-            className={`chat-msg-bubble relative box-border flow-root px-2.5 py-[7px] text-[14.5px] leading-[1.35] transition-colors ${
-              mine
-                ? threadUnread
-                  ? "rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/45 text-ink shadow-card ring-1 ring-thread/35"
-                  : hasThread
-                    ? "rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/28 text-ink shadow-card"
-                    : "rounded-2xl rounded-br-[5px] bg-accent/45 text-ink shadow-card"
-                : threadUnread
-                  ? "rounded-2xl rounded-bl-[5px] border-l-4 border-thread bg-thread/30 text-ink shadow-card ring-1 ring-thread/30"
-                  : hasThread
-                    ? "rounded-2xl rounded-bl-[5px] border-l-4 border-thread-soft bg-thread/16 text-ink shadow-card"
-                    : mentioned
-                      ? "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card ring-1 ring-inset ring-accent/45"
-                      : "rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card"
-            } ${pending ? "opacity-60" : ""} ${failed ? "ring-1 ring-inset ring-red-500/50" : ""} ${
+            className={`chat-msg-bubble relative box-border flow-root text-[14.5px] leading-[1.35] transition-colors ${bubbleClass} ${
+              pending ? "opacity-60" : ""
+            } ${failed ? "ring-1 ring-inset ring-red-500/50" : ""} ${
               flash ? "ring-2 ring-accent ring-offset-1 ring-offset-surface" : ""
             }`}
           >
@@ -585,6 +789,16 @@ export function MessageBubble({
               <span className="italic text-ink-faint">Wiadomość usunięta</span>
             ) : (
               <>
+                {msg.payload.forward && !msg.threadRootId && (
+                  <div
+                    className={`mb-1.5 flex items-center gap-1 text-[11px] font-medium ${
+                      mine ? "text-ink-faint" : "text-ink-light"
+                    }`}
+                  >
+                    <Forward size={11} className="shrink-0 opacity-80" />
+                    Przesłano dalej
+                  </div>
+                )}
                 {quoted && (
                   <button
                     type="button"
@@ -633,13 +847,12 @@ export function MessageBubble({
                     className="max-h-44 w-auto max-w-full rounded-xl"
                   />
                 ) : msg.kind === "gallery" && msg.payload.gallery?.galleryId ? (
-                  <div className="-mx-1 -my-0.5">
-                    <GalleryCard
-                      galleryId={msg.payload.gallery.galleryId}
-                      title={msg.body}
-                      onOpen={onOpenGallery}
-                    />
-                  </div>
+                  <GalleryCard
+                    galleryId={msg.payload.gallery.galleryId}
+                    title={msg.body}
+                    onOpen={onOpenGallery}
+                    variant="bubble"
+                  />
                 ) : msg.kind === "gallery" ? (
                   <span className="text-xs text-ink-faint">🖼 Galeria: {msg.body || "…"}</span>
                 ) : msg.kind === "voice" ? (
@@ -697,12 +910,16 @@ export function MessageBubble({
               pending ||
               failed) && (
               <span
-                className={`float-right ml-2 inline-flex translate-y-[0.4em] items-center gap-1 text-[11px] leading-none ${
-                  mine
-                    ? threadUnread
-                      ? "text-white/70"
-                      : "text-ink/55"
-                    : "text-ink-faint"
+                className={`inline-flex items-center gap-1 text-[11px] leading-none ${
+                  isGallery && !galleryNeedsChrome
+                    ? "float-right ml-2 mt-0.5 text-ink-faint"
+                    : `float-right ml-2 ${isGallery ? "mt-0.5" : "translate-y-[0.4em]"} ${
+                        mine
+                          ? threadUnread
+                            ? "text-white/70"
+                            : "text-ink/55"
+                          : "text-ink-faint"
+                      }`
                 }`}
               >
                 {msg.pinnedAt && !deleted && (

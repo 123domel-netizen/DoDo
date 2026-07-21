@@ -1529,6 +1529,44 @@ export async function searchAll(query: string): Promise<ChatSearchResult[]> {
   }));
 }
 
+export type ForwardMoveResult = {
+  newRootId?: string;
+  rootId?: string;
+  stubId?: string;
+  targetConversationId?: string;
+  toConversationId?: string;
+  fromConversationId?: string;
+  count?: number;
+};
+
+/** Przekaż wątek (root + odpowiedzi) — nowe wiadomości, autor = caller. */
+export async function forwardMessageThread(
+  rootId: string,
+  targetConversationId: string,
+): Promise<{ data?: ForwardMoveResult; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { data, error } = await supabase.rpc("forward_message_thread", {
+    p_root_id: rootId,
+    p_target_conversation_id: targetConversationId,
+  });
+  if (error) return { error: mapOrgRpcError(error.message) };
+  return { data: (data as ForwardMoveResult) ?? undefined };
+}
+
+/** Przenieś wątek (te same id) + stub w źródle; voice/załączniki przez Storage. */
+export async function moveMessageThread(
+  rootId: string,
+  targetConversationId: string,
+): Promise<{ data?: ForwardMoveResult; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { data, error } = await supabase.rpc("move_message_thread", {
+    p_root_id: rootId,
+    p_target_conversation_id: targetConversationId,
+  });
+  if (error) return { error: mapOrgRpcError(error.message) };
+  return { data: (data as ForwardMoveResult) ?? undefined };
+}
+
 /** Podgląd linku przez funkcję Edge (OG scraping po stronie serwera). */
 export async function fetchLinkPreview(url: string): Promise<LinkPreview | null> {
   if (!supabase) return null;

@@ -11,9 +11,11 @@ import {
   CheckSquare,
   Copy,
   CornerUpLeft,
+  Forward,
   Gavel,
   History,
   MessageSquare,
+  MoveRight,
   Pencil,
   StickyNote,
   Trash2,
@@ -24,6 +26,8 @@ import { QUICK_REACTIONS } from "@/lib/chat/polls";
 export type MessageAction =
   | "react"
   | "reply"
+  | "forward"
+  | "move"
   | "createTask"
   | "createEvent"
   | "createChecklist"
@@ -225,6 +229,18 @@ export function MessageActionsSheet({
               icon={<MessageSquare size={14} />}
               label="Odpowiedz w wątku"
               onClick={() => act("openThread")}
+            />
+          )}
+          <ActionRow
+            icon={<Forward size={14} />}
+            label="Przekaż"
+            onClick={() => act("forward")}
+          />
+          {mine && (
+            <ActionRow
+              icon={<MoveRight size={14} />}
+              label="Przenieś"
+              onClick={() => act("move")}
             />
           )}
 

@@ -140,13 +140,26 @@ function rowToGalleryItem(r: Row) {
 
 const THUMBNAILS_FOLDER = "_thumbnails";
 
+/** Cache get-or-create `_thumbnails` w ramach izolatu (unika N× Graph GET). */
+const thumbsFolderCache = new Map<string, Promise<string>>();
+
 /** Get-or-create techniczny podfolder miniatur w folderze galerii. */
 async function ensureThumbnailsFolder(
   driveId: string,
   galleryFolderId: string,
 ): Promise<string> {
-  const folder = await createFolder(driveId, galleryFolderId, THUMBNAILS_FOLDER);
-  return folder.id;
+  const cacheKey = `${driveId}:${galleryFolderId}`;
+  let pending = thumbsFolderCache.get(cacheKey);
+  if (!pending) {
+    pending = createFolder(driveId, galleryFolderId, THUMBNAILS_FOLDER).then((f) => f.id);
+    thumbsFolderCache.set(cacheKey, pending);
+  }
+  try {
+    return await pending;
+  } catch (e) {
+    thumbsFolderCache.delete(cacheKey);
+    throw e;
+  }
 }
 
 function thumbFileName(itemId: string, mimeType: string): string {
@@ -568,6 +581,12 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
     const galleryFolder = await createFolder(storage.driveId!, galerieFolder.id, folderName);
     folderId = galleryFolder.id;
     folderPath = galleryFolder.webUrl ?? null;
+    // Podfolder miniatur raz przy tworzeniu galerii (kolejne uploady trafiają w cache).
+    try {
+      await ensureThumbnailsFolder(storage.driveId!, folderId);
+    } catch (e) {
+      console.warn("[gallery-api] ensure _thumbnails on create failed", e);
+    }
   } catch (e) {
     const msg = e instanceof GraphError ? e.message : "Nie udało się utworzyć folderu.";
     throw new ActionError(`Nie udało się utworzyć folderu na SharePoint: ${msg}`, 200);
@@ -684,16 +703,66 @@ async function actionGalleryAddItems(admin: SupabaseClient, callerId: string, bo
 async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, body: Row) {
   const galleryId = requireString(body, "galleryId");
   const itemId = requireString(body, "itemId");
-  const contentBase64 = body.contentBase64;
-  if (typeof contentBase64 !== "string" || !contentBase64) {
-    throw new ActionError('Pole "contentBase64" jest wymagane.', 400);
+
+  let bytes: Uint8Array | null = null;
+  if (body.contentBytes instanceof Uint8Array) {
+    bytes = body.contentBytes;
+  } else if (typeof body.contentBase64 === "string" && body.contentBase64) {
+    try {
+      bytes = decodeBase64(body.contentBase64);
+    } catch {
+      bytes = null;
+    }
   }
-  const thumbBase64Raw = typeof body.thumbBase64 === "string" ? body.thumbBase64 : "";
+  if (!bytes) {
+    throw new ActionError('Pole "file" (multipart) lub "contentBase64" jest wymagane.', 400);
+  }
+
+  let thumbBytes: Uint8Array | null = null;
+  const skipThumb =
+    body.skipThumb === true ||
+    body.skipThumb === "1" ||
+    body.skipThumb === "true";
+  if (!skipThumb) {
+    if (body.thumbBytes instanceof Uint8Array) {
+      thumbBytes = body.thumbBytes;
+    } else if (typeof body.thumbBase64 === "string" && body.thumbBase64) {
+      try {
+        thumbBytes = decodeBase64(body.thumbBase64);
+      } catch {
+        thumbBytes = null;
+      }
+    }
+  }
   const thumbMimeType =
     typeof body.thumbMimeType === "string" && body.thumbMimeType
       ? body.thumbMimeType
       : "image/webp";
-  const skipThumb = body.skipThumb === true || !thumbBase64Raw;
+  const doRecompute =
+    body.recompute !== false &&
+    body.recompute !== "0" &&
+    body.recompute !== "false";
+
+  const overrideFileName =
+    typeof body.fileName === "string" && body.fileName.trim()
+      ? body.fileName.trim().slice(0, 200)
+      : null;
+  const overrideMime =
+    typeof body.mimeType === "string" && body.mimeType.trim()
+      ? body.mimeType.trim()
+      : null;
+  const overrideWidth =
+    typeof body.width === "number"
+      ? body.width
+      : typeof body.width === "string" && body.width
+        ? Number(body.width)
+        : null;
+  const overrideHeight =
+    typeof body.height === "number"
+      ? body.height
+      : typeof body.height === "string" && body.height
+        ? Number(body.height)
+        : null;
 
   const gallery = await loadGallery(admin, galleryId);
   if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
@@ -724,13 +793,6 @@ async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, 
     return { item: rowToGalleryItem({ ...item, status: "failed" }), gallery: g };
   }
 
-  let bytes: Uint8Array;
-  try {
-    bytes = decodeBase64(contentBase64);
-  } catch {
-    const { gallery: g } = await markFailed("bad_data", "Nieprawidłowe dane pliku.");
-    return { item: rowToGalleryItem({ ...item, status: "failed" }), gallery: g };
-  }
   if (bytes.byteLength > MAX_UPLOAD_BYTES) {
     const { gallery: g } = await markFailed(
       "too_large",
@@ -739,43 +801,68 @@ async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, 
     return { item: rowToGalleryItem({ ...item, status: "failed" }), gallery: g };
   }
 
-  await admin.from("gallery_items").update({ status: "uploading" }).eq("id", itemId);
+  const fileName = overrideFileName || (item.file_name as string);
+  const mimeType = overrideMime || (item.mime_type as string) || "image/jpeg";
+
+  await admin
+    .from("gallery_items")
+    .update({
+      status: "uploading",
+      file_name: fileName,
+      mime_type: mimeType,
+      ...(Number.isFinite(overrideWidth) ? { width: overrideWidth } : {}),
+      ...(Number.isFinite(overrideHeight) ? { height: overrideHeight } : {}),
+    })
+    .eq("id", itemId);
 
   try {
-    const uploaded = await uploadSmallFile(
-      storage.driveId!,
-      gallery.provider_folder_id as string,
-      item.file_name as string,
-      bytes,
-      item.mime_type as string,
-    );
-
-    // Miniatura: opcjonalna, awaria NIE cofa statusu głównego zdjęcia.
-    let providerThumbItemId: string | null = null;
-    let thumbStatus: string = skipThumb ? "skipped" : "pending";
-    if (!skipThumb && thumbBase64Raw) {
+    // Miniatura: przygotuj folder raz, potem main+thumb równolegle do Graph.
+    let thumbsFolderId: string | null = null;
+    let thumbStatus: string = skipThumb || !thumbBytes ? "skipped" : "pending";
+    if (thumbBytes && thumbBytes.byteLength > 0 && thumbBytes.byteLength <= MAX_UPLOAD_BYTES) {
       try {
-        const thumbBytes = decodeBase64(thumbBase64Raw);
-        if (thumbBytes.byteLength > 0 && thumbBytes.byteLength <= MAX_UPLOAD_BYTES) {
-          const thumbsFolderId = await ensureThumbnailsFolder(
-            storage.driveId!,
-            gallery.provider_folder_id as string,
-          );
-          const thumbUploaded = await uploadSmallFile(
-            storage.driveId!,
-            thumbsFolderId,
-            thumbFileName(itemId, thumbMimeType),
-            thumbBytes,
-            thumbMimeType,
-          );
-          providerThumbItemId = thumbUploaded.id;
-          thumbStatus = "ready";
-        } else {
-          thumbStatus = "failed";
-        }
+        thumbsFolderId = await ensureThumbnailsFolder(
+          storage.driveId!,
+          gallery.provider_folder_id as string,
+        );
       } catch {
         thumbStatus = "failed";
+        thumbsFolderId = null;
       }
+    } else if (!skipThumb) {
+      thumbStatus = "failed";
+    }
+
+    const mainUpload = uploadSmallFile(
+      storage.driveId!,
+      gallery.provider_folder_id as string,
+      fileName,
+      bytes,
+      mimeType,
+    );
+
+    const thumbUpload =
+      thumbsFolderId && thumbBytes && thumbStatus !== "failed"
+        ? uploadSmallFile(
+          storage.driveId!,
+          thumbsFolderId,
+          thumbFileName(itemId, thumbMimeType),
+          thumbBytes,
+          thumbMimeType,
+        ).then(
+          (u) => ({ ok: true as const, id: u.id }),
+          () => ({ ok: false as const }),
+        )
+        : Promise.resolve(null);
+
+    const [uploaded, thumbResult] = await Promise.all([mainUpload, thumbUpload]);
+
+    let providerThumbItemId: string | null = null;
+    if (thumbResult?.ok) {
+      providerThumbItemId = thumbResult.id;
+      thumbStatus = "ready";
+    } else if (thumbResult && !thumbResult.ok) {
+      thumbStatus = "failed";
     }
 
     const { data: updatedRow } = await admin
@@ -792,7 +879,10 @@ async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, 
       .eq("id", itemId)
       .select()
       .single();
-    const updatedGallery = await recomputeGalleryCounts(admin, galleryId);
+
+    const updatedGallery = doRecompute
+      ? await recomputeGalleryCounts(admin, galleryId)
+      : gallery;
     return {
       item: rowToGalleryItem(updatedRow as Row),
       gallery: rowToGallery(updatedGallery),
@@ -814,7 +904,18 @@ async function actionGalleryUploadThumb(admin: SupabaseClient, callerId: string,
     typeof body.thumbMimeType === "string" && body.thumbMimeType
       ? body.thumbMimeType
       : "image/webp";
-  if (!thumbBase64Raw) throw new ActionError("Brak danych miniatury.", 200);
+
+  let thumbBytes: Uint8Array | null = null;
+  if (body.thumbBytes instanceof Uint8Array) {
+    thumbBytes = body.thumbBytes;
+  } else if (thumbBase64Raw) {
+    try {
+      thumbBytes = decodeBase64(thumbBase64Raw);
+    } catch {
+      throw new ActionError("Nieprawidłowe dane miniatury.", 200);
+    }
+  }
+  if (!thumbBytes) throw new ActionError("Brak danych miniatury.", 200);
 
   const gallery = await loadGallery(admin, galleryId);
   if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
@@ -838,12 +939,6 @@ async function actionGalleryUploadThumb(admin: SupabaseClient, callerId: string,
   }
   if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
 
-  let thumbBytes: Uint8Array;
-  try {
-    thumbBytes = decodeBase64(thumbBase64Raw);
-  } catch {
-    throw new ActionError("Nieprawidłowe dane miniatury.", 200);
-  }
   if (thumbBytes.byteLength > MAX_UPLOAD_BYTES) {
     throw new ActionError("Miniatura przekracza limit rozmiaru.", 200);
   }
@@ -882,6 +977,16 @@ async function actionGalleryUploadThumb(admin: SupabaseClient, callerId: string,
     const msg = e instanceof GraphError ? e.message : "Nie udało się wysłać miniatury.";
     throw new ActionError(msg, 200);
   }
+}
+
+async function actionGalleryRecompute(admin: SupabaseClient, callerId: string, body: Row) {
+  const galleryId = requireString(body, "galleryId");
+  const gallery = await loadGallery(admin, galleryId);
+  if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+  const updated = await recomputeGalleryCounts(admin, galleryId);
+  return { gallery: rowToGallery(updated) };
 }
 
 async function actionGalleryGet(admin: SupabaseClient, callerId: string, body: Row) {
@@ -1017,6 +1122,7 @@ const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Ro
   gallery_add_items: actionGalleryAddItems,
   gallery_upload_item: actionGalleryUploadItem,
   gallery_upload_thumb: actionGalleryUploadThumb,
+  gallery_recompute: actionGalleryRecompute,
   gallery_get: actionGalleryGet,
   gallery_item_url: actionGalleryItemUrl,
   gallery_soft_delete: actionGallerySoftDelete,
@@ -1030,10 +1136,34 @@ Deno.serve(async (req) => {
   }
 
   let body: Row;
+  const contentType = req.headers.get("content-type") ?? "";
   try {
-    body = (await req.json()) as Row;
+    if (contentType.includes("multipart/form-data")) {
+      const form = await req.formData();
+      body = {};
+      for (const [key, value] of form.entries()) {
+        if (typeof value === "string") {
+          body[key] = value;
+          continue;
+        }
+        // File / Blob
+        const buf = new Uint8Array(await value.arrayBuffer());
+        if (key === "file") {
+          body.contentBytes = buf;
+          if (!body.fileName && value.name) body.fileName = value.name;
+          if (!body.mimeType && value.type) body.mimeType = value.type;
+        } else if (key === "thumb") {
+          body.thumbBytes = buf;
+          if (!body.thumbMimeType && value.type) body.thumbMimeType = value.type;
+        } else {
+          body[key] = buf;
+        }
+      }
+    } else {
+      body = (await req.json()) as Row;
+    }
   } catch {
-    return json({ error: "Nieprawidłowe body żądania (wymagany JSON)." }, 400);
+    return json({ error: "Nieprawidłowe body żądania (JSON lub multipart)." }, 400);
   }
   const action = body?.action;
   if (typeof action !== "string" || !ACTIONS[action]) {

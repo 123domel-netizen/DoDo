@@ -32,14 +32,17 @@ import {
   archiveConversation,
   deleteChatMessage,
   editChatMessage,
+  forwardChatThread,
   jumpToMessage,
   loadNewerFocus,
   loadOlderFocus,
   loadOlderMessages,
   markRead,
   markUnread,
+  moveChatThread,
   muteConversation,
   openThread,
+  openConversation,
   pinConversation,
   pinThreadMessage,
   retryFailedMessage,
@@ -96,6 +99,10 @@ import { ChannelManageDialog } from "@/components/chat/ChannelManageDialog";
 import { PinnedThreadsBar } from "@/components/chat/PinnedThreadsBar";
 import { ThreadsSheet } from "@/components/chat/ThreadsSheet";
 import { NameThreadDialog } from "@/components/chat/NameThreadDialog";
+import {
+  MessageTargetPickerDialog,
+  type MessageTargetMode,
+} from "@/components/chat/MessageTargetPickerDialog";
 
 interface ConversationViewProps {
   conversationId: string;
@@ -375,6 +382,12 @@ export function ConversationView({
   const [showThreads, setShowThreads] = useState(false);
   const [galleryCreateOpen, setGalleryCreateOpen] = useState(false);
   const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
+  const [targetPick, setTargetPick] = useState<{
+    mode: MessageTargetMode;
+    msg: ChatMessage;
+  } | null>(null);
+  const [targetBusy, setTargetBusy] = useState(false);
+  const [targetError, setTargetError] = useState<string | null>(null);
   const [fetchedQuotes, setFetchedQuotes] = useState<Record<string, ChatMessage | null>>({});
   const [typing, setTyping] = useState<Record<string, { name: string; at: number }>>({});
   const typingHandle = useRef<TypingHandle | null>(null);
@@ -675,6 +688,14 @@ export function ConversationView({
         case "openThread":
           handleOpenThread(msg);
           break;
+        case "forward":
+          setTargetError(null);
+          setTargetPick({ mode: "forward", msg });
+          break;
+        case "move":
+          setTargetError(null);
+          setTargetPick({ mode: "move", msg });
+          break;
         case "copy":
           void navigator.clipboard?.writeText(msg.body);
           break;
@@ -756,6 +777,47 @@ export function ConversationView({
         });
         void openThread(root.id);
       }}
+    />
+  ) : null;
+
+  const handleTargetPick = useCallback(
+    async (targetConversationId: string) => {
+      if (!targetPick) return;
+      setTargetBusy(true);
+      setTargetError(null);
+      const { mode, msg } = targetPick;
+      const res =
+        mode === "forward"
+          ? await forwardChatThread(msg, targetConversationId)
+          : await moveChatThread(msg, targetConversationId);
+      setTargetBusy(false);
+      if (res.error) {
+        setTargetError(res.error);
+        return;
+      }
+      setTargetPick(null);
+      if (mode === "forward") {
+        void openConversation(targetConversationId);
+      } else if (threadRootId) {
+        setActiveThread(null);
+      }
+    },
+    [targetPick, threadRootId, setActiveThread],
+  );
+
+  const targetPickerDialog = targetPick ? (
+    <MessageTargetPickerDialog
+      open
+      mode={targetPick.mode}
+      msg={targetPick.msg}
+      busy={targetBusy}
+      error={targetError}
+      onClose={() => {
+        if (targetBusy) return;
+        setTargetPick(null);
+        setTargetError(null);
+      }}
+      onPick={(id) => void handleTargetPick(id)}
     />
   ) : null;
 
@@ -851,6 +913,7 @@ export function ConversationView({
           onClose={() => setHistoryMsg(null)}
         />
         {nameThreadDialog}
+        {targetPickerDialog}
         {galleryViewerId && (
           <GalleryViewer
             galleryId={galleryViewerId}
@@ -1220,14 +1283,14 @@ export function ConversationView({
         />
       )}
       {nameThreadDialog}
+      {targetPickerDialog}
 
       <GalleryCreateDialog
         open={galleryCreateOpen}
         onClose={() => setGalleryCreateOpen(false)}
         conversationId={conversationId}
-        onCreated={(id) => {
+        onCreated={() => {
           returnToLatest(conversationId);
-          setGalleryViewerId(id);
         }}
       />
       {galleryViewerId && (

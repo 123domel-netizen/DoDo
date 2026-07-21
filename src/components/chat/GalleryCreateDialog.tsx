@@ -5,12 +5,13 @@ import {
   createGallery,
   listStorageOrgsForConversation,
   MAX_GALLERY_ITEMS_PER_CALL,
-  prepareGalleryImages,
+  runGalleryUploadPipeline,
   uploadGalleryItem,
-  type PreparedGalleryPhoto,
   type StorageOrgOption,
 } from "@/lib/chat/galleryApi";
-import { formatFileSize } from "@/lib/chat/upload";
+import { formatFileSize, prepareGalleryPhoto } from "@/lib/chat/upload";
+import { galleryPerfReset } from "@/lib/chat/galleryUploadPerf";
+import { setGalleryLocalThumb } from "@/lib/chat/galleryLocalThumbs";
 
 interface GalleryCreateDialogProps {
   open: boolean;
@@ -23,12 +24,14 @@ type Step = "form" | "uploading" | "done";
 
 interface UploadItem {
   id: string;
-  photo: PreparedGalleryPhoto;
-  status: "pending" | "uploading" | "ready" | "failed";
+  fileName: string;
+  status: "pending" | "preparing" | "uploading" | "ready" | "failed";
   errorMessage?: string | null;
+  /** Oryginał — do retry. */
+  sourceFile: File;
 }
 
-/** Kreator galerii — zdjęcia trafiają do magazynu zespołu (SharePoint), a w czacie ląduje karta. */
+/** Kreator galerii — karta w czacie pojawia się zaraz po utworzeniu; upload w tle (max 3). */
 export function GalleryCreateDialog({
   open,
   onClose,
@@ -50,6 +53,7 @@ export function GalleryCreateDialog({
   const [items, setItems] = useState<UploadItem[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(true);
+  const uploadRunningRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -73,6 +77,7 @@ export function GalleryCreateDialog({
     setPrepProgress(null);
     setOrgs(null);
     setOrgId(null);
+    uploadRunningRef.current = false;
     void listStorageOrgsForConversation(conversationId).then((res) => {
       if (!mountedRef.current) return;
       const list = res.data?.orgs ?? [];
@@ -108,9 +113,15 @@ export function GalleryCreateDialog({
     setFiles((prev) => prev.filter((_, j) => j !== i));
   };
 
+  /** Można wrócić do czatu podczas uploadu — pipeline działa w tle. */
   const close = () => {
-    if (submitting) return;
+    if (submitting && step === "form") return;
     onClose();
+  };
+
+  const patchItem = (id: string, patch: Partial<UploadItem>) => {
+    if (!mountedRef.current) return;
+    setItems((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   };
 
   const submit = async () => {
@@ -130,26 +141,22 @@ export function GalleryCreateDialog({
     }
 
     setSubmitting(true);
-    setPrepProgress("Przygotowywanie zdjęć…");
+    setPrepProgress("Tworzenie galerii…");
+    galleryPerfReset();
     try {
-      const prepared = await prepareGalleryImages(files, (done, total) => {
-        if (mountedRef.current) {
-          setPrepProgress(`Przygotowywanie zdjęć… ${done}/${total}`);
-        }
-      });
-      setPrepProgress("Tworzenie galerii…");
+      // Twórz od razu z metadanymi oryginałów — prepare+upload w pipeline.
       const res = await createGallery({
         conversationId,
         orgId,
         title: cleanTitle,
         description: description.trim() || undefined,
-        items: prepared.map((p) => ({
-          fileName: p.main.name,
-          mimeType: p.main.type || "image/jpeg",
-          sizeBytes: p.main.size,
-          ...(p.width != null && p.height != null ? { width: p.width, height: p.height } : {}),
+        items: files.map((f) => ({
+          fileName: f.name,
+          mimeType: f.type || "image/jpeg",
+          sizeBytes: f.size,
         })),
       });
+
       if (!mountedRef.current) return;
       if (res.error || !res.data) {
         setError(res.error || "Nie udało się utworzyć galerii.");
@@ -159,18 +166,49 @@ export function GalleryCreateDialog({
       }
 
       const { gallery, items: galleryItems, messageId: newMessageId } = res.data;
-      const nextItems: UploadItem[] = prepared.map((p, i) => ({
-        id: galleryItems[i]?.id ?? `${gallery.id}-${i}`,
-        photo: p,
-        status: "pending",
-      }));
+      const nextItems: UploadItem[] = files.map((f, i) => {
+        const id = galleryItems[i]?.id ?? `${gallery.id}-${i}`;
+        setGalleryLocalThumb(gallery.id, id, f);
+        return {
+          id,
+          fileName: f.name,
+          status: "pending" as const,
+          sourceFile: f,
+        };
+      });
+
       setGalleryId(gallery.id);
       setMessageId(newMessageId ?? null);
       setItems(nextItems);
       setStep("uploading");
       setSubmitting(false);
       setPrepProgress(null);
-      void runUploads(gallery.id, nextItems);
+
+      // Karta w czacie od razu — nie czekamy na upload.
+      onCreated?.(gallery.id, newMessageId ?? null);
+
+      uploadRunningRef.current = true;
+      const itemIds = nextItems.map((it) => it.id);
+      void runGalleryUploadPipeline(gallery.id, files, itemIds, {
+        onPrepareProgress: (done, total) => {
+          if (mountedRef.current) {
+            setPrepProgress(`Przygotowywanie… ${done}/${total}`);
+          }
+        },
+        onItemStart: (itemId) => {
+          patchItem(itemId, { status: "uploading", errorMessage: null });
+        },
+        onItemDone: (itemId, _index, result) => {
+          if (result.ok) patchItem(itemId, { status: "ready", errorMessage: null });
+          else patchItem(itemId, { status: "failed", errorMessage: result.error });
+        },
+      }).finally(() => {
+        uploadRunningRef.current = false;
+        if (mountedRef.current) {
+          setPrepProgress(null);
+          setStep("done");
+        }
+      });
     } catch (err) {
       if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Nie udało się utworzyć galerii.");
@@ -179,44 +217,39 @@ export function GalleryCreateDialog({
     }
   };
 
-  const runUploads = async (gId: string, list: UploadItem[]) => {
-    for (const it of list) {
-      // eslint-disable-next-line no-await-in-loop
-      await uploadOne(gId, it);
-    }
-    if (mountedRef.current) setStep("done");
-  };
-
-  const uploadOne = async (gId: string, it: UploadItem) => {
-    if (mountedRef.current) {
-      setItems((prev) =>
-        prev.map((x) => (x.id === it.id ? { ...x, status: "uploading", errorMessage: null } : x)),
-      );
-    }
-    const res = await uploadGalleryItem(gId, it.id, it.photo.main, it.photo.thumb);
-    if (!mountedRef.current) return;
-    setItems((prev) =>
-      prev.map((x) =>
-        x.id === it.id
-          ? { ...x, status: res.error ? "failed" : "ready", errorMessage: res.error ?? null }
-          : x,
-      ),
-    );
-  };
-
-  const retryItem = (it: UploadItem) => {
+  const retryItem = async (it: UploadItem) => {
     if (!galleryId) return;
-    void uploadOne(galleryId, it);
+    patchItem(it.id, { status: "uploading", errorMessage: null });
+    try {
+      const photo = await prepareGalleryPhoto(it.sourceFile);
+      if (photo.thumb) setGalleryLocalThumb(galleryId, it.id, photo.thumb);
+      const res = await uploadGalleryItem(galleryId, it.id, photo.main, photo.thumb, {
+        fileName: photo.main.name,
+        mimeType: photo.main.type || "image/jpeg",
+        width: photo.width,
+        height: photo.height,
+        recompute: true,
+      });
+      if (res.error) patchItem(it.id, { status: "failed", errorMessage: res.error });
+      else patchItem(it.id, { status: "ready", errorMessage: null });
+    } catch (e) {
+      patchItem(it.id, {
+        status: "failed",
+        errorMessage: e instanceof Error ? e.message : "Ponowienie nie powiodło się.",
+      });
+    }
   };
 
   const finish = () => {
-    if (galleryId) onCreated?.(galleryId, messageId);
     onClose();
   };
 
   const uploadedCount = items.filter((i) => i.status === "ready").length;
   const failedCount = items.filter((i) => i.status === "failed").length;
-  const allDone = items.length > 0 && uploadedCount + failedCount === items.length;
+  const inFlight = items.filter(
+    (i) => i.status === "pending" || i.status === "preparing" || i.status === "uploading",
+  ).length;
+  const allDone = items.length > 0 && inFlight === 0;
 
   return (
     <Modal open={open} onClose={close} width={480}>
@@ -329,7 +362,8 @@ export function GalleryCreateDialog({
               )}
               {files.length > 0 && (
                 <div className="text-[11px] text-ink-faint">
-                  {files.length} {files.length === 1 ? "zdjęcie" : "zdjęć"}
+                  {files.length} {files.length === 1 ? "zdjęcie" : "zdjęć"} · łącznie{" "}
+                  {formatFileSize(files.reduce((s, f) => s + f.size, 0))}
                 </div>
               )}
             </div>
@@ -352,12 +386,12 @@ export function GalleryCreateDialog({
               </button>
               <button
                 type="button"
+                disabled={submitting || noStorageAvailable || !orgId || files.length === 0}
                 onClick={() => void submit()}
-                disabled={submitting || noStorageAvailable || orgs === null}
-                className="flex items-center gap-1.5 rounded-lg bg-accent-grad px-4 py-1.5 text-sm font-medium text-white shadow-glow transition hover:brightness-110 disabled:opacity-50 disabled:shadow-none"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-accent-grad px-3 py-1.5 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-50"
               >
-                {submitting && <Loader2 size={14} className="animate-spin" />}
-                Utwórz galerię
+                {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
+                Wyślij
               </button>
             </div>
           </>
@@ -365,64 +399,63 @@ export function GalleryCreateDialog({
 
         {(step === "uploading" || step === "done") && (
           <>
-            <div className="mb-2 text-xs text-ink-light">
+            <div className="mb-2 text-xs text-ink-faint">
               {allDone
                 ? failedCount > 0
-                  ? `Przesłano ${uploadedCount}/${items.length} — ${failedCount} nieudanych.`
-                  : `Przesłano ${uploadedCount}/${items.length} zdjęć.`
-                : `Przesyłanie ${uploadedCount + failedCount + 1}/${items.length}…`}
+                  ? `Gotowe · ${uploadedCount} ok · ${failedCount} nieudanych`
+                  : `Gotowe · ${uploadedCount} zdjęć`
+                : `Wysyłanie… ${uploadedCount}/${items.length}`}
+              {prepProgress ? ` · ${prepProgress}` : ""}
             </div>
-            <div className="mb-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-raised">
+            <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-surface-raised">
               <div
-                className="h-full bg-accent-grad transition-all"
+                className="h-full rounded-full bg-accent transition-all"
                 style={{
                   width: `${items.length ? ((uploadedCount + failedCount) / items.length) * 100 : 0}%`,
                 }}
               />
             </div>
-
-            <div className="thin-scrollbar mt-3 max-h-64 space-y-1.5 overflow-y-auto">
+            <ul className="thin-scrollbar max-h-56 space-y-1 overflow-y-auto text-[12px]">
               {items.map((it) => (
-                <div
+                <li
                   key={it.id}
-                  className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5"
+                  className="flex items-center gap-2 rounded-md border border-line/60 px-2 py-1.5"
                 >
-                  <span className="min-w-0 flex-1 truncate text-xs text-ink">{it.photo.main.name}</span>
-                  <span className="shrink-0 text-[10px] text-ink-faint">
-                    {formatFileSize(it.photo.main.size)}
-                  </span>
-                  {it.status === "uploading" && (
-                    <Loader2 size={13} className="shrink-0 animate-spin text-ink-faint" />
-                  )}
-                  {it.status === "pending" && (
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-faint/40" />
-                  )}
-                  {it.status === "ready" && (
-                    <Check size={13} className="shrink-0 text-green-400" />
+                  <span className="min-w-0 flex-1 truncate text-ink">{it.fileName}</span>
+                  {it.status === "ready" && <Check size={13} className="shrink-0 text-emerald-400" />}
+                  {(it.status === "uploading" || it.status === "preparing" || it.status === "pending") && (
+                    <Loader2 size={13} className="shrink-0 animate-spin text-accent" />
                   )}
                   {it.status === "failed" && (
                     <button
                       type="button"
-                      onClick={() => retryItem(it)}
-                      className="flex shrink-0 items-center gap-1 text-[11px] text-red-400 transition hover:text-red-300"
-                      title={it.errorMessage ?? "Nie udało się przesłać"}
+                      title={it.errorMessage || "Ponów"}
+                      onClick={() => void retryItem(it)}
+                      className="inline-flex shrink-0 items-center gap-1 text-amber-400 hover:text-amber-300"
                     >
                       <RotateCw size={12} /> Ponów
                     </button>
                   )}
-                </div>
+                </li>
               ))}
-            </div>
-
+            </ul>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={finish}
-                disabled={!allDone}
-                className="rounded-lg bg-accent-grad px-4 py-1.5 text-sm font-medium text-white shadow-glow transition hover:brightness-110 disabled:opacity-50 disabled:shadow-none"
+                onClick={close}
+                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light transition hover:border-line-strong hover:text-ink"
               >
-                Gotowe
+                Wróć do czatu
               </button>
+              {allDone && (
+                <button
+                  type="button"
+                  onClick={finish}
+                  className="rounded-lg bg-accent-grad px-3 py-1.5 text-sm font-medium text-white transition hover:brightness-110"
+                >
+                  Zamknij
+                </button>
+              )}
             </div>
           </>
         )}

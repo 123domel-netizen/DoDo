@@ -14,12 +14,18 @@ import {
   addGalleryItems,
   fetchGallery,
   fetchGalleryItemUrl,
-  prepareGalleryImages,
+  prepareGalleryPhoto,
   retryGalleryThumb,
+  runGalleryUploadPipeline,
   uploadGalleryItem,
   type Gallery,
   type GalleryItem,
 } from "@/lib/chat/galleryApi";
+import {
+  getGalleryLocalThumb,
+  setGalleryLocalThumb,
+  subscribeGalleryLocalThumbs,
+} from "@/lib/chat/galleryLocalThumbs";
 
 interface GalleryViewerProps {
   galleryId: string;
@@ -38,7 +44,9 @@ function GridTile({
   onRetry: (file: File) => void;
   onRetryThumb: () => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [url, setUrl] = useState<string | null>(() =>
+    getGalleryLocalThumb(item.galleryId, item.id),
+  );
   const [loaded, setLoaded] = useState(false);
   const [thumbRetrying, setThumbRetrying] = useState(false);
   const retryRef = useRef<HTMLInputElement>(null);
@@ -49,14 +57,27 @@ function GridTile({
     !item.providerThumbItemId;
 
   useEffect(() => {
+    return subscribeGalleryLocalThumbs(() => {
+      const local = getGalleryLocalThumb(item.galleryId, item.id);
+      if (local) {
+        setUrl(local);
+        setLoaded(true);
+      }
+    });
+  }, [item.galleryId, item.id]);
+
+  useEffect(() => {
+    const local = getGalleryLocalThumb(item.galleryId, item.id);
+    if (local) {
+      setUrl(local);
+      setLoaded(true);
+      return;
+    }
     if (item.status !== "ready") return;
     let cancelled = false;
-    setLoaded(false);
-    setUrl(null);
     void fetchGalleryItemUrl(item.galleryId, item.id, "thumb").then((res) => {
       if (cancelled) return;
-      setUrl(res.data?.url ?? null);
-      setLoaded(true);
+      if (res.data?.url) setUrl(res.data.url);
     });
     return () => {
       cancelled = true;
@@ -107,7 +128,13 @@ function GridTile({
         aria-label={`Otwórz ${item.fileName}`}
       >
         {url ? (
-          <img src={url} alt={item.fileName} loading="lazy" className="h-full w-full object-cover" />
+          <img
+            src={url}
+            alt={item.fileName}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-cover"
+          />
         ) : !loaded ? (
           <div className="flex h-full w-full items-center justify-center text-ink-faint">
             <Loader2 size={14} className="animate-spin" />
@@ -234,6 +261,7 @@ function Lightbox({
           <img
             src={url}
             alt={item.fileName}
+            referrerPolicy="no-referrer"
             className="max-h-[85vh] max-w-[92vw] rounded-lg object-contain"
           />
         ) : (
@@ -329,14 +357,12 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
     );
     if (!picked.length) return;
     setError(null);
-    const prepared = await prepareGalleryImages(picked);
     const res = await addGalleryItems(
       gallery.id,
-      prepared.map((p) => ({
-        fileName: p.main.name,
-        mimeType: p.main.type || "image/jpeg",
-        sizeBytes: p.main.size,
-        ...(p.width != null && p.height != null ? { width: p.width, height: p.height } : {}),
+      picked.map((f) => ({
+        fileName: f.name,
+        mimeType: f.type || "image/jpeg",
+        sizeBytes: f.size,
       })),
     );
     if (res.error || !res.data) {
@@ -347,12 +373,21 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
     const newItems = res.data.items;
     setGallery(res.data.gallery);
     setItems((prev) => [...prev, ...newItems]);
-    for (let i = 0; i < newItems.length; i++) {
-      const item = newItems[i]!;
-      const photo = prepared[i]!;
-      // eslint-disable-next-line no-await-in-loop
-      await uploadAndTrack(gallery.id, item, photo.main, photo.thumb);
+    const itemIds = newItems.map((it) => it.id);
+    for (let i = 0; i < picked.length; i++) {
+      const id = itemIds[i];
+      if (id && picked[i]) setGalleryLocalThumb(gallery.id, id, picked[i]!);
     }
+    await runGalleryUploadPipeline(gallery.id, picked, itemIds, {
+      onItemStart: (itemId) => {
+        patchItem(itemId, { status: "uploading", errorMessage: null });
+      },
+      onItemDone: (itemId, _index, result) => {
+        if (result.ok) patchItem(itemId, { status: "ready", errorMessage: null });
+        else patchItem(itemId, { status: "failed", errorMessage: result.error });
+      },
+    });
+    void refresh();
   };
 
   if (!open) return null;
@@ -436,8 +471,10 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
                 onOpen={() => openLightboxFor(item.id)}
                 onRetry={(file) => {
                   void (async () => {
-                    const [photo] = await prepareGalleryImages([file]);
-                    if (!photo) return;
+                    const photo = await prepareGalleryPhoto(file);
+                    if (photo.thumb) {
+                      setGalleryLocalThumb(gallery!.id, item.id, photo.thumb);
+                    }
                     await uploadAndTrack(gallery!.id, item, photo.main, photo.thumb);
                   })();
                 }}
