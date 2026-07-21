@@ -437,8 +437,8 @@ export function sendChatMessage(opts: SendOptions): ChatMessage | null {
   const st = useChatStore.getState();
   if (!st.userId) return null;
   const body = opts.body.trim();
-  // GIF niesie treść w payloadzie; pozostałe kindy wymagają tekstu.
-  if (!body && opts.kind !== "gif") return null;
+  // GIF i galeria niosą treść w payloadzie; pozostałe kindy wymagają tekstu.
+  if (!body && opts.kind !== "gif" && opts.kind !== "gallery") return null;
 
   const msg = buildOutgoingMessage({ ...opts, body }, st.userId);
   st.enqueueOutbox({ message: msg, attempts: 0 });

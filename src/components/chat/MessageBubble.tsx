@@ -24,6 +24,7 @@ import { isThreadUnread } from "@/lib/chat/recentThreads";
 import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { GalleryCard } from "@/components/chat/GalleryCard";
 
 const INLINE_REACTIONS = QUICK_REACTIONS.slice(0, 3);
 
@@ -414,6 +415,7 @@ interface MessageBubbleProps {
   onVote?: (msg: ChatMessage, optionId: string) => void;
   onJumpTo?: (messageId: string) => void;
   onOpenRegistry?: (msg: ChatMessage) => void;
+  onOpenGallery?: (galleryId: string) => void;
 }
 
 export function MessageBubble({
@@ -437,6 +439,7 @@ export function MessageBubble({
   onVote,
   onJumpTo,
   onOpenRegistry,
+  onOpenGallery,
 }: MessageBubbleProps) {
   const setEditing = useStore((s) => s.setEditing);
   const items = useStore((s) => s.items);
@@ -605,7 +608,9 @@ export function MessageBubble({
                               ? "🎤 Wiadomość głosowa"
                               : quoted.msg.kind === "gif"
                                 ? "GIF"
-                                : quoted.msg.body || "(załącznik)"
+                                : quoted.msg.kind === "gallery"
+                                  ? `🖼 Galeria: ${quoted.msg.body || "…"}`
+                                  : quoted.msg.body || "(załącznik)"
                           : "…"}
                       </span>
                     </span>
@@ -626,6 +631,12 @@ export function MessageBubble({
                     loading="lazy"
                     referrerPolicy="no-referrer"
                     className="max-h-44 w-auto max-w-full rounded-xl"
+                  />
+                ) : msg.kind === "gallery" && msg.payload.gallery ? (
+                  <GalleryCard
+                    galleryId={msg.payload.gallery.galleryId}
+                    title={msg.body}
+                    onOpen={onOpenGallery}
                   />
                 ) : msg.kind === "voice" ? (
                   voiceAtt ? (

@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, ExternalLink, Image as ImageIcon, Link2, FileText, X } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  Image as ImageIcon,
+  Images,
+  Link2,
+  FileText,
+  X,
+} from "lucide-react";
 import {
   fetchConversationAttachments,
   fetchConversationLinkMessages,
@@ -8,10 +16,34 @@ import {
 } from "@/lib/chat/api";
 import { extractUrls } from "@/lib/chat/markdown";
 import { formatFileSize, signedUrlFor } from "@/lib/chat/upload";
+import { supabase } from "@/lib/supabase";
 import type { ChatMessage } from "@/lib/chat/types";
 import { formatMessageTime, useSignedUrl } from "@/components/chat/MessageBubble";
+import { GalleryCard } from "@/components/chat/GalleryCard";
+import { GalleryViewer } from "@/components/chat/GalleryViewer";
 
-type MediaTab = "photos" | "files" | "links";
+type MediaTab = "photos" | "files" | "links" | "galleries";
+
+interface GalleryListRow {
+  id: string;
+  title: string;
+}
+
+async function fetchConversationGalleries(conversationId: string): Promise<GalleryListRow[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("galleries")
+    .select("id, title")
+    .eq("conversation_id", conversationId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) return [];
+  return ((data as Record<string, unknown>[]) ?? []).map((r) => ({
+    id: r.id as string,
+    title: (r.title as string) || "Galeria",
+  }));
+}
 
 interface ConversationMediaViewProps {
   conversationId: string;
@@ -62,16 +94,22 @@ export function ConversationMediaView({
   const [tab, setTab] = useState<MediaTab>("photos");
   const [attachments, setAttachments] = useState<ConversationAttachment[] | null>(null);
   const [linkMessages, setLinkMessages] = useState<ChatMessage[] | null>(null);
+  const [galleries, setGalleries] = useState<GalleryListRow[] | null>(null);
+  const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setAttachments(null);
     setLinkMessages(null);
+    setGalleries(null);
     void fetchConversationAttachments(conversationId).then((a) => {
       if (!cancelled) setAttachments(a);
     });
     void fetchConversationLinkMessages(conversationId).then((m) => {
       if (!cancelled) setLinkMessages(m);
+    });
+    void fetchConversationGalleries(conversationId).then((g) => {
+      if (!cancelled) setGalleries(g);
     });
     return () => {
       cancelled = true;
@@ -101,11 +139,12 @@ export function ConversationMediaView({
 
   const tabs: { id: MediaTab; label: string; icon: typeof ImageIcon; count: number }[] = [
     { id: "photos", label: "Zdjęcia", icon: ImageIcon, count: photos.length },
+    { id: "galleries", label: "Galerie", icon: Images, count: galleries?.length ?? 0 },
     { id: "files", label: "Pliki", icon: FileText, count: files.length },
     { id: "links", label: "Linki", icon: Link2, count: links.length },
   ];
 
-  const loading = attachments === null || linkMessages === null;
+  const loading = attachments === null || linkMessages === null || galleries === null;
 
   const body = (
     <>
@@ -142,6 +181,23 @@ export function ConversationMediaView({
             </div>
           ) : (
             <div className="py-10 text-center text-xs text-ink-faint">Brak zdjęć.</div>
+          )
+        )}
+
+        {!loading && tab === "galleries" && (
+          galleries && galleries.length > 0 ? (
+            <div className="grid grid-cols-2 gap-1.5">
+              {galleries.map((g) => (
+                <GalleryCard
+                  key={g.id}
+                  galleryId={g.id}
+                  title={g.title}
+                  onOpen={(id) => setGalleryViewerId(id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="py-10 text-center text-xs text-ink-faint">Brak galerii.</div>
           )
         )}
 
@@ -217,33 +273,49 @@ export function ConversationMediaView({
     </>
   );
 
+  const galleryViewer = galleryViewerId ? (
+    <GalleryViewer
+      galleryId={galleryViewerId}
+      open
+      onClose={() => setGalleryViewerId(null)}
+    />
+  ) : null;
+
   if (embedded) {
-    return <div className="flex h-full min-h-0 flex-col">{body}</div>;
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {body}
+        {galleryViewer}
+      </div>
+    );
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/50"
-        aria-label="Zamknij"
-        onClick={onClose}
-      />
-      <div className="relative flex h-[80vh] w-full max-w-lg flex-col rounded-t-2xl border border-line bg-surface-overlay p-3 shadow-pop sm:rounded-2xl">
-        <div className="mb-2 flex items-center justify-between px-1">
-          <h3 className="text-sm font-semibold text-ink">Media i pliki</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 text-ink-faint transition hover:text-ink"
-            aria-label="Zamknij"
-          >
-            <X size={16} />
-          </button>
+    <>
+      <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
+        <button
+          type="button"
+          className="absolute inset-0 bg-black/50"
+          aria-label="Zamknij"
+          onClick={onClose}
+        />
+        <div className="relative flex h-[80vh] w-full max-w-lg flex-col rounded-t-2xl border border-line bg-surface-overlay p-3 shadow-pop sm:rounded-2xl">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <h3 className="text-sm font-semibold text-ink">Media i pliki</h3>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded p-1 text-ink-faint transition hover:text-ink"
+              aria-label="Zamknij"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          {body}
         </div>
-        {body}
       </div>
-    </div>,
+      {galleryViewer}
+    </>,
     document.body,
   );
 }

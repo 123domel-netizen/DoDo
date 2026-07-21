@@ -3,6 +3,7 @@ import {
   BarChart3,
   CornerUpLeft,
   Film,
+  Images,
   Mic,
   Paperclip,
   Plus,
@@ -53,6 +54,7 @@ interface MessageComposerProps {
   onSendVoice?: (file: File, durationSec: number) => void | Promise<void>;
   onSendPoll?: (question: string, options: string[]) => void;
   onSendGif?: (url: string) => void;
+  onOpenGallery?: () => void;
   /** Sygnał „piszę" (throttling po stronie odbiorcy hooka). */
   onTyping?: () => void;
   disabled?: boolean;
@@ -73,6 +75,7 @@ export function MessageComposer({
   onSendVoice,
   onSendPoll,
   onSendGif,
+  onOpenGallery,
   onTyping,
   disabled = false,
   allowFiles = true,
@@ -390,7 +393,7 @@ export function MessageComposer({
             className="min-h-[40px] max-h-[132px] flex-1 resize-none rounded-[1.25rem] border border-line bg-surface-raised px-3.5 py-2.5 text-sm leading-snug text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/40 disabled:opacity-50"
           />
 
-          {(onSendPoll || onSendGif) && !editing && (
+          {(onSendPoll || onSendGif || onOpenGallery) && !editing && (
             <div className="relative shrink-0 self-center">
               <button
                 type="button"
@@ -432,6 +435,18 @@ export function MessageComposer({
                         className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
                       >
                         <Film size={14} className="text-ink-faint" /> GIF
+                      </button>
+                    )}
+                    {onOpenGallery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlusOpen(false);
+                          onOpenGallery();
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                      >
+                        <Images size={14} className="text-ink-faint" /> Galeria
                       </button>
                     )}
                   </div>

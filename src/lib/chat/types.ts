@@ -1,6 +1,6 @@
 export type ConversationKind = "channel" | "dm" | "item";
 
-export type MessageKind = "text" | "system" | "poll" | "gif" | "voice";
+export type MessageKind = "text" | "system" | "poll" | "gif" | "voice" | "gallery";
 
 export interface ChatProfile {
   userId: string;
@@ -104,11 +104,54 @@ export interface MessagePayload {
   gif?: { url: string; width?: number; height?: number };
   voice?: { durationSec: number };
   linkPreview?: LinkPreview;
+  gallery?: { galleryId: string };
   /** System: zapisana decyzja/notatka — klik otwiera detal. */
   registry?: {
     kind: "decision" | "note";
     id: string;
   };
+}
+
+/** Status galerii: cały zestaw zdjęć zapisywanych w magazynie zespołu. */
+export type GalleryStatus =
+  | "draft"
+  | "uploading"
+  | "ready"
+  | "partial"
+  | "failed"
+  | "unavailable";
+
+export type GalleryItemStatus = "pending" | "uploading" | "ready" | "failed";
+
+export interface GalleryItem {
+  id: string;
+  galleryId: string;
+  sortOrder: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  providerItemId: string | null;
+  status: GalleryItemStatus;
+  errorMessage: string | null;
+}
+
+export interface Gallery {
+  id: string;
+  orgId: string;
+  conversationId: string;
+  messageId: string | null;
+  createdBy: string;
+  title: string;
+  description: string | null;
+  provider: string;
+  providerFolderId: string | null;
+  status: GalleryStatus;
+  itemCount: number;
+  failedCount: number;
+  createdAt: string;
+  items?: GalleryItem[];
 }
 
 export type MessageSendState = "pending" | "failed";
@@ -229,6 +272,8 @@ export function messagePreviewLabel(kind: MessageKind, body: string): string {
       return "GIF";
     case "voice":
       return "🎤 Wiadomość głosowa";
+    case "gallery":
+      return `🖼 Galeria: ${body || "…"}`;
     default:
       return body;
   }

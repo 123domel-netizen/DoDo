@@ -15,6 +15,7 @@ import {
 } from "@/lib/orgsPlans";
 import { cloudEnabled } from "@/lib/supabase";
 import { useStore } from "@/state/store";
+import { OrgStorageSettings } from "@/components/settings/OrgStorageSettings";
 
 export function OrgSettings() {
   const myOrgs = useStore((s) => s.myOrgs);
@@ -310,6 +311,8 @@ export function OrgSettings() {
               )}
             </div>
           )}
+
+          <OrgStorageSettings orgId={orgId ?? detail.id} isAdmin={isAdmin} />
         </>
       )}
 

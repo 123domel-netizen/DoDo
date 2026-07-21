@@ -84,6 +84,8 @@ import {
 } from "@/components/chat/MessageActionsSheet";
 import { EditHistoryModal } from "@/components/chat/EditHistoryModal";
 import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
+import { GalleryCreateDialog } from "@/components/chat/GalleryCreateDialog";
+import { GalleryViewer } from "@/components/chat/GalleryViewer";
 import { RegistryView, type RegistryMode } from "@/components/chat/RegistryView";
 import {
   RegistryDetailSheet,
@@ -111,6 +113,7 @@ function quoteSnippet(msg: ChatMessage): string {
   if (msg.deletedAt) return "Wiadomość usunięta";
   if (msg.kind === "voice") return "🎤 Wiadomość głosowa";
   if (msg.kind === "gif") return "GIF";
+  if (msg.kind === "gallery") return `🖼 Galeria: ${msg.body || "…"}`;
   return msg.body || "(załącznik)";
 }
 
@@ -132,6 +135,7 @@ function MessageFeed({
   onReply,
   onJumpTo,
   onOpenRegistry,
+  onOpenGallery,
   inThread = false,
 }: {
   messages: ChatMessage[];
@@ -152,6 +156,7 @@ function MessageFeed({
   onReply?: (msg: ChatMessage) => void;
   onJumpTo: (messageId: string) => void;
   onOpenRegistry?: (msg: ChatMessage) => void;
+  onOpenGallery?: (galleryId: string) => void;
   inThread?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -311,6 +316,7 @@ function MessageFeed({
             onVote={(msg, optionId) => void votePoll(msg, optionId)}
             onJumpTo={onJumpTo}
             onOpenRegistry={onOpenRegistry}
+            onOpenGallery={onOpenGallery}
           />
         );
       })}
@@ -367,6 +373,8 @@ export function ConversationView({
   const [registryMode, setRegistryMode] = useState<RegistryMode | null>(null);
   const [registryDetail, setRegistryDetail] = useState<RegistryFocus | null>(null);
   const [showThreads, setShowThreads] = useState(false);
+  const [galleryCreateOpen, setGalleryCreateOpen] = useState(false);
+  const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
   const [fetchedQuotes, setFetchedQuotes] = useState<Record<string, ChatMessage | null>>({});
   const [typing, setTyping] = useState<Record<string, { name: string; at: number }>>({});
   const typingHandle = useRef<TypingHandle | null>(null);
@@ -818,6 +826,7 @@ export function ConversationView({
           onReply={handleReply}
           onJumpTo={handleJumpTo}
           onOpenRegistry={handleOpenRegistry}
+          onOpenGallery={(id) => setGalleryViewerId(id)}
           inThread
         />
         {typingText && (
@@ -842,6 +851,13 @@ export function ConversationView({
           onClose={() => setHistoryMsg(null)}
         />
         {nameThreadDialog}
+        {galleryViewerId && (
+          <GalleryViewer
+            galleryId={galleryViewerId}
+            open
+            onClose={() => setGalleryViewerId(null)}
+          />
+        )}
       </div>
     );
   }
@@ -1125,6 +1141,7 @@ export function ConversationView({
         onReply={handleReply}
         onJumpTo={handleJumpTo}
         onOpenRegistry={handleOpenRegistry}
+        onOpenGallery={(id) => setGalleryViewerId(id)}
       />
 
       {focus && (
@@ -1149,6 +1166,7 @@ export function ConversationView({
           returnToLatest(conversationId);
           void sendGifMessage(conversationId, url);
         }}
+        onOpenGallery={() => setGalleryCreateOpen(true)}
         {...composerShared}
       />
 
@@ -1202,6 +1220,23 @@ export function ConversationView({
         />
       )}
       {nameThreadDialog}
+
+      <GalleryCreateDialog
+        open={galleryCreateOpen}
+        onClose={() => setGalleryCreateOpen(false)}
+        conversationId={conversationId}
+        onCreated={(id) => {
+          returnToLatest(conversationId);
+          setGalleryViewerId(id);
+        }}
+      />
+      {galleryViewerId && (
+        <GalleryViewer
+          galleryId={galleryViewerId}
+          open
+          onClose={() => setGalleryViewerId(null)}
+        />
+      )}
     </div>
   );
 }
