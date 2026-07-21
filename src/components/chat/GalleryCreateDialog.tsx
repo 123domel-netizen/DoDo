@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, ImagePlus, Loader2, RotateCw, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
-import { formatFileSize } from "@/lib/chat/upload";
 import {
   createGallery,
-  galleryFileDims,
   listStorageOrgsForConversation,
   MAX_GALLERY_ITEMS_PER_CALL,
   prepareGalleryImages,
   uploadGalleryItem,
+  type PreparedGalleryPhoto,
   type StorageOrgOption,
 } from "@/lib/chat/galleryApi";
+import { formatFileSize } from "@/lib/chat/upload";
 
 interface GalleryCreateDialogProps {
   open: boolean;
@@ -23,7 +23,7 @@ type Step = "form" | "uploading" | "done";
 
 interface UploadItem {
   id: string;
-  file: File;
+  photo: PreparedGalleryPhoto;
   status: "pending" | "uploading" | "ready" | "failed";
   errorMessage?: string | null;
 }
@@ -43,6 +43,7 @@ export function GalleryCreateDialog({
   const [orgs, setOrgs] = useState<StorageOrgOption[] | null>(null);
   const [orgId, setOrgId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [prepProgress, setPrepProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [galleryId, setGalleryId] = useState<string | null>(null);
   const [messageId, setMessageId] = useState<string | null>(null);
@@ -69,6 +70,7 @@ export function GalleryCreateDialog({
     setMessageId(null);
     setItems([]);
     setSubmitting(false);
+    setPrepProgress(null);
     setOrgs(null);
     setOrgId(null);
     void listStorageOrgsForConversation(conversationId).then((res) => {
@@ -94,7 +96,11 @@ export function GalleryCreateDialog({
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
-    const picked = Array.from(list).filter((f) => /^image\//i.test(f.type));
+    const picked = Array.from(list).filter(
+      (f) =>
+        /^image\//i.test(f.type) ||
+        /\.(heic|heif|jpe?g|png|webp|gif)$/i.test(f.name),
+    );
     setFiles((prev) => [...prev, ...picked].slice(0, MAX_GALLERY_ITEMS_PER_CALL));
   };
 
@@ -124,31 +130,38 @@ export function GalleryCreateDialog({
     }
 
     setSubmitting(true);
+    setPrepProgress("Przygotowywanie zdjęć…");
     try {
-      const prepared = await prepareGalleryImages(files);
+      const prepared = await prepareGalleryImages(files, (done, total) => {
+        if (mountedRef.current) {
+          setPrepProgress(`Przygotowywanie zdjęć… ${done}/${total}`);
+        }
+      });
+      setPrepProgress("Tworzenie galerii…");
       const res = await createGallery({
         conversationId,
         orgId,
         title: cleanTitle,
         description: description.trim() || undefined,
-        items: prepared.map((f) => ({
-          fileName: f.name,
-          mimeType: f.type || "image/jpeg",
-          sizeBytes: f.size,
-          ...galleryFileDims(f),
+        items: prepared.map((p) => ({
+          fileName: p.main.name,
+          mimeType: p.main.type || "image/jpeg",
+          sizeBytes: p.main.size,
+          ...(p.width != null && p.height != null ? { width: p.width, height: p.height } : {}),
         })),
       });
       if (!mountedRef.current) return;
       if (res.error || !res.data) {
         setError(res.error || "Nie udało się utworzyć galerii.");
         setSubmitting(false);
+        setPrepProgress(null);
         return;
       }
 
       const { gallery, items: galleryItems, messageId: newMessageId } = res.data;
-      const nextItems: UploadItem[] = prepared.map((f, i) => ({
+      const nextItems: UploadItem[] = prepared.map((p, i) => ({
         id: galleryItems[i]?.id ?? `${gallery.id}-${i}`,
-        file: f,
+        photo: p,
         status: "pending",
       }));
       setGalleryId(gallery.id);
@@ -156,11 +169,13 @@ export function GalleryCreateDialog({
       setItems(nextItems);
       setStep("uploading");
       setSubmitting(false);
+      setPrepProgress(null);
       void runUploads(gallery.id, nextItems);
     } catch (err) {
       if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Nie udało się utworzyć galerii.");
       setSubmitting(false);
+      setPrepProgress(null);
     }
   };
 
@@ -178,7 +193,7 @@ export function GalleryCreateDialog({
         prev.map((x) => (x.id === it.id ? { ...x, status: "uploading", errorMessage: null } : x)),
       );
     }
-    const res = await uploadGalleryItem(gId, it.id, it.file);
+    const res = await uploadGalleryItem(gId, it.id, it.photo.main, it.photo.thumb);
     if (!mountedRef.current) return;
     setItems((prev) =>
       prev.map((x) =>
@@ -271,7 +286,7 @@ export function GalleryCreateDialog({
                 <input
                   ref={fileRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   multiple
                   className="hidden"
                   onChange={(e) => {
@@ -320,6 +335,12 @@ export function GalleryCreateDialog({
             </div>
 
             {error && <div className="mt-2.5 text-xs text-red-400">{error}</div>}
+            {prepProgress && (
+              <div className="mt-2.5 flex items-center gap-2 text-xs text-accent">
+                <Loader2 size={13} className="animate-spin" />
+                {prepProgress}
+              </div>
+            )}
 
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -366,9 +387,9 @@ export function GalleryCreateDialog({
                   key={it.id}
                   className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5"
                 >
-                  <span className="min-w-0 flex-1 truncate text-xs text-ink">{it.file.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-ink">{it.photo.main.name}</span>
                   <span className="shrink-0 text-[10px] text-ink-faint">
-                    {formatFileSize(it.file.size)}
+                    {formatFileSize(it.photo.main.size)}
                   </span>
                   {it.status === "uploading" && (
                     <Loader2 size={13} className="shrink-0 animate-spin text-ink-faint" />

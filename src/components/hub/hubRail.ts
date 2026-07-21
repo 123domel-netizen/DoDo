@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 export type HubTab = "chat" | "decisions" | "notes" | "media" | "search";
-export type MediaSubTab = "media" | "files" | "links";
+export type MediaSubTab = "media" | "galleries" | "files" | "links";
 export type ChatBrowseTab = "all" | "favorites" | "people" | "channels" | "archive";
 export type RailBrowseId = "all" | "people" | "channels" | "archive";
 

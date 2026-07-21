@@ -6,9 +6,11 @@ import { sortOverview } from "@/lib/chat/feed";
 import {
   fetchAttachmentsForConversations,
   fetchDecisionsForConversations,
+  fetchGalleriesForConversations,
   fetchNotesForConversations,
   fetchPublicChannels,
   type ConversationAttachment,
+  type HubGalleryRow,
 } from "@/lib/chat/api";
 import type {
   ChatDecision,
@@ -49,6 +51,7 @@ export function useHubRegistryLists(opts: {
   const [media, setMedia] = useState<(ConversationAttachment & { conversationId: string })[] | null>(
     null,
   );
+  const [galleries, setGalleries] = useState<HubGalleryRow[] | null>(null);
   const [mediaSubTab, setMediaSubTab] = useState<MediaSubTab>("media");
   const [hubTagFilter, setHubTagFilter] = useState<string | null>(null);
 
@@ -111,8 +114,12 @@ export function useHubRegistryLists(opts: {
     if (!enabled || hubTab !== "media") return;
     let cancelled = false;
     setMedia(null);
+    setGalleries(null);
     void fetchAttachmentsForConversations(convIds).then((list) => {
       if (!cancelled) setMedia(list);
+    });
+    void fetchGalleriesForConversations(convIds).then((list) => {
+      if (!cancelled) setGalleries(list);
     });
     return () => {
       cancelled = true;
@@ -141,6 +148,7 @@ export function useHubRegistryLists(opts: {
     decisions,
     notes,
     media,
+    galleries,
     mediaSubTab,
     setMediaSubTab,
     hubTagFilter,

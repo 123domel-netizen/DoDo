@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Image as ImageIcon,
   ImagePlus,
   Loader2,
   RotateCw,
@@ -13,8 +14,8 @@ import {
   addGalleryItems,
   fetchGallery,
   fetchGalleryItemUrl,
-  galleryFileDims,
   prepareGalleryImages,
+  retryGalleryThumb,
   uploadGalleryItem,
   type Gallery,
   type GalleryItem,
@@ -30,24 +31,37 @@ function GridTile({
   item,
   onOpen,
   onRetry,
+  onRetryThumb,
 }: {
   item: GalleryItem;
   onOpen: () => void;
   onRetry: (file: File) => void;
+  onRetryThumb: () => void;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [thumbRetrying, setThumbRetrying] = useState(false);
   const retryRef = useRef<HTMLInputElement>(null);
+
+  const needsThumbRetry =
+    item.status === "ready" &&
+    (item.thumbStatus === "failed" || item.thumbStatus === "skipped") &&
+    !item.providerThumbItemId;
 
   useEffect(() => {
     if (item.status !== "ready") return;
     let cancelled = false;
-    void fetchGalleryItemUrl(item.galleryId, item.id).then((res) => {
-      if (!cancelled) setUrl(res.data?.url ?? null);
+    setLoaded(false);
+    setUrl(null);
+    void fetchGalleryItemUrl(item.galleryId, item.id, "thumb").then((res) => {
+      if (cancelled) return;
+      setUrl(res.data?.url ?? null);
+      setLoaded(true);
     });
     return () => {
       cancelled = true;
     };
-  }, [item.galleryId, item.id, item.status]);
+  }, [item.galleryId, item.id, item.status, item.thumbStatus, item.providerThumbItemId]);
 
   if (item.status === "failed") {
     return (
@@ -57,7 +71,7 @@ function GridTile({
         <input
           ref={retryRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.heic,.heif"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -85,20 +99,42 @@ function GridTile({
   }
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="aspect-square overflow-hidden rounded-lg border border-line bg-surface-raised"
-      aria-label={`Otwórz ${item.fileName}`}
-    >
-      {url ? (
-        <img src={url} alt={item.fileName} loading="lazy" className="h-full w-full object-cover" />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center text-ink-faint">
-          <Loader2 size={14} className="animate-spin" />
-        </div>
+    <div className="relative aspect-square overflow-hidden rounded-lg border border-line bg-surface-raised">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="h-full w-full"
+        aria-label={`Otwórz ${item.fileName}`}
+      >
+        {url ? (
+          <img src={url} alt={item.fileName} loading="lazy" className="h-full w-full object-cover" />
+        ) : !loaded ? (
+          <div className="flex h-full w-full items-center justify-center text-ink-faint">
+            <Loader2 size={14} className="animate-spin" />
+          </div>
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-ink-faint">
+            <ImageIcon size={18} />
+            <span className="px-1 text-[9px] leading-tight">Brak podglądu</span>
+          </div>
+        )}
+      </button>
+      {needsThumbRetry && (
+        <button
+          type="button"
+          disabled={thumbRetrying}
+          onClick={(e) => {
+            e.stopPropagation();
+            setThumbRetrying(true);
+            void Promise.resolve(onRetryThumb()).finally(() => setThumbRetrying(false));
+          }}
+          className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[9px] text-white transition hover:bg-black/70 disabled:opacity-60"
+        >
+          {thumbRetrying ? <Loader2 size={9} className="animate-spin" /> : <RotateCw size={9} />}
+          Miniatura
+        </button>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -121,7 +157,7 @@ function Lightbox({
     setUrl(null);
     if (!item) return;
     let cancelled = false;
-    void fetchGalleryItemUrl(item.galleryId, item.id).then((res) => {
+    void fetchGalleryItemUrl(item.galleryId, item.id, "full").then((res) => {
       if (!cancelled) setUrl(res.data?.url ?? null);
     });
     return () => {
@@ -253,31 +289,54 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
     setItems((list) => list.map((x) => (x.id === itemId ? { ...x, ...patch } : x)));
   };
 
-  const uploadAndTrack = async (gId: string, item: GalleryItem, file: File) => {
+  const uploadAndTrack = async (
+    gId: string,
+    item: GalleryItem,
+    file: File,
+    thumb?: Blob | null,
+  ) => {
     patchItem(item.id, { status: "uploading", errorMessage: null });
-    const res = await uploadGalleryItem(gId, item.id, file);
+    const res = await uploadGalleryItem(gId, item.id, file, thumb);
     if (!mountedRef.current) return;
     if (res.error) {
       patchItem(item.id, { status: "failed", errorMessage: res.error });
+    } else if (res.data?.item) {
+      patchItem(item.id, {
+        ...res.data.item,
+        status: "ready",
+        errorMessage: null,
+      });
+      if (res.data.gallery) setGallery(res.data.gallery);
     } else {
       patchItem(item.id, { status: "ready", errorMessage: null });
-      if (res.data?.gallery) setGallery(res.data.gallery);
+    }
+  };
+
+  const retryThumb = async (item: GalleryItem) => {
+    const res = await retryGalleryThumb(item.galleryId, item.id);
+    if (!mountedRef.current) return;
+    if (res.data?.item) {
+      patchItem(item.id, res.data.item);
     }
   };
 
   const addFiles = async (list: FileList | null) => {
     if (!list || !gallery) return;
-    const picked = Array.from(list).filter((f) => /^image\//i.test(f.type));
+    const picked = Array.from(list).filter(
+      (f) =>
+        /^image\//i.test(f.type) ||
+        /\.(heic|heif|jpe?g|png|webp|gif)$/i.test(f.name),
+    );
     if (!picked.length) return;
     setError(null);
     const prepared = await prepareGalleryImages(picked);
     const res = await addGalleryItems(
       gallery.id,
-      prepared.map((f) => ({
-        fileName: f.name,
-        mimeType: f.type || "image/jpeg",
-        sizeBytes: f.size,
-        ...galleryFileDims(f),
+      prepared.map((p) => ({
+        fileName: p.main.name,
+        mimeType: p.main.type || "image/jpeg",
+        sizeBytes: p.main.size,
+        ...(p.width != null && p.height != null ? { width: p.width, height: p.height } : {}),
       })),
     );
     if (res.error || !res.data) {
@@ -290,9 +349,9 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
     setItems((prev) => [...prev, ...newItems]);
     for (let i = 0; i < newItems.length; i++) {
       const item = newItems[i]!;
-      const file = prepared[i]!;
+      const photo = prepared[i]!;
       // eslint-disable-next-line no-await-in-loop
-      await uploadAndTrack(gallery.id, item, file);
+      await uploadAndTrack(gallery.id, item, photo.main, photo.thumb);
     }
   };
 
@@ -330,7 +389,7 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
         <input
           ref={addFileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.heic,.heif"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -375,7 +434,14 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
                 key={item.id}
                 item={item}
                 onOpen={() => openLightboxFor(item.id)}
-                onRetry={(file) => void uploadAndTrack(gallery!.id, item, file)}
+                onRetry={(file) => {
+                  void (async () => {
+                    const [photo] = await prepareGalleryImages([file]);
+                    if (!photo) return;
+                    await uploadAndTrack(gallery!.id, item, photo.main, photo.thumb);
+                  })();
+                }}
+                onRetryThumb={() => retryThumb(item)}
               />
             ))}
           </div>

@@ -128,12 +128,30 @@ function rowToGalleryItem(r: Row) {
     width: (r.width as number | null) ?? null,
     height: (r.height as number | null) ?? null,
     providerItemId: (r.provider_item_id as string | null) ?? null,
+    providerThumbItemId: (r.provider_thumb_item_id as string | null) ?? null,
     status: r.status as string,
+    thumbStatus: (r.thumb_status as string | null) ?? "pending",
     errorCode: (r.error_code as string | null) ?? null,
     errorMessage: (r.error_message as string | null) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
+}
+
+const THUMBNAILS_FOLDER = "_thumbnails";
+
+/** Get-or-create techniczny podfolder miniatur w folderze galerii. */
+async function ensureThumbnailsFolder(
+  driveId: string,
+  galleryFolderId: string,
+): Promise<string> {
+  const folder = await createFolder(driveId, galleryFolderId, THUMBNAILS_FOLDER);
+  return folder.id;
+}
+
+function thumbFileName(itemId: string, mimeType: string): string {
+  const ext = /png/i.test(mimeType) ? "png" : /jpeg|jpg/i.test(mimeType) ? "jpg" : "webp";
+  return `${itemId}.${ext}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -585,7 +603,7 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
     author_user_id: callerId,
     kind: "gallery",
     body: title,
-    payload: { galleryId },
+    payload: { gallery: { galleryId } },
     mentions: [],
   });
   if (msgErr) {
@@ -670,6 +688,12 @@ async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, 
   if (typeof contentBase64 !== "string" || !contentBase64) {
     throw new ActionError('Pole "contentBase64" jest wymagane.', 400);
   }
+  const thumbBase64Raw = typeof body.thumbBase64 === "string" ? body.thumbBase64 : "";
+  const thumbMimeType =
+    typeof body.thumbMimeType === "string" && body.thumbMimeType
+      ? body.thumbMimeType
+      : "image/webp";
+  const skipThumb = body.skipThumb === true || !thumbBase64Raw;
 
   const gallery = await loadGallery(admin, galleryId);
   if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
@@ -725,12 +749,43 @@ async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, 
       bytes,
       item.mime_type as string,
     );
+
+    // Miniatura: opcjonalna, awaria NIE cofa statusu głównego zdjęcia.
+    let providerThumbItemId: string | null = null;
+    let thumbStatus: string = skipThumb ? "skipped" : "pending";
+    if (!skipThumb && thumbBase64Raw) {
+      try {
+        const thumbBytes = decodeBase64(thumbBase64Raw);
+        if (thumbBytes.byteLength > 0 && thumbBytes.byteLength <= MAX_UPLOAD_BYTES) {
+          const thumbsFolderId = await ensureThumbnailsFolder(
+            storage.driveId!,
+            gallery.provider_folder_id as string,
+          );
+          const thumbUploaded = await uploadSmallFile(
+            storage.driveId!,
+            thumbsFolderId,
+            thumbFileName(itemId, thumbMimeType),
+            thumbBytes,
+            thumbMimeType,
+          );
+          providerThumbItemId = thumbUploaded.id;
+          thumbStatus = "ready";
+        } else {
+          thumbStatus = "failed";
+        }
+      } catch {
+        thumbStatus = "failed";
+      }
+    }
+
     const { data: updatedRow } = await admin
       .from("gallery_items")
       .update({
         status: "ready",
         provider_item_id: uploaded.id,
         size_bytes: uploaded.size ?? bytes.byteLength,
+        provider_thumb_item_id: providerThumbItemId,
+        thumb_status: thumbStatus,
         error_code: null,
         error_message: null,
       })
@@ -747,6 +802,85 @@ async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, 
     const code = e instanceof GraphError ? String(e.status) : "upload_failed";
     const { gallery: g } = await markFailed(code, msg);
     return { item: rowToGalleryItem({ ...item, status: "failed", error_message: msg }), gallery: g };
+  }
+}
+
+/** Ponowna wysyłka samej miniatury do `{folder}/_thumbnails/{itemId}.webp`. */
+async function actionGalleryUploadThumb(admin: SupabaseClient, callerId: string, body: Row) {
+  const galleryId = requireString(body, "galleryId");
+  const itemId = requireString(body, "itemId");
+  const thumbBase64Raw = typeof body.thumbBase64 === "string" ? body.thumbBase64 : "";
+  const thumbMimeType =
+    typeof body.thumbMimeType === "string" && body.thumbMimeType
+      ? body.thumbMimeType
+      : "image/webp";
+  if (!thumbBase64Raw) throw new ActionError("Brak danych miniatury.", 200);
+
+  const gallery = await loadGallery(admin, galleryId);
+  if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+  const { data: itemRow } = await admin
+    .from("gallery_items")
+    .select("*")
+    .eq("id", itemId)
+    .eq("gallery_id", galleryId)
+    .maybeSingle();
+  if (!itemRow) throw new ActionError("Zdjęcie nie istnieje.", 404);
+  const item = itemRow as Row;
+  if (item.status !== "ready" || !item.provider_item_id) {
+    throw new ActionError("Najpierw musi być gotowe zdjęcie główne.", 200);
+  }
+
+  const storage = await getActiveStorage(admin, gallery.org_id as string);
+  if (!storage || !gallery.provider_folder_id) {
+    throw new ActionError("Magazyn plików niedostępny.", 200);
+  }
+  if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+
+  let thumbBytes: Uint8Array;
+  try {
+    thumbBytes = decodeBase64(thumbBase64Raw);
+  } catch {
+    throw new ActionError("Nieprawidłowe dane miniatury.", 200);
+  }
+  if (thumbBytes.byteLength > MAX_UPLOAD_BYTES) {
+    throw new ActionError("Miniatura przekracza limit rozmiaru.", 200);
+  }
+
+  try {
+    const thumbsFolderId = await ensureThumbnailsFolder(
+      storage.driveId!,
+      gallery.provider_folder_id as string,
+    );
+    const thumbUploaded = await uploadSmallFile(
+      storage.driveId!,
+      thumbsFolderId,
+      thumbFileName(itemId, thumbMimeType),
+      thumbBytes,
+      thumbMimeType,
+    );
+    const { data: updatedRow } = await admin
+      .from("gallery_items")
+      .update({
+        provider_thumb_item_id: thumbUploaded.id,
+        thumb_status: "ready",
+      })
+      .eq("id", itemId)
+      .select()
+      .single();
+    const updatedGallery = await recomputeGalleryCounts(admin, galleryId);
+    return {
+      item: rowToGalleryItem(updatedRow as Row),
+      gallery: rowToGallery(updatedGallery),
+    };
+  } catch (e) {
+    await admin
+      .from("gallery_items")
+      .update({ thumb_status: "failed" })
+      .eq("id", itemId);
+    const msg = e instanceof GraphError ? e.message : "Nie udało się wysłać miniatury.";
+    throw new ActionError(msg, 200);
   }
 }
 
@@ -770,6 +904,9 @@ async function actionGalleryGet(admin: SupabaseClient, callerId: string, body: R
 async function actionGalleryItemUrl(admin: SupabaseClient, callerId: string, body: Row) {
   const galleryId = requireString(body, "galleryId");
   const itemId = requireString(body, "itemId");
+  const variantRaw = typeof body.variant === "string" ? body.variant : "thumb";
+  const variant = variantRaw === "full" ? "full" : "thumb";
+
   const gallery = await loadGallery(admin, galleryId);
   if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
     throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
@@ -789,9 +926,27 @@ async function actionGalleryItemUrl(admin: SupabaseClient, callerId: string, bod
   if (!storage) throw new ActionError("Magazyn plików niedostępny.", 200);
 
   if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+
+  // Miniatura gdy jest; przy awarii — null (placeholder po stronie klienta).
+  // Legacy / pending bez miniatury: tymczasowo pełne zdjęcie.
+  const hasThumb =
+    item.thumb_status === "ready" &&
+    typeof item.provider_thumb_item_id === "string" &&
+    item.provider_thumb_item_id;
+
   try {
+    if (variant === "thumb") {
+      if (hasThumb) {
+        const url = await getDownloadUrl(storage.driveId!, item.provider_thumb_item_id as string);
+        return { url, variant: "thumb" };
+      }
+      const thumbStatus = (item.thumb_status as string | null) ?? "pending";
+      if (thumbStatus === "failed" || thumbStatus === "skipped") {
+        return { url: null, variant: "thumb" };
+      }
+    }
     const url = await getDownloadUrl(storage.driveId!, item.provider_item_id as string);
-    return { url };
+    return { url, variant: "full" };
   } catch (e) {
     const msg = e instanceof GraphError ? e.message : "Nie udało się pobrać adresu pliku.";
     throw new ActionError(msg, 200);
@@ -861,6 +1016,7 @@ const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Ro
   gallery_create: actionGalleryCreate,
   gallery_add_items: actionGalleryAddItems,
   gallery_upload_item: actionGalleryUploadItem,
+  gallery_upload_thumb: actionGalleryUploadThumb,
   gallery_get: actionGalleryGet,
   gallery_item_url: actionGalleryItemUrl,
   gallery_soft_delete: actionGallerySoftDelete,

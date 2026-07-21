@@ -4,6 +4,7 @@ import {
   BellOff,
   FolderOpen,
   Image as ImageIcon,
+  Images,
   Link2,
   MessageSquare,
   Pin,
@@ -38,6 +39,8 @@ import { dmPeerMember } from "@/lib/avatar";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
 import { formatMessageTime, useSignedUrl } from "@/components/chat/MessageBubble";
 import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
+import { GalleryCard } from "@/components/chat/GalleryCard";
+import { GalleryViewer } from "@/components/chat/GalleryViewer";
 import { RegistryDetailSheet } from "@/components/hub/RegistryDetailPanel";
 import { HubSearchPane } from "@/components/hub/HubSearchPane";
 import { HubLinksPane } from "@/components/hub/HubLinksPane";
@@ -251,6 +254,7 @@ export function MobileChatHub() {
   const [globalSearching, setGlobalSearching] = useState(false);
   const [registryDetail, setRegistryDetail] = useState<RegistryFocus | null>(null);
   const [mediaConvId, setMediaConvId] = useState<string | null>(null);
+  const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
 
   const hubTab = mode.kind === "tab" ? mode.id : "chat";
   const {
@@ -263,6 +267,7 @@ export function MobileChatHub() {
     decisions,
     notes,
     media,
+    galleries,
     mediaSubTab,
     setMediaSubTab,
     hubTagFilter,
@@ -597,6 +602,41 @@ export function MobileChatHub() {
     );
   };
 
+  const galleryBody = () => {
+    if (galleries === null) {
+      return <div className="px-4 py-6 text-center text-xs text-ink-faint">Wczytywanie…</div>;
+    }
+    if (!galleries.length) {
+      return (
+        <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+          Brak galerii w Twoich rozmowach.
+        </div>
+      );
+    }
+    return (
+      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+        <div className="grid grid-cols-1 gap-2">
+          {galleries.map((g) => {
+            const conv = overview.find((c) => c.id === g.conversationId);
+            return (
+              <div key={g.id} className="min-w-0">
+                <GalleryCard
+                  galleryId={g.id}
+                  title={g.title}
+                  onOpen={(id) => setGalleryViewerId(id)}
+                />
+                <div className="mt-1 truncate px-0.5 text-[10px] text-ink-faint">
+                  {conv ? titleOf(conv) : "Rozmowa"} · {formatMessageTime(g.createdAt)}
+                  {g.itemCount > 0 ? ` · ${g.itemCount} zdjęć` : ""}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const showBrowseChrome = mode.kind === "browse";
 
   return (
@@ -758,6 +798,7 @@ export function MobileChatHub() {
           {(
             [
               { id: "media" as const, label: "Media", icon: ImageIcon },
+              { id: "galleries" as const, label: "Galerie", icon: Images },
               { id: "files" as const, label: "Pliki", icon: FolderOpen },
               { id: "links" as const, label: "Linki", icon: Link2 },
             ] as const
@@ -836,6 +877,8 @@ export function MobileChatHub() {
         ) : mode.id === "media" ? (
           mediaSubTab === "links" ? (
             <HubLinksPane />
+          ) : mediaSubTab === "galleries" ? (
+            galleryBody()
           ) : (
             mediaBody(mediaSubTab)
           )
@@ -865,6 +908,14 @@ export function MobileChatHub() {
             });
             setRouteHash({ view: "conversation", conversationId: cid });
           }}
+        />
+      )}
+
+      {galleryViewerId && (
+        <GalleryViewer
+          galleryId={galleryViewerId}
+          open
+          onClose={() => setGalleryViewerId(null)}
         />
       )}
     </div>

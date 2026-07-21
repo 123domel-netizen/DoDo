@@ -9,6 +9,7 @@ import {
   FolderOpen,
   FolderPlus,
   Image as ImageIcon,
+  Images,
   Link2,
   Maximize2,
   Minimize2,
@@ -42,13 +43,17 @@ import {
 import {
   fetchAttachmentsForConversations,
   fetchDecisionsForConversations,
+  fetchGalleriesForConversations,
   fetchMessageCountsSince,
   fetchNotesForConversations,
   fetchPublicChannels,
   joinChannel,
   searchAll,
   type ConversationAttachment,
+  type HubGalleryRow,
 } from "@/lib/chat/api";
+import { GalleryCard } from "@/components/chat/GalleryCard";
+import { GalleryViewer } from "@/components/chat/GalleryViewer";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
 import { ConversationKindMark } from "@/components/chat/PresenceDot";
 import { ReadReceiptTicks } from "@/components/chat/ReadReceiptTicks";
@@ -364,6 +369,8 @@ export function WorkspaceHub() {
   const [media, setMedia] = useState<(ConversationAttachment & { conversationId: string })[] | null>(
     null,
   );
+  const [galleries, setGalleries] = useState<HubGalleryRow[] | null>(null);
+  const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
   const [mediaSubTab, setMediaSubTab] = useState<MediaSubTab>("media");
   const [chatBrowse, setChatBrowse] = useState<ChatBrowseTab>("all");
   const [monthCounts, setMonthCounts] = useState<Record<string, number> | null>(null);
@@ -468,8 +475,12 @@ export function WorkspaceHub() {
     if (hubTab !== "media") return;
     let cancelled = false;
     setMedia(null);
+    setGalleries(null);
     void fetchAttachmentsForConversations(convIds).then((list) => {
       if (!cancelled) setMedia(list);
+    });
+    void fetchGalleriesForConversations(convIds).then((list) => {
+      if (!cancelled) setGalleries(list);
     });
     return () => {
       cancelled = true;
@@ -770,6 +781,7 @@ export function WorkspaceHub() {
           {(
             [
               { id: "media" as const, label: "Media", icon: ImageIcon },
+              { id: "galleries" as const, label: "Galerie", icon: Images },
               { id: "files" as const, label: "Pliki", icon: FolderOpen },
               { id: "links" as const, label: "Linki", icon: Link2 },
             ] as const
@@ -1333,6 +1345,43 @@ export function WorkspaceHub() {
     );
   };
 
+  const galleryList = () => {
+    if (galleries === null) {
+      return (
+        <div className="px-4 py-6 text-center text-xs text-ink-faint">Wczytywanie…</div>
+      );
+    }
+    if (!galleries.length) {
+      return (
+        <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
+          Brak galerii w Twoich rozmowach.
+        </div>
+      );
+    }
+    return (
+      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {galleries.map((g) => {
+            const conv = overview.find((c) => c.id === g.conversationId);
+            return (
+              <div key={g.id} className="min-w-0">
+                <GalleryCard
+                  galleryId={g.id}
+                  title={g.title}
+                  onOpen={(id) => setGalleryViewerId(id)}
+                />
+                <div className="mt-1 truncate px-0.5 text-[10px] text-ink-faint">
+                  {conv ? titleOf(conv) : "Rozmowa"} · {formatMessageTime(g.createdAt)}
+                  {g.itemCount > 0 ? ` · ${g.itemCount} zdjęć` : ""}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line/80 bg-sidebar/50 px-3">
@@ -1451,6 +1500,8 @@ export function WorkspaceHub() {
         {hubTab === "media" &&
           (mediaSubTab === "links" ? (
             <HubLinksPane />
+          ) : mediaSubTab === "galleries" ? (
+            galleryList()
           ) : (
             mediaAttachmentList(mediaSubTab)
           ))}
@@ -1460,6 +1511,13 @@ export function WorkspaceHub() {
       </div>
 
       <NewConversationDialog open={showNew} onClose={() => setShowNew(false)} />
+      {galleryViewerId && (
+        <GalleryViewer
+          galleryId={galleryViewerId}
+          open
+          onClose={() => setGalleryViewerId(null)}
+        />
+      )}
       </div>
       )}
     </div>

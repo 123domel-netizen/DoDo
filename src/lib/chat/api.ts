@@ -59,13 +59,22 @@ export function rowToVote(row: Row): PollVote {
 }
 
 export function rowToMessage(row: Row, withNested: boolean): ChatMessage {
+  const rawPayload = ((row.payload as MessagePayload | null) ?? {}) as MessagePayload & {
+    galleryId?: string;
+  };
+  // Legacy flat { galleryId } → { gallery: { galleryId } }
+  const payload: MessagePayload =
+    !rawPayload.gallery?.galleryId && typeof rawPayload.galleryId === "string"
+      ? { ...rawPayload, gallery: { galleryId: rawPayload.galleryId } }
+      : rawPayload;
+
   const msg: ChatMessage = {
     id: row.id as string,
     conversationId: row.conversation_id as string,
     authorUserId: row.author_user_id as string,
     kind: ((row.kind as string) ?? "text") as ChatMessage["kind"],
     body: (row.body as string) ?? "",
-    payload: ((row.payload as MessagePayload | null) ?? {}) as MessagePayload,
+    payload,
     mentions: ((row.mentions as string[] | null) ?? []) as string[],
     threadRootId: (row.thread_root_id as string | null) ?? null,
     replyToMessageId: (row.reply_to_message_id as string | null) ?? null,
@@ -1123,6 +1132,39 @@ export async function fetchAttachmentsForConversations(
       conversationId: (msgRow?.conversation_id as string) ?? "",
     };
   });
+}
+
+export interface HubGalleryRow {
+  id: string;
+  title: string;
+  conversationId: string;
+  itemCount: number;
+  status: string;
+  createdAt: string;
+}
+
+/** Galerie ze wskazanych rozmów (hub Media → Galerie). */
+export async function fetchGalleriesForConversations(
+  conversationIds: string[],
+): Promise<HubGalleryRow[]> {
+  if (!supabase || conversationIds.length === 0) return [];
+  const ids = conversationIds.slice(0, 40);
+  const { data, error } = await supabase
+    .from("galleries")
+    .select("id, title, conversation_id, item_count, status, created_at")
+    .in("conversation_id", ids)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map((r) => ({
+    id: r.id as string,
+    title: ((r.title as string) || "Galeria").trim() || "Galeria",
+    conversationId: r.conversation_id as string,
+    itemCount: Number(r.item_count ?? 0),
+    status: (r.status as string) ?? "ready",
+    createdAt: r.created_at as string,
+  }));
 }
 
 /** Wiadomości z linkami (zakładka Media → Linki); URL-e wyciąga klient. */

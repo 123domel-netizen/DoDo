@@ -6,6 +6,8 @@ import type { ChatAttachment } from "@/lib/chat/types";
  * CHAT3-FILES: załączniki czatu w Supabase Storage.
  * Ścieżka: {conversationId}/{messageId}/{uuid}-{nazwa}. Obrazy kompresowane
  * po stronie klienta (obrona przed limitem egress) + miniatura do feedu.
+ *
+ * Galerie SharePoint: prepareGalleryPhoto — główne ≤2560 + miniatura ~480 WebP.
  */
 
 export const CHAT_BUCKET = "chat-attachments";
@@ -13,12 +15,28 @@ export const MAX_CHAT_FILE_BYTES = 25 * 1024 * 1024;
 const IMAGE_MAX_DIM = 1600;
 const THUMB_MAX_DIM = 320;
 
-function isCompressibleImage(file: File): boolean {
-  return /^image\/(jpeg|png|webp)$/i.test(file.type);
+/** Galeria: dłuższy bok zdjęcia głównego (bez upscale). */
+export const GALLERY_MAIN_MAX_DIM = 2560;
+/** Galeria: dłuższy bok miniatury podglądowej. */
+export const GALLERY_THUMB_MAX_DIM = 480;
+
+function isRasterImageMime(type: string): boolean {
+  return /^image\/(jpeg|jpg|png|webp|heic|heif|gif|bmp)$/i.test(type);
 }
 
 function sanitizeFileName(name: string): string {
   return name.replace(/[^\w.\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ ]+/g, "_").slice(0, 80) || "plik";
+}
+
+function fileStem(name: string): string {
+  const clean = sanitizeFileName(name);
+  return clean.replace(/\.[^.]+$/, "") || "zdjecie";
+}
+
+function extensionForMime(mime: string): string {
+  if (/webp/i.test(mime)) return "webp";
+  if (/png/i.test(mime)) return "png";
+  return "jpg";
 }
 
 interface ImageVariant {
@@ -27,46 +45,95 @@ interface ImageVariant {
   height: number;
 }
 
-async function loadImage(file: File): Promise<HTMLImageElement> {
+type Drawable = HTMLImageElement | ImageBitmap;
+
+function drawableSize(src: Drawable): { w: number; h: number } {
+  if (src instanceof HTMLImageElement) {
+    return { w: src.naturalWidth || src.width, h: src.naturalHeight || src.height };
+  }
+  return { w: src.width, h: src.height };
+}
+
+/**
+ * Dekodowanie z uwzględnieniem EXIF Orientation (createImageBitmap)
+ * — krytyczne dla zdjęć z telefonu. Fallback: HTMLImageElement.
+ */
+async function decodeDrawable(file: Blob): Promise<{ src: Drawable; release: () => void }> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file, {
+        // Chromium / Safari — respektuje Orientation z EXIF
+        imageOrientation: "from-image",
+      } as ImageBitmapOptions);
+      return { src: bitmap, release: () => bitmap.close() };
+    } catch {
+      // HEIC / uszkodzony plik — spróbuj <img>
+    }
+  }
+
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
+    img.decoding = "async";
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve();
       img.onerror = () => reject(new Error("image load failed"));
       img.src = url;
     });
-    return img;
-  } finally {
+    return {
+      src: img,
+      release: () => {
+        URL.revokeObjectURL(url);
+      },
+    };
+  } catch (e) {
     URL.revokeObjectURL(url);
+    throw e;
   }
 }
 
-async function scaleImage(
-  img: HTMLImageElement,
+async function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  mime: "image/webp" | "image/jpeg",
+  quality: number,
+): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob((b) => resolve(b), mime, quality);
+  });
+}
+
+async function scaleDrawable(
+  src: Drawable,
   maxDim: number,
+  opts: { preferWebp: boolean; quality: number },
 ): Promise<ImageVariant | null> {
-  const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
-  const width = Math.max(1, Math.round(img.naturalWidth * scale));
-  const height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const { w, h } = drawableSize(src);
+  if (!w || !h) return null;
+  const scale = Math.min(1, maxDim / Math.max(w, h));
+  const width = Math.max(1, Math.round(w * scale));
+  const height = Math.max(1, Math.round(h * scale));
+
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
-  ctx.drawImage(img, 0, 0, width, height);
+  ctx.drawImage(src, 0, 0, width, height);
 
-  // WebP z fallbackiem do JPEG (starsze Safari).
-  const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(
-      (webp) => {
-        if (webp && webp.type === "image/webp") resolve(webp);
-        else canvas.toBlob((jpeg) => resolve(jpeg), "image/jpeg", 0.82);
-      },
-      "image/webp",
-      0.8,
-    );
-  });
+  let blob: Blob | null = null;
+  if (opts.preferWebp) {
+    blob = await canvasToBlob(canvas, "image/webp", opts.quality);
+    if (!blob || blob.type !== "image/webp") {
+      blob = await canvasToBlob(canvas, "image/jpeg", opts.quality);
+    }
+  } else {
+    blob = await canvasToBlob(canvas, "image/jpeg", opts.quality);
+  }
+
+  // Zwolnij pamięć canvas (ważne na telefonach).
+  canvas.width = 0;
+  canvas.height = 0;
+
   return blob ? { blob, width, height } : null;
 }
 
@@ -79,24 +146,55 @@ export interface PreparedUpload {
   height: number | null;
 }
 
-export async function prepareUpload(file: File): Promise<PreparedUpload> {
-  if (isCompressibleImage(file)) {
+export interface PrepareImageOptions {
+  maxDim?: number;
+  thumbMaxDim?: number;
+  mainQuality?: number;
+  thumbQuality?: number;
+  /** Główne zdjęcie jako WebP (galeria) lub JPEG (chat — szersza kompatybilność). */
+  preferWebpMain?: boolean;
+}
+
+export async function prepareUpload(
+  file: File,
+  options: PrepareImageOptions = {},
+): Promise<PreparedUpload> {
+  const maxDim = options.maxDim ?? IMAGE_MAX_DIM;
+  const thumbMaxDim = options.thumbMaxDim ?? THUMB_MAX_DIM;
+  const mainQuality = options.mainQuality ?? 0.82;
+  const thumbQuality = options.thumbQuality ?? 0.8;
+  const preferWebpMain = options.preferWebpMain ?? true;
+
+  const mimeOk = isRasterImageMime(file.type) || /^image\//i.test(file.type);
+  if (mimeOk) {
+    let release: (() => void) | null = null;
     try {
-      const img = await loadImage(file);
-      const main = await scaleImage(img, IMAGE_MAX_DIM);
-      const thumb = await scaleImage(img, THUMB_MAX_DIM);
+      const decoded = await decodeDrawable(file);
+      release = decoded.release;
+      const main = await scaleDrawable(decoded.src, maxDim, {
+        preferWebp: preferWebpMain,
+        quality: mainQuality,
+      });
+      const thumb = await scaleDrawable(decoded.src, thumbMaxDim, {
+        preferWebp: true,
+        quality: thumbQuality,
+      });
       if (main) {
+        const mimeType = main.blob.type || "image/jpeg";
+        const stem = fileStem(file.name);
         return {
           data: main.blob,
           thumb: thumb?.blob ?? null,
-          fileName: sanitizeFileName(file.name),
-          mimeType: main.blob.type || "image/jpeg",
+          fileName: `${stem}.${extensionForMime(mimeType)}`,
+          mimeType,
           width: main.width,
           height: main.height,
         };
       }
     } catch {
-      // kompresja się nie powiodła — wyślij oryginał
+      // kompresja / HEIC nieobsługiwane — wyślij oryginał
+    } finally {
+      release?.();
     }
   }
   return {
@@ -106,6 +204,41 @@ export async function prepareUpload(file: File): Promise<PreparedUpload> {
     mimeType: file.type || "application/octet-stream",
     width: null,
     height: null,
+  };
+}
+
+/** Wynik przygotowania zdjęcia galerii (główne + opcjonalna miniatura). */
+export interface PreparedGalleryPhoto {
+  main: File;
+  thumb: Blob | null;
+  width: number | null;
+  height: number | null;
+  /** Miniatura nie powstała (HEIC, pamięć, canvas) — nie blokuje uploadu głównego. */
+  thumbFailed: boolean;
+}
+
+/**
+ * Galeria: ≤2560 px główne + ~480 px WebP miniatura.
+ * Bez upscale, z EXIF Orientation. Awaria miniatury nie rzuca.
+ */
+export async function prepareGalleryPhoto(file: File): Promise<PreparedGalleryPhoto> {
+  const prepared = await prepareUpload(file, {
+    maxDim: GALLERY_MAIN_MAX_DIM,
+    thumbMaxDim: GALLERY_THUMB_MAX_DIM,
+    mainQuality: 0.85,
+    thumbQuality: 0.72,
+    preferWebpMain: true,
+  });
+  const main = new File([prepared.data], prepared.fileName, {
+    type: prepared.mimeType,
+    lastModified: file.lastModified,
+  });
+  return {
+    main,
+    thumb: prepared.thumb,
+    width: prepared.width,
+    height: prepared.height,
+    thumbFailed: !prepared.thumb,
   };
 }
 
@@ -123,7 +256,7 @@ export async function uploadAttachmentsForMessage(
       errors.push(`${file.name}: plik przekracza 25 MB.`);
       continue;
     }
-    const prepared = await prepareUpload(file);
+    const prepared = await prepareUpload(file, { preferWebpMain: true });
     const attId = uid();
     const base = `${conversationId}/${messageId}/${attId}-${prepared.fileName}`;
 

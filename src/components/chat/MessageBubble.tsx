@@ -632,12 +632,16 @@ export function MessageBubble({
                     referrerPolicy="no-referrer"
                     className="max-h-44 w-auto max-w-full rounded-xl"
                   />
-                ) : msg.kind === "gallery" && msg.payload.gallery ? (
-                  <GalleryCard
-                    galleryId={msg.payload.gallery.galleryId}
-                    title={msg.body}
-                    onOpen={onOpenGallery}
-                  />
+                ) : msg.kind === "gallery" && msg.payload.gallery?.galleryId ? (
+                  <div className="-mx-1 -my-0.5">
+                    <GalleryCard
+                      galleryId={msg.payload.gallery.galleryId}
+                      title={msg.body}
+                      onOpen={onOpenGallery}
+                    />
+                  </div>
+                ) : msg.kind === "gallery" ? (
+                  <span className="text-xs text-ink-faint">🖼 Galeria: {msg.body || "…"}</span>
                 ) : msg.kind === "voice" ? (
                   voiceAtt ? (
                     <VoiceAttachment
