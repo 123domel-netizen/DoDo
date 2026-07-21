@@ -970,6 +970,17 @@ export async function setChannelName(
   return {};
 }
 
+export async function setChannelPublic(
+  conversationId: string,
+  isPublic: boolean,
+): Promise<{ error?: string }> {
+  const { error } = await api.updateConversationPublic(conversationId, isPublic);
+  if (error) return { error };
+  useChatStore.getState().patchOverviewEntry(conversationId, { isPublic });
+  await refreshOverview();
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Realtime
 // ---------------------------------------------------------------------------

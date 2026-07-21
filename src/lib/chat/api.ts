@@ -1265,6 +1265,19 @@ export async function updateConversationName(
   return error ? { error: friendlyAdminError(error.message) } : {};
 }
 
+export async function updateConversationPublic(
+  conversationId: string,
+  isPublic: boolean,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase
+    .from("conversations")
+    .update({ is_public: isPublic })
+    .eq("id", conversationId)
+    .eq("kind", "channel");
+  return error ? { error: friendlyAdminError(error.message) } : {};
+}
+
 function friendlyAdminError(message: string): string {
   if (message.includes("last admin") || message.includes("at least one admin")) {
     return "Kanał musi mieć przynajmniej jednego administratora.";

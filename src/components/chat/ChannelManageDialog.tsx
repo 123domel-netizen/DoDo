@@ -18,6 +18,7 @@ import {
   setChannelIconPreset,
   setChannelMemberRole,
   setChannelName,
+  setChannelPublic,
 } from "@/lib/chat/init";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
 
@@ -146,7 +147,7 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
         <div className="mb-3 text-sm font-semibold text-ink">Zarządzaj kanałem</div>
         <div className="mb-4 text-[11px] text-ink-faint">
           Administratorzy mogą dodawać i usuwać osoby, nadawać uprawnienia oraz zmieniać
-          nazwę i ikonę. Zawsze musi zostać przynajmniej jeden administrator.
+          nazwę, ikonę i publiczność. Zawsze musi zostać przynajmniej jeden administrator.
         </div>
 
         <div className="mb-4 flex items-center gap-3">
@@ -239,6 +240,18 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
                 </button>
               )}
             </div>
+            <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-ink-light">
+              <input
+                type="checkbox"
+                checked={entry.isPublic}
+                disabled={busy}
+                onChange={(e) => void run(() => setChannelPublic(entry.id, e.target.checked))}
+                className="mt-0.5 accent-[#4A8FC4]"
+              />
+              <span>
+                Kanał publiczny — widoczny w zespole, członkowie mogą dołączyć
+              </span>
+            </label>
           </div>
         </div>
 
