@@ -96,6 +96,7 @@ import {
 } from "@/components/hub/RegistryDetailPanel";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { ChannelManageDialog } from "@/components/chat/ChannelManageDialog";
+import { ConversationInfoDialog } from "@/components/chat/ConversationInfoDialog";
 import { PinnedThreadsBar } from "@/components/chat/PinnedThreadsBar";
 import { ThreadsSheet } from "@/components/chat/ThreadsSheet";
 import { NameThreadDialog } from "@/components/chat/NameThreadDialog";
@@ -375,6 +376,7 @@ export function ConversationView({
   const [menuOpen, setMenuOpen] = useState(false);
   const [muteMenuOpen, setMuteMenuOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [historyMsg, setHistoryMsg] = useState<ChatMessage | null>(null);
   const [showMedia, setShowMedia] = useState(false);
   const [registryMode, setRegistryMode] = useState<RegistryMode | null>(null);
@@ -940,7 +942,14 @@ export function ConversationView({
               <ArrowLeft size={18} />
             </button>
           )}
-          <span className="relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised text-ink-faint">
+          <button
+            type="button"
+            onClick={() => entry && setInfoOpen(true)}
+            disabled={!entry}
+            className="relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-raised text-ink-faint transition hover:border-line-strong hover:brightness-110 disabled:opacity-60"
+            aria-label="Informacje o rozmowie"
+            title="Informacje o rozmowie"
+          >
             {entry?.kind === "channel" ? (
               <ChannelIcon iconUrl={entry.iconUrl} size={entry.iconUrl ? 28 : 15} />
             ) : entry?.kind === "dm" ? (
@@ -962,7 +971,7 @@ export function ConversationView({
             {dmOtherOnline && (
               <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-surface bg-green-500" />
             )}
-          </span>
+          </button>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 truncate text-sm font-semibold text-ink">
               {entry?.myPinnedAt && <Pin size={11} className="shrink-0 text-accent" />}
@@ -1163,6 +1172,19 @@ export function ConversationView({
             </>
           )}
         </div>
+      )}
+
+      {infoOpen && entry && (
+        <ConversationInfoDialog
+          open={infoOpen}
+          onClose={() => setInfoOpen(false)}
+          entry={entry}
+          title={title}
+          myUserId={myUserId}
+          profiles={profiles}
+          canManage={isChannelAdmin}
+          onManage={() => setManageOpen(true)}
+        />
       )}
 
       {manageOpen && entry?.kind === "channel" && (
