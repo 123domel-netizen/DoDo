@@ -9,16 +9,16 @@ import {
 import { prepareThenUploadPool } from "@/lib/chat/galleryUploadPool";
 import { setGalleryLocalThumb } from "@/lib/chat/galleryLocalThumbs";
 
+import { clientBuildAllowsR2 } from "@/lib/media/pipelinePolicy";
+
 /**
  * CHAT: galerie zdjęć w czacie (SharePoint V1) — klient Edge Function
  * `gallery-api`. Router jednej funkcji przez `{ action, ... }`; tokeny
  * Microsoft Graph pozostają na serwerze, klient dostaje tylko wyniki
  * (adresy pobrania, statusy, dane galerii/itemów).
  *
- * Miniatury: własne, w `{folder-galerii}/_thumbnails/` — nie Graph thumbs
- * (przewidywalne i przenośne na OneDrive / Google Drive).
- *
- * Upload: multipart/form-data (binarnie), bez Base64. Współbieżność max 3.
+ * Pipeline R2: decyzja wyłącznie serwerowa (`orgs.media_pipeline`).
+ * `VITE_MEDIA_PIPELINE` to tylko build-time kill switch (nie włącza R2).
  */
 
 export const MAX_GALLERY_UPLOAD_BYTES = 12 * 1024 * 1024; // ~12 MB
@@ -51,6 +51,7 @@ export interface Gallery {
   itemCount: number;
   failedCount: number;
   createdAt: string;
+  pipeline?: "legacy_sp" | "r2_sp";
 }
 
 export interface GalleryItem {
@@ -68,6 +69,10 @@ export interface GalleryItem {
   status: GalleryItemStatus;
   thumbStatus: GalleryThumbStatus;
   errorMessage: string | null;
+  r2Status?: string;
+  spStatus?: string;
+  r2KeyFull?: string | null;
+  r2KeyThumb?: string | null;
 }
 
 export interface StorageStatus {
@@ -97,6 +102,8 @@ export interface StorageOrgOption {
   orgId: string;
   orgName: string;
   baseFolderName: string | null;
+  /** Serwerowa flaga zespołu — klient nie może samodzielnie włączyć R2. */
+  mediaPipeline?: "legacy_sp" | "r2_sp";
 }
 
 export interface NewGalleryItemInput {
@@ -264,6 +271,8 @@ export interface CreateGalleryInput {
   title: string;
   description?: string;
   items: NewGalleryItemInput[];
+  /** r2_sp gdy VITE_MEDIA_PIPELINE=r2 i serwer ma R2. */
+  pipeline?: "legacy_sp" | "r2_sp";
 }
 
 export interface CreateGalleryResult {
@@ -271,13 +280,46 @@ export interface CreateGalleryResult {
   messageId: string;
   gallery: Gallery;
   items: GalleryItem[];
+  pipeline?: "legacy_sp" | "r2_sp";
+}
+
+/**
+ * Build-time kill switch only.
+ * `true` = klient *może* użyć ścieżki R2 gdy serwer zwróci pipeline=r2_sp.
+ * Sam Vite flag NIGDY nie włącza R2.
+ */
+export function clientR2BuildEnabled(): boolean {
+  return clientBuildAllowsR2(
+    import.meta.env.VITE_MEDIA_PIPELINE as string | undefined,
+  );
+}
+
+/** @deprecated Użyj clientR2BuildEnabled + gallery.pipeline z serwera. */
+export function preferredMediaPipeline(): "legacy_sp" | "r2_sp" {
+  // Nigdy nie zwracaj r2_sp tylko z Vite — bezpieczny default legacy.
+  return "legacy_sp";
+}
+
+export async function fetchOrgMediaPipeline(
+  orgId: string,
+): Promise<ApiResult<{ mediaPipeline: "legacy_sp" | "r2_sp" }>> {
+  return callGalleryApi("org_media_pipeline_get", { orgId });
+}
+
+export async function setOrgMediaPipeline(
+  orgId: string,
+  mediaPipeline: "legacy_sp" | "r2_sp",
+): Promise<ApiResult<{ mediaPipeline: "legacy_sp" | "r2_sp" }>> {
+  return callGalleryApi("org_media_pipeline_set", { orgId, mediaPipeline });
 }
 
 export async function createGallery(
   input: CreateGalleryInput,
 ): Promise<ApiResult<CreateGalleryResult>> {
   const t0 = galleryPerfNow();
-  const res = await callGalleryApi<CreateGalleryResult>("gallery_create", { ...input });
+  // Nie wysyłaj pipeline jako włączenia R2 — serwer czyta orgs.media_pipeline.
+  const { pipeline: _ignored, ...rest } = input;
+  const res = await callGalleryApi<CreateGalleryResult>("gallery_create", rest);
   galleryPerfMark("gallery_create", t0);
   return res;
 }
@@ -539,17 +581,45 @@ export interface PipelineUploadCallbacks {
 /**
  * Pipeline: create już zrobione — prepare sekwencyjnie + upload max 3 równolegle.
  * Lokalne miniatury ustawiane zaraz po prepare.
+ * Gdy `pipeline=r2_sp` — PUT bezpośrednio do R2 (presign), potem confirm.
  */
 export async function runGalleryUploadPipeline(
   galleryId: string,
   files: File[],
   itemIds: string[],
   callbacks: PipelineUploadCallbacks = {},
+  options: { pipeline?: "legacy_sp" | "r2_sp" } = {},
 ): Promise<void> {
   galleryPerfReset();
   const tPipe = galleryPerfNow();
   const n = Math.min(files.length, itemIds.length);
   let prepareDone = 0;
+  const useR2 = options.pipeline === "r2_sp" && clientR2BuildEnabled();
+
+  let presignById: Map<
+    string,
+    { putUrlFull: string; putUrlThumb: string; headers: { full: Record<string, string>; thumb: Record<string, string> } }
+  > | null = null;
+
+  if (useR2) {
+    const presign = await callGalleryApi<{
+      items: Array<{
+        itemId: string;
+        putUrlFull: string;
+        putUrlThumb: string;
+        headers: { full: Record<string, string>; thumb: Record<string, string> };
+      }>;
+    }>("r2_presign_gallery_items", { galleryId, itemIds: itemIds.slice(0, n) });
+    if (presign.error || !presign.data?.items?.length) {
+      throw new Error(presign.error || "Nie udało się uzyskać adresów R2.");
+    }
+    presignById = new Map(
+      presign.data.items.map((p) => [
+        p.itemId,
+        { putUrlFull: p.putUrlFull, putUrlThumb: p.putUrlThumb, headers: p.headers },
+      ]),
+    );
+  }
 
   await prepareThenUploadPool(files.slice(0, n), {
     uploadConcurrency: GALLERY_UPLOAD_CONCURRENCY,
@@ -580,12 +650,64 @@ export async function runGalleryUploadPipeline(
       const itemId = itemIds[index]!;
       callbacks.onItemStart?.(itemId, index);
       const isLast = index === n - 1;
+
+      if (useR2 && presignById) {
+        const urls = presignById.get(itemId);
+        if (!urls) {
+          callbacks.onItemDone?.(itemId, index, {
+            ok: false,
+            error: "Brak URL R2 dla pozycji.",
+          });
+          return;
+        }
+        try {
+          const putFull = await fetch(urls.putUrlFull, {
+            method: "PUT",
+            headers: urls.headers.full,
+            body: photo.main,
+          });
+          if (!putFull.ok) {
+            throw new Error(`Upload R2 full failed (${putFull.status}).`);
+          }
+          if (photo.thumb) {
+            const putThumb = await fetch(urls.putUrlThumb, {
+              method: "PUT",
+              headers: urls.headers.thumb,
+              body: photo.thumb,
+            });
+            if (!putThumb.ok) {
+              console.warn("[gallery] R2 thumb upload failed", putThumb.status);
+            }
+          }
+          const confirm = await callGalleryApi("r2_confirm_gallery_item", {
+            galleryId,
+            itemId,
+            sizeBytes: photo.main.size,
+            fileName: photo.main.name,
+            mimeType: photo.main.type || "image/jpeg",
+            width: photo.width,
+            height: photo.height,
+            recompute: isLast,
+          });
+          if (confirm.error) {
+            callbacks.onItemDone?.(itemId, index, { ok: false, error: confirm.error });
+          } else {
+            callbacks.onItemDone?.(itemId, index, { ok: true });
+          }
+        } catch (e) {
+          callbacks.onItemDone?.(itemId, index, {
+            ok: false,
+            error: e instanceof Error ? e.message : "Upload R2 nie powiódł się.",
+          });
+        }
+        return;
+      }
+
       const res = await uploadGalleryItem(galleryId, itemId, photo.main, photo.thumb, {
         fileName: photo.main.name,
         mimeType: photo.main.type || "image/jpeg",
         width: photo.width,
         height: photo.height,
-        // Ostatni upload przelicza status; przy race i tak wołamy recompute na końcu.
         recompute: isLast,
       });
       if (res.error) {
@@ -599,4 +721,62 @@ export async function runGalleryUploadPipeline(
   await recomputeGalleryCounts(galleryId);
   galleryPerfMark("pipeline_total", tPipe, `${n} photos`);
   galleryPerfSummary(`gallery ${galleryId} · ${n} zdjęć`);
+}
+
+export async function retryGalleryItemUpload(
+  galleryId: string,
+  itemId: string,
+  file: File,
+  pipeline?: "legacy_sp" | "r2_sp",
+): Promise<ApiResult<{ ok: true }>> {
+  const photo = await prepareGalleryPhoto(file);
+  if (photo.thumb) setGalleryLocalThumb(galleryId, itemId, photo.thumb);
+
+  const useR2 = pipeline === "r2_sp" && clientR2BuildEnabled();
+  if (!useR2) {
+    const res = await uploadGalleryItem(galleryId, itemId, photo.main, photo.thumb, {
+      fileName: photo.main.name,
+      mimeType: photo.main.type || "image/jpeg",
+      width: photo.width,
+      height: photo.height,
+      recompute: true,
+    });
+    return res.error ? { error: res.error } : { data: { ok: true } };
+  }
+
+  const presign = await callGalleryApi<{
+    items: Array<{
+      itemId: string;
+      putUrlFull: string;
+      putUrlThumb: string;
+      headers: { full: Record<string, string>; thumb: Record<string, string> };
+    }>;
+  }>("r2_presign_gallery_items", { galleryId, itemIds: [itemId] });
+  const urls = presign.data?.items?.[0];
+  if (presign.error || !urls) return { error: presign.error || "Brak URL R2." };
+
+  const putFull = await fetch(urls.putUrlFull, {
+    method: "PUT",
+    headers: urls.headers.full,
+    body: photo.main,
+  });
+  if (!putFull.ok) return { error: `Upload R2 failed (${putFull.status}).` };
+  if (photo.thumb) {
+    await fetch(urls.putUrlThumb, {
+      method: "PUT",
+      headers: urls.headers.thumb,
+      body: photo.thumb,
+    });
+  }
+  const confirm = await callGalleryApi("r2_confirm_gallery_item", {
+    galleryId,
+    itemId,
+    sizeBytes: photo.main.size,
+    fileName: photo.main.name,
+    mimeType: photo.main.type || "image/jpeg",
+    width: photo.width,
+    height: photo.height,
+    recompute: true,
+  });
+  return confirm.error ? { error: confirm.error } : { data: { ok: true } };
 }

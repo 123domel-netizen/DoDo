@@ -27,11 +27,44 @@ import {
   SHAREPOINT_NOT_CONFIGURED,
   uploadSmallFile,
 } from "../_shared/graph.ts";
+import {
+  headR2Object,
+  presignR2Url,
+  r2Configured,
+  deleteR2Object,
+} from "../_shared/r2.ts";
+import {
+  resolveOrgGalleryPipeline,
+  resolveAttachmentPipeline,
+  galleryFullKey,
+  galleryThumbKey,
+  assertGalleryFullKeyScope,
+  validateConfirmHead,
+  resolveThumbStatusAfterConfirm,
+  resolveDualReadSource,
+  shouldCleanupR2Object,
+  shouldCreateSyncJob,
+  normalizeOrgMediaPipeline,
+  authorizeGalleryMediaAccess,
+  orgIdFromHotKey,
+  GLOBAL_DEFAULT_PIPELINE,
+} from "../_shared/mediaPolicy.ts";
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024; // ~12 MB po zdekodowaniu base64
 const MAX_ITEMS_PER_CALL = 60;
 const MAX_TITLE_LEN = 120;
 const MAX_DESCRIPTION_LEN = 2000;
+/** Globalny default to zawsze legacy_sp (GLOBAL_DEFAULT_PIPELINE).
+ *  Env MEDIA_PIPELINE_DEFAULT nie włącza R2 — tylko org.media_pipeline=r2_sp. */
+const GALLERY_FULL_RETENTION_DAYS = Number(
+  Deno.env.get("GALLERY_FULL_RETENTION_DAYS") ?? "45",
+);
+const ATTACHMENT_RETENTION_DAYS = Number(
+  Deno.env.get("ATTACHMENT_RETENTION_DAYS") ?? "180",
+);
+const PRESIGN_TTL_SEC = 600;
+const MEDIA_SYNC_HOOK_URL = Deno.env.get("MEDIA_SYNC_HOOK_URL") ?? "";
+const MEDIA_SYNC_HOOK_SECRET = Deno.env.get("MEDIA_SYNC_HOOK_SECRET") ?? "";
 
 class ActionError extends Error {
   status: number;
@@ -114,6 +147,7 @@ function rowToGallery(r: Row) {
     deletedAt: (r.deleted_at as string | null) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
+    pipeline: (r.pipeline as string | null) ?? "legacy_sp",
   };
 }
 
@@ -135,7 +169,59 @@ function rowToGalleryItem(r: Row) {
     errorMessage: (r.error_message as string | null) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
+    r2KeyFull: (r.r2_key_full as string | null) ?? null,
+    r2KeyThumb: (r.r2_key_thumb as string | null) ?? null,
+    r2Status: (r.r2_status as string | null) ?? "none",
+    spStatus: (r.sp_status as string | null) ?? "none",
+    syncAttempts: Number(r.sync_attempts ?? 0),
+    syncLastError: (r.sync_last_error as string | null) ?? null,
   };
+}
+
+/** Odczyt org.media_pipeline — przy błędzie odczytu → legacy_sp + failed. */
+async function loadOrgMediaPipeline(
+  admin: SupabaseClient,
+  orgId: string,
+): Promise<{ pipeline: "legacy_sp" | "r2_sp"; failed: boolean }> {
+  try {
+    const { data, error } = await admin
+      .from("orgs")
+      .select("media_pipeline")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (error || !data) return { pipeline: "legacy_sp", failed: true };
+    return {
+      pipeline: normalizeOrgMediaPipeline(data.media_pipeline as string),
+      failed: false,
+    };
+  } catch {
+    return { pipeline: "legacy_sp", failed: true };
+  }
+}
+
+/** Powiadom Worker o zadaniu sync (opcjonalny HTTP hook — Queue producer). */
+async function enqueueMediaSync(job: {
+  kind: string;
+  refId: string;
+  galleryId?: string;
+  orgId?: string;
+  opId?: string;
+}): Promise<void> {
+  if (!MEDIA_SYNC_HOOK_URL) return;
+  try {
+    await fetch(MEDIA_SYNC_HOOK_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(MEDIA_SYNC_HOOK_SECRET
+          ? { authorization: `Bearer ${MEDIA_SYNC_HOOK_SECRET}` }
+          : {}),
+      },
+      body: JSON.stringify(job),
+    });
+  } catch (e) {
+    console.warn("[gallery-api] enqueueMediaSync failed", e);
+  }
 }
 
 const THUMBNAILS_FOLDER = "_thumbnails";
@@ -284,13 +370,23 @@ async function recomputeGalleryCounts(
 ): Promise<Row> {
   const { data: items } = await admin
     .from("gallery_items")
-    .select("status")
+    .select("status, r2_status")
     .eq("gallery_id", galleryId);
-  const rows = (items as { status: string }[] | null) ?? [];
+  const rows = (items as { status: string; r2_status?: string }[] | null) ?? [];
   const total = rows.length;
   const failed = rows.filter((r) => r.status === "failed").length;
-  const ready = rows.filter((r) => r.status === "ready").length;
-  const pending = rows.filter((r) => r.status === "pending" || r.status === "uploading").length;
+  const ready = rows.filter(
+    (r) => r.status === "ready" || r.r2_status === "ready",
+  ).length;
+  const pending = rows.filter((r) => {
+    if (r.status === "failed") return false;
+    if (r.status === "ready" || r.r2_status === "ready") return false;
+    return (
+      r.status === "pending" ||
+      r.status === "uploading" ||
+      r.r2_status === "uploading"
+    );
+  }).length;
 
   let status: string;
   if (total === 0) status = "draft";
@@ -524,21 +620,44 @@ async function actionStorageListOrgsForConversation(
   if (!activeRows.length) return { orgs: [] };
 
   const activeOrgIds = activeRows.map((r) => r.org_id as string);
-  const { data: orgRows } = await admin
-    .from("orgs")
-    .select("id, name")
-    .in("id", activeOrgIds);
-  const nameById = new Map<string, string>();
-  for (const r of (orgRows as Row[] | null) ?? []) {
-    nameById.set(r.id as string, (r.name as string) ?? "Organizacja");
+  let orgById = new Map<string, { name: string; mediaPipeline: "legacy_sp" | "r2_sp" }>();
+  {
+    const { data: orgRows, error: orgErr } = await admin
+      .from("orgs")
+      .select("id, name, media_pipeline")
+      .in("id", activeOrgIds);
+    if (orgErr) {
+      // Kolumna media_pipeline może jeszcze nie istnieć (przed migracją 0045).
+      const { data: fallback } = await admin
+        .from("orgs")
+        .select("id, name")
+        .in("id", activeOrgIds);
+      for (const r of (fallback as Row[] | null) ?? []) {
+        orgById.set(r.id as string, {
+          name: (r.name as string) ?? "Organizacja",
+          mediaPipeline: GLOBAL_DEFAULT_PIPELINE,
+        });
+      }
+    } else {
+      for (const r of (orgRows as Row[] | null) ?? []) {
+        orgById.set(r.id as string, {
+          name: (r.name as string) ?? "Organizacja",
+          mediaPipeline: normalizeOrgMediaPipeline(r.media_pipeline as string),
+        });
+      }
+    }
   }
 
   return {
-    orgs: activeRows.map((r) => ({
-      orgId: r.org_id as string,
-      orgName: nameById.get(r.org_id as string) ?? "Organizacja",
-      baseFolderName: (r.base_folder_name as string | null) ?? null,
-    })),
+    orgs: activeRows.map((r) => {
+      const org = orgById.get(r.org_id as string);
+      return {
+        orgId: r.org_id as string,
+        orgName: org?.name ?? "Organizacja",
+        baseFolderName: (r.base_folder_name as string | null) ?? null,
+        mediaPipeline: org?.mediaPipeline ?? GLOBAL_DEFAULT_PIPELINE,
+      };
+    }),
   };
 }
 
@@ -555,6 +674,13 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
       ? body.description.trim().slice(0, MAX_DESCRIPTION_LEN)
       : null;
   const items = parseItems(body.items ?? []);
+  const orgPipe = await loadOrgMediaPipeline(admin, orgId);
+  const pipeline = resolveOrgGalleryPipeline({
+    orgMediaPipeline: orgPipe.pipeline,
+    orgReadFailed: orgPipe.failed,
+    r2Configured: r2Configured(),
+    clientRequestedPipeline: typeof body.pipeline === "string" ? body.pipeline : null,
+  });
 
   if (!(await isConversationMember(admin, conversationId, callerId))) {
     throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
@@ -562,34 +688,46 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
   if (!(await isOrgMember(admin, orgId, callerId))) {
     throw new ActionError("Nie należysz do tej organizacji.", 403);
   }
-  if (!graphConfigured()) {
-    throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+
+  // R2 pipeline: nie wymaga Graph na create; legacy wymaga SP.
+  if (pipeline === "legacy_sp") {
+    if (!graphConfigured()) {
+      throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+    }
+  } else if (!r2Configured()) {
+    throw new ActionError("R2 nie jest skonfigurowany na serwerze.", 200);
   }
-  const storage = await requireActiveStorage(admin, orgId);
+
+  const storage = await getActiveStorage(admin, orgId);
+  if (!storage) {
+    throw new ActionError("Organizacja nie ma aktywnego magazynu plików.", 200);
+  }
 
   const galleryId = crypto.randomUUID();
   const folderName = galleryFolderName(title, galleryId);
 
-  let folderId: string;
-  let folderPath: string | null;
-  try {
-    const galerieFolder = await createFolder(
-      storage.driveId!,
-      storage.baseFolderId!,
-      "Galerie",
-    );
-    const galleryFolder = await createFolder(storage.driveId!, galerieFolder.id, folderName);
-    folderId = galleryFolder.id;
-    folderPath = galleryFolder.webUrl ?? null;
-    // Podfolder miniatur raz przy tworzeniu galerii (kolejne uploady trafiają w cache).
+  let folderId: string | null = null;
+  let folderPath: string | null = null;
+
+  if (pipeline === "legacy_sp") {
     try {
-      await ensureThumbnailsFolder(storage.driveId!, folderId);
+      const galerieFolder = await createFolder(
+        storage.driveId!,
+        storage.baseFolderId!,
+        "Galerie",
+      );
+      const galleryFolder = await createFolder(storage.driveId!, galerieFolder.id, folderName);
+      folderId = galleryFolder.id;
+      folderPath = galleryFolder.webUrl ?? null;
+      try {
+        await ensureThumbnailsFolder(storage.driveId!, folderId);
+      } catch (e) {
+        console.warn("[gallery-api] ensure _thumbnails on create failed", e);
+      }
     } catch (e) {
-      console.warn("[gallery-api] ensure _thumbnails on create failed", e);
+      const msg = e instanceof GraphError ? e.message : "Nie udało się utworzyć folderu.";
+      throw new ActionError(`Nie udało się utworzyć folderu na SharePoint: ${msg}`, 200);
     }
-  } catch (e) {
-    const msg = e instanceof GraphError ? e.message : "Nie udało się utworzyć folderu.";
-    throw new ActionError(`Nie udało się utworzyć folderu na SharePoint: ${msg}`, 200);
   }
 
   const status = items.length ? "uploading" : "draft";
@@ -608,6 +746,7 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
       status,
       item_count: items.length,
       failed_count: 0,
+      pipeline,
     })
     .select()
     .single();
@@ -632,17 +771,28 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
 
   let insertedItems: Row[] = [];
   if (items.length) {
-    const rows = items.map((it, idx) => ({
-      id: it.id ?? crypto.randomUUID(),
-      gallery_id: galleryId,
-      sort_order: idx,
-      file_name: it.fileName,
-      mime_type: it.mimeType ?? "image/jpeg",
-      size_bytes: it.sizeBytes ?? 0,
-      width: it.width ?? null,
-      height: it.height ?? null,
-      status: "pending",
-    }));
+    const rows = items.map((it, idx) => {
+      const id = it.id ?? crypto.randomUUID();
+      const base: Record<string, unknown> = {
+        id,
+        gallery_id: galleryId,
+        sort_order: idx,
+        file_name: it.fileName,
+        mime_type: it.mimeType ?? "image/jpeg",
+        size_bytes: it.sizeBytes ?? 0,
+        width: it.width ?? null,
+        height: it.height ?? null,
+        status: "pending",
+      };
+      if (pipeline === "r2_sp") {
+        base.r2_key_full = galleryFullKey(orgId, galleryId, id);
+        base.r2_key_thumb = galleryThumbKey(orgId, galleryId, id);
+        base.r2_status = "uploading";
+        base.sp_status = "none";
+        base.sync_operation_id = crypto.randomUUID();
+      }
+      return base;
+    });
     const { data: itemRows, error: itemsErr } = await admin
       .from("gallery_items")
       .insert(rows)
@@ -656,8 +806,9 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
   return {
     galleryId,
     messageId,
-    gallery: rowToGallery({ ...(galleryRow as Row), message_id: messageId }),
+    gallery: rowToGallery({ ...(galleryRow as Row), message_id: messageId, pipeline }),
     items: insertedItems.map(rowToGalleryItem),
+    pipeline,
   };
 }
 
@@ -679,17 +830,28 @@ async function actionGalleryAddItems(admin: SupabaseClient, callerId: string, bo
     .maybeSingle();
   const startOrder = ((maxRow as Row | null)?.sort_order as number | undefined ?? -1) + 1;
 
-  const rows = items.map((it, idx) => ({
-    id: it.id ?? crypto.randomUUID(),
-    gallery_id: galleryId,
-    sort_order: startOrder + idx,
-    file_name: it.fileName,
-    mime_type: it.mimeType ?? "image/jpeg",
-    size_bytes: it.sizeBytes ?? 0,
-    width: it.width ?? null,
-    height: it.height ?? null,
-    status: "pending",
-  }));
+  const rows = items.map((it, idx) => {
+    const id = it.id ?? crypto.randomUUID();
+    const base: Record<string, unknown> = {
+      id,
+      gallery_id: galleryId,
+      sort_order: startOrder + idx,
+      file_name: it.fileName,
+      mime_type: it.mimeType ?? "image/jpeg",
+      size_bytes: it.sizeBytes ?? 0,
+      width: it.width ?? null,
+      height: it.height ?? null,
+      status: "pending",
+    };
+    if ((gallery.pipeline as string) === "r2_sp" && r2Configured()) {
+      base.r2_key_full = galleryFullKey(gallery.org_id as string, galleryId, id);
+      base.r2_key_thumb = galleryThumbKey(gallery.org_id as string, galleryId, id);
+      base.r2_status = "uploading";
+      base.sp_status = "none";
+      base.sync_operation_id = crypto.randomUUID();
+    }
+    return base;
+  });
   const { data: itemRows, error } = await admin.from("gallery_items").insert(rows).select();
   if (error) throw new ActionError(`Nie udało się dodać zdjęć: ${error.message}`, 500);
 
@@ -1024,16 +1186,72 @@ async function actionGalleryItemUrl(admin: SupabaseClient, callerId: string, bod
     .maybeSingle();
   if (!itemRow) throw new ActionError("Zdjęcie nie istnieje.", 404);
   const item = itemRow as Row;
-  if (item.status !== "ready" || !item.provider_item_id) {
+
+  const r2Deleted = item.r2_status === "deleted" || Boolean(item.r2_deleted_at);
+  const driveItemId =
+    (item.sp_drive_item_id as string | null) ||
+    (item.provider_item_id as string | null);
+
+  const source = resolveDualReadSource({
+    pipeline: gallery.pipeline as string | null,
+    r2Status: item.r2_status as string | null,
+    r2Deleted,
+    r2Key: item.r2_key_full as string | null,
+    providerItemId: driveItemId,
+    variant,
+    r2KeyThumb: item.r2_key_thumb as string | null,
+  });
+
+  if (source === "none") {
     throw new ActionError("Zdjęcie jeszcze nie jest gotowe.", 200);
   }
+
+  if (source === "r2" && r2Configured()) {
+    try {
+      if (variant === "thumb") {
+        const thumbKey = item.r2_key_thumb as string | null;
+        if (thumbKey) {
+          const url = await presignR2Url({
+            key: thumbKey,
+            method: "GET",
+            expiresInSec: PRESIGN_TTL_SEC,
+          });
+          return { url, variant: "thumb", source: "r2" };
+        }
+      }
+      if (!r2Deleted && item.r2_key_full) {
+        const url = await presignR2Url({
+          key: item.r2_key_full as string,
+          method: "GET",
+          expiresInSec: PRESIGN_TTL_SEC,
+        });
+        return { url, variant: "full", source: "r2" };
+      }
+    } catch (e) {
+      console.warn("[gallery-api] R2 presign GET failed, fallback Graph", e);
+      if (!driveItemId) {
+        throw new ActionError("Nie udało się pobrać adresu pliku.", 200);
+      }
+      // fall through to SharePoint
+    }
+  }
+
+  // Legacy / cold: SharePoint Graph
   const storage = await getActiveStorage(admin, gallery.org_id as string);
-  if (!storage) throw new ActionError("Magazyn plików niedostępny.", 200);
+  if (!storage) {
+    if (source === "r2" && item.r2_key_full && !r2Deleted && r2Configured()) {
+      const url = await presignR2Url({
+        key: item.r2_key_full as string,
+        method: "GET",
+        expiresInSec: PRESIGN_TTL_SEC,
+      });
+      return { url, variant: "full", source: "r2" };
+    }
+    throw new ActionError("Magazyn plików niedostępny.", 200);
+  }
 
   if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
 
-  // Miniatura gdy jest; przy awarii — null (placeholder po stronie klienta).
-  // Legacy / pending bez miniatury: tymczasowo pełne zdjęcie.
   const hasThumb =
     item.thumb_status === "ready" &&
     typeof item.provider_thumb_item_id === "string" &&
@@ -1043,15 +1261,16 @@ async function actionGalleryItemUrl(admin: SupabaseClient, callerId: string, bod
     if (variant === "thumb") {
       if (hasThumb) {
         const url = await getDownloadUrl(storage.driveId!, item.provider_thumb_item_id as string);
-        return { url, variant: "thumb" };
+        return { url, variant: "thumb", source: "sharepoint" };
       }
       const thumbStatus = (item.thumb_status as string | null) ?? "pending";
       if (thumbStatus === "failed" || thumbStatus === "skipped") {
-        return { url: null, variant: "thumb" };
+        return { url: null, variant: "thumb", source: "sharepoint" };
       }
     }
-    const url = await getDownloadUrl(storage.driveId!, item.provider_item_id as string);
-    return { url, variant: "full" };
+    if (!driveItemId) throw new ActionError("Zdjęcie jeszcze nie jest gotowe.", 200);
+    const url = await getDownloadUrl(storage.driveId!, driveItemId);
+    return { url, variant: "full", source: "sharepoint" };
   } catch (e) {
     const msg = e instanceof GraphError ? e.message : "Nie udało się pobrać adresu pliku.";
     throw new ActionError(msg, 200);
@@ -1110,6 +1329,502 @@ async function actionGalleryDeleteStorage(admin: SupabaseClient, callerId: strin
 }
 
 // ---------------------------------------------------------------------------
+// Akcje: R2 presign / confirm (galerie + załączniki) + cleanup
+// ---------------------------------------------------------------------------
+
+async function actionMediaPipelineInfo(_admin: SupabaseClient, _callerId: string, _body: Row) {
+  return {
+    globalDefault: GLOBAL_DEFAULT_PIPELINE,
+    // Pierwszy rollout: resolveAttachmentPipeline() → zawsze legacy_supabase.
+    attachmentsR2Enabled: false,
+    r2Configured: r2Configured(),
+    graphConfigured: graphConfigured(),
+    galleryFullRetentionDays: GALLERY_FULL_RETENTION_DAYS,
+    attachmentRetentionDays: ATTACHMENT_RETENTION_DAYS,
+  };
+}
+
+async function actionOrgMediaPipelineGet(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  const orgId = requireString(body, "orgId");
+  if (!(await isOrgMember(admin, orgId, callerId))) {
+    throw new ActionError("Nie należysz do tej organizacji.", 403);
+  }
+  const orgPipe = await loadOrgMediaPipeline(admin, orgId);
+  return { mediaPipeline: orgPipe.pipeline };
+}
+
+async function actionOrgMediaPipelineSet(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  const orgId = requireString(body, "orgId");
+  if (!(await isOrgAdmin(admin, orgId, callerId))) {
+    throw new ActionError("Tylko administrator organizacji może to zrobić.", 403);
+  }
+  const raw = typeof body.mediaPipeline === "string" ? body.mediaPipeline : "";
+  if (raw !== "legacy_sp" && raw !== "r2_sp") {
+    throw new ActionError('Pole "mediaPipeline" musi być "legacy_sp" lub "r2_sp".', 400);
+  }
+  const mediaPipeline = normalizeOrgMediaPipeline(raw);
+  const { data, error } = await admin
+    .from("orgs")
+    .update({ media_pipeline: mediaPipeline })
+    .eq("id", orgId)
+    .select("media_pipeline")
+    .single();
+  if (error) {
+    throw new ActionError(`Nie udało się zapisać pipeline: ${error.message}`, 500);
+  }
+  return {
+    mediaPipeline: normalizeOrgMediaPipeline(data?.media_pipeline as string),
+  };
+}
+
+/** Po admin retry — od razu wrzuć job do kolejki Workera. */
+async function actionMediaEnqueueGalleryItem(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  const itemId = requireString(body, "itemId");
+  const { data: item } = await admin
+    .from("gallery_items")
+    .select("id, gallery_id, r2_status, sync_operation_id, galleries!inner(org_id)")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (!item) throw new ActionError("Pozycja nie istnieje.", 404);
+  const orgId = (item.galleries as { org_id?: string } | null)?.org_id;
+  if (!orgId || !(await isOrgAdmin(admin, orgId, callerId))) {
+    throw new ActionError("Tylko administrator zespołu.", 403);
+  }
+  if (item.r2_status !== "ready") {
+    throw new ActionError("Brak pliku w R2.", 200);
+  }
+  await enqueueMediaSync({
+    kind: "gallery_full",
+    refId: itemId,
+    galleryId: item.gallery_id as string,
+    orgId,
+    opId: (item.sync_operation_id as string) ?? undefined,
+  });
+  return { ok: true };
+}
+
+/** Krótkotrwały GET dla klucza R2 — po weryfikacji membership. */
+async function actionR2SignedGet(admin: SupabaseClient, callerId: string, body: Row) {
+  if (!r2Configured()) throw new ActionError("R2 nie jest skonfigurowany.", 200);
+  const key = requireString(body, "key", 512);
+  if (!key.startsWith("hot/teams/")) {
+    throw new ActionError("Nieprawidłowy klucz.", 400);
+  }
+  // hot/teams/{orgId}/galleries/{galleryId}/...
+  // hot/teams/{orgId}/attachments/{conversationId}/...
+  const parts = key.split("/");
+  const orgId = parts[2];
+  if (!orgId) throw new ActionError("Nieprawidłowy klucz.", 400);
+
+  if (parts[3] === "galleries") {
+    const galleryId = parts[4];
+    if (!galleryId) throw new ActionError("Nieprawidłowy klucz.", 400);
+    const gallery = await loadGallery(admin, galleryId);
+    if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
+      throw new ActionError("Brak dostępu.", 403);
+    }
+  } else if (parts[3] === "attachments") {
+    const conversationId = parts[4];
+    if (!conversationId) throw new ActionError("Nieprawidłowy klucz.", 400);
+    if (!(await isConversationMember(admin, conversationId, callerId))) {
+      throw new ActionError("Brak dostępu.", 403);
+    }
+  } else {
+    throw new ActionError("Nieprawidłowy klucz.", 400);
+  }
+
+  const url = await presignR2Url({ key, method: "GET", expiresInSec: PRESIGN_TTL_SEC });
+  return { url, expiresInSec: PRESIGN_TTL_SEC };
+}
+
+async function actionR2PresignGalleryItems(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  if (!r2Configured()) throw new ActionError("R2 nie jest skonfigurowany na serwerze.", 200);
+  const galleryId = requireString(body, "galleryId");
+  const gallery = await loadGallery(admin, galleryId);
+  if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+  if ((gallery.pipeline as string) !== "r2_sp") {
+    throw new ActionError("Ta galeria nie używa pipeline R2.", 200);
+  }
+
+  const itemIds = Array.isArray(body.itemIds)
+    ? (body.itemIds as unknown[]).filter((x): x is string => typeof x === "string")
+    : null;
+
+  let q = admin.from("gallery_items").select("*").eq("gallery_id", galleryId);
+  if (itemIds?.length) q = q.in("id", itemIds);
+  const { data: items } = await q;
+  const rows = (items as Row[]) ?? [];
+
+  const expiresAt = new Date(Date.now() + PRESIGN_TTL_SEC * 1000).toISOString();
+  const out = [];
+  const orgId = gallery.org_id as string;
+  for (const it of rows) {
+    // Klucze zawsze z org/gallery z DB — nigdy z body.orgId.
+    const fullKey = galleryFullKey(orgId, galleryId, it.id as string);
+    const thumbKey = galleryThumbKey(orgId, galleryId, it.id as string);
+
+    if (!it.r2_key_full || it.r2_key_full !== fullKey || it.r2_key_thumb !== thumbKey) {
+      await admin
+        .from("gallery_items")
+        .update({
+          r2_key_full: fullKey,
+          r2_key_thumb: thumbKey,
+          r2_status: (it.r2_status as string) === "ready" ? "ready" : "uploading",
+          sync_operation_id: it.sync_operation_id ?? crypto.randomUUID(),
+        })
+        .eq("id", it.id);
+    }
+
+    const putUrlFull = await presignR2Url({
+      key: fullKey,
+      method: "PUT",
+      expiresInSec: PRESIGN_TTL_SEC,
+      contentType: "image/jpeg",
+    });
+    const putUrlThumb = await presignR2Url({
+      key: thumbKey,
+      method: "PUT",
+      expiresInSec: PRESIGN_TTL_SEC,
+      contentType: "image/webp",
+    });
+    out.push({
+      itemId: it.id,
+      putUrlFull,
+      putUrlThumb,
+      r2KeyFull: fullKey,
+      r2KeyThumb: thumbKey,
+      headers: { full: { "content-type": "image/jpeg" }, thumb: { "content-type": "image/webp" } },
+      expiresAt,
+    });
+  }
+  return { items: out, expiresAt };
+}
+
+async function actionR2ConfirmGalleryItem(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  if (!r2Configured()) throw new ActionError("R2 nie jest skonfigurowany na serwerze.", 200);
+  const galleryId = requireString(body, "galleryId");
+  const itemId = requireString(body, "itemId");
+  const gallery = await loadGallery(admin, galleryId);
+  const isMember = await isConversationMember(
+    admin,
+    gallery.conversation_id as string,
+    callerId,
+  );
+  if (!isMember) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+
+  const { data: itemRow } = await admin
+    .from("gallery_items")
+    .select("*")
+    .eq("id", itemId)
+    .eq("gallery_id", galleryId)
+    .maybeSingle();
+  if (!itemRow) throw new ActionError("Zdjęcie nie istnieje.", 404);
+  const item = itemRow as Row;
+
+  const fullKey = item.r2_key_full as string | null;
+  if (!fullKey) throw new ActionError("Brak klucza R2 — najpierw presign.", 400);
+
+  try {
+    assertGalleryFullKeyScope(fullKey, {
+      orgId: gallery.org_id as string,
+      galleryId,
+      itemId,
+    });
+  } catch {
+    throw new ActionError("Klucz R2 poza zakresem galerii / zespołu.", 403);
+  }
+
+  const keyOrgId = orgIdFromHotKey(fullKey);
+  const authz = authorizeGalleryMediaAccess({
+    isConversationMember: isMember,
+    galleryOrgId: gallery.org_id as string,
+    keyOrgIdFromPath: keyOrgId ?? "",
+  });
+  if (!authz.ok) {
+    throw new ActionError("Brak dostępu do mediów galerii.", 403);
+  }
+
+  const head = await headR2Object(fullKey);
+  const expectedSize =
+    typeof body.sizeBytes === "number" ? (body.sizeBytes as number) : null;
+  const headCheck = validateConfirmHead({
+    objectExists: head.exists,
+    actualSize: head.size,
+    expectedSize,
+  });
+  if (!headCheck.ok) {
+    if (headCheck.reason === "missing_object") {
+      throw new ActionError("Plik nie znaleziony w R2 — dokończ upload.", 200);
+    }
+    if (headCheck.reason === "size_mismatch") {
+      throw new ActionError("Niezgodny rozmiar pliku w R2.", 200);
+    }
+    throw new ActionError("Nieprawidłowy klucz R2.", 400);
+  }
+
+  const thumbKey = item.r2_key_thumb as string | null;
+  let thumbExists = false;
+  if (thumbKey) {
+    const thumbHead = await headR2Object(thumbKey);
+    thumbExists = thumbHead.exists;
+  }
+  const thumbStatus = resolveThumbStatusAfterConfirm({
+    thumbKey,
+    thumbExists,
+  });
+
+  const alreadyReady = item.r2_status === "ready";
+  const spAlreadyQueuedOrVerified =
+    item.sp_status === "queued" || item.sp_status === "verified";
+
+  const opId = (item.sync_operation_id as string) || crypto.randomUUID();
+  const fileName =
+    typeof body.fileName === "string" && body.fileName.trim()
+      ? body.fileName.trim()
+      : (item.file_name as string);
+  const mimeType =
+    typeof body.mimeType === "string" && body.mimeType.trim()
+      ? body.mimeType.trim()
+      : (item.mime_type as string) || "image/jpeg";
+
+  const { data: updatedRow } = await admin
+    .from("gallery_items")
+    .update({
+      status: "ready",
+      r2_status: "ready",
+      r2_etag: head.etag,
+      r2_size_bytes: head.size,
+      size_bytes: head.size ?? item.size_bytes,
+      file_name: fileName,
+      mime_type: mimeType,
+      thumb_status: thumbStatus,
+      sp_status: spAlreadyQueuedOrVerified
+        ? (item.sp_status as string)
+        : "queued",
+      sync_operation_id: opId,
+      sync_next_at: new Date().toISOString(),
+      error_code: null,
+      error_message: null,
+      ...(Number.isFinite(body.width as number) ? { width: body.width } : {}),
+      ...(Number.isFinite(body.height as number) ? { height: body.height } : {}),
+    })
+    .eq("id", itemId)
+    .select()
+    .single();
+
+  const { data: existingJobRows } = await admin
+    .from("media_sync_jobs")
+    .select("kind, ref_id, state, payload")
+    .eq("ref_id", itemId)
+    .eq("kind", "gallery_full");
+
+  const existingJobs = ((existingJobRows as Row[] | null) ?? []).map((j) => {
+    const payload = (j.payload as Row | null) ?? null;
+    return {
+      kind: j.kind as string,
+      refId: j.ref_id as string,
+      opId: typeof payload?.opId === "string" ? (payload.opId as string) : null,
+      state: j.state as string,
+    };
+  });
+
+  const createJob = shouldCreateSyncJob({
+    existingJobs,
+    kind: "gallery_full",
+    refId: itemId,
+    opId,
+  });
+
+  // Re-confirm gdy already ready + SP queued/verified → sukces, bez duplikatu joba.
+  if (createJob && !(alreadyReady && spAlreadyQueuedOrVerified)) {
+    await admin.from("media_sync_jobs").insert({
+      kind: "gallery_full",
+      ref_id: itemId,
+      state: "pending",
+      payload: {
+        galleryId,
+        orgId: gallery.org_id,
+        opId,
+        r2Key: fullKey,
+      },
+    });
+  }
+
+  // Zawsze enqueue — idempotentny consumer obsłuży duplikaty.
+  await enqueueMediaSync({
+    kind: "gallery_full",
+    refId: itemId,
+    galleryId,
+    orgId: gallery.org_id as string,
+    opId,
+  });
+
+  const doRecompute = body.recompute !== false;
+  const g = doRecompute
+    ? await recomputeGalleryCounts(admin, galleryId)
+    : gallery;
+
+  return {
+    item: rowToGalleryItem((updatedRow as Row) ?? item),
+    gallery: rowToGallery(g),
+    r2Ready: true,
+  };
+}
+
+async function actionR2PresignAttachment(
+  _admin: SupabaseClient,
+  _callerId: string,
+  _body: Row,
+) {
+  throw new ActionError(
+    "Pipeline R2 dla załączników jest wyłączony w pierwszym rolloutcie — użyj legacy Storage.",
+    200,
+  );
+}
+
+async function actionR2ConfirmAttachment(
+  _admin: SupabaseClient,
+  _callerId: string,
+  _body: Row,
+) {
+  throw new ActionError(
+    "Pipeline R2 dla załączników jest wyłączony w pierwszym rolloutcie — użyj legacy Storage.",
+    200,
+  );
+}
+
+/** Cleanup R2: tylko verified + po terminie retencji. Service/admin. */
+async function actionMediaCleanupR2(admin: SupabaseClient, callerId: string, body: Row) {
+  if (!r2Configured()) throw new ActionError("R2 nie jest skonfigurowany.", 200);
+
+  const orgId =
+    typeof body.orgId === "string" && body.orgId ? body.orgId : null;
+  if (orgId) {
+    if (!(await isOrgAdmin(admin, orgId, callerId))) {
+      throw new ActionError("Tylko administrator może uruchomić cleanup.", 403);
+    }
+  } else {
+    // Global cleanup — tylko gdy wywołane z hooka Workera (service role caller
+    // nie ma auth.uid w tym samym sensie; tu wymagamy orgId z klienta admin).
+    throw new ActionError("Podaj orgId.", 400);
+  }
+
+  const nowIso = new Date().toISOString();
+  const limit = Math.min(Number(body.limit ?? 50), 200);
+  let deleted = 0;
+  const errors: string[] = [];
+
+  let gq = admin
+    .from("gallery_items")
+    .select(
+      "id, r2_key_full, r2_status, sp_status, r2_deleted_at, r2_delete_after, retention_hold, galleries!inner(org_id)",
+    )
+    .eq("r2_status", "ready")
+    .eq("sp_status", "verified")
+    .eq("retention_hold", false)
+    .is("r2_deleted_at", null)
+    .lt("r2_delete_after", nowIso)
+    .limit(limit);
+  // Filter by org via join is awkward in supabase-js — fetch then filter.
+  const { data: galleryDue } = await gq;
+  for (const row of (galleryDue as Row[]) ?? []) {
+    const g = row.galleries as { org_id?: string } | null;
+    if (g?.org_id !== orgId) continue;
+    const key = row.r2_key_full as string | null;
+    if (!key) continue;
+    // Nigdy nie kasuj thumb keys — tylko gallery_full.
+    if (
+      !shouldCleanupR2Object({
+        spStatus: row.sp_status as string | null,
+        r2Status: row.r2_status as string | null,
+        r2DeletedAt: row.r2_deleted_at as string | null,
+        r2DeleteAfter: row.r2_delete_after as string | null,
+        retentionHold: Boolean(row.retention_hold),
+        nowIso,
+        objectKind: "gallery_full",
+      })
+    ) {
+      continue;
+    }
+    try {
+      await deleteR2Object(key);
+      await admin
+        .from("gallery_items")
+        .update({ r2_status: "deleted", r2_deleted_at: nowIso })
+        .eq("id", row.id);
+      deleted += 1;
+    } catch (e) {
+      errors.push(`gallery ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const { data: attDue } = await admin
+    .from("message_attachments")
+    .select("id, r2_key, org_id, r2_status, sp_status, r2_deleted_at, r2_delete_after, retention_hold")
+    .eq("org_id", orgId)
+    .eq("r2_status", "ready")
+    .eq("sp_status", "verified")
+    .eq("retention_hold", false)
+    .is("r2_deleted_at", null)
+    .lt("r2_delete_after", nowIso)
+    .limit(limit);
+
+  for (const row of (attDue as Row[]) ?? []) {
+    const key = row.r2_key as string | null;
+    if (!key) continue;
+    if (
+      !shouldCleanupR2Object({
+        spStatus: row.sp_status as string | null,
+        r2Status: row.r2_status as string | null,
+        r2DeletedAt: row.r2_deleted_at as string | null,
+        r2DeleteAfter: row.r2_delete_after as string | null,
+        retentionHold: Boolean(row.retention_hold),
+        nowIso,
+        objectKind: "attachment",
+      })
+    ) {
+      continue;
+    }
+    try {
+      await deleteR2Object(key);
+      await admin
+        .from("message_attachments")
+        .update({ r2_status: "deleted", r2_deleted_at: nowIso })
+        .eq("id", row.id);
+      deleted += 1;
+    } catch (e) {
+      errors.push(`att ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  return { deleted, errors };
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -1127,6 +1842,16 @@ const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Ro
   gallery_item_url: actionGalleryItemUrl,
   gallery_soft_delete: actionGallerySoftDelete,
   gallery_delete_storage: actionGalleryDeleteStorage,
+  r2_presign_gallery_items: actionR2PresignGalleryItems,
+  r2_confirm_gallery_item: actionR2ConfirmGalleryItem,
+  r2_presign_attachment: actionR2PresignAttachment,
+  r2_confirm_attachment: actionR2ConfirmAttachment,
+  media_cleanup_r2: actionMediaCleanupR2,
+  media_pipeline_info: actionMediaPipelineInfo,
+  media_enqueue_gallery_item: actionMediaEnqueueGalleryItem,
+  r2_signed_get: actionR2SignedGet,
+  org_media_pipeline_get: actionOrgMediaPipelineGet,
+  org_media_pipeline_set: actionOrgMediaPipelineSet,
 };
 
 Deno.serve(async (req) => {

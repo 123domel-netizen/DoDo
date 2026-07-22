@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "release:sync": "node scripts/sync-app-release.mjs",
     "deploy": "npm run build && npx wrangler pages deploy dist --project-name dodo && npm run release:sync",
+    "worker:deploy": "npm run deploy --prefix worker",
+    "worker:dev": "npm run dev --prefix worker",
     "icons:generate": "node scripts/generate-icons.mjs",
     "test": "vitest run",
     "test:watch": "vitest"

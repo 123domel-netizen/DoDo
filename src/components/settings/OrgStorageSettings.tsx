@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { Cloud, CloudOff, ExternalLink, HardDrive } from "lucide-react";
+import { Cloud, CloudOff, ExternalLink, HardDrive, RotateCw } from "lucide-react";
 import {
   disconnectStorage,
   fetchGraphConfigured,
+  fetchOrgMediaPipeline,
   fetchStorageStatus,
   saveStorageConnection,
+  setOrgMediaPipeline,
   type StorageStatus,
 } from "@/lib/chat/galleryApi";
+import { supabase, cloudEnabled } from "@/lib/supabase";
 
 interface OrgStorageSettingsProps {
   orgId: string;
@@ -18,6 +21,8 @@ const PROVIDER_LABEL: Record<string, string> = {
   onedrive: "OneDrive",
   google_drive: "Google Drive",
 };
+
+type SyncFailRow = { id: string; file_name: string; sync_last_error: string | null };
 
 /** Magazyn plików zespołu (galerie w czacie) — V1: ręczne ID z Graph/SharePoint. */
 export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) {
@@ -31,6 +36,10 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [syncFails, setSyncFails] = useState<SyncFailRow[]>([]);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [mediaPipeline, setMediaPipeline] = useState<"legacy_sp" | "r2_sp">("legacy_sp");
+  const [pipelineSaving, setPipelineSaving] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -47,12 +56,101 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
     return s;
   }, [orgId]);
 
+  const refreshSyncFails = useCallback(async () => {
+    if (!isAdmin || !supabase) {
+      setSyncFails([]);
+      return;
+    }
+    const { data } = await supabase
+      .from("gallery_items")
+      .select("id, file_name, sync_last_error, galleries!inner(org_id)")
+      .eq("galleries.org_id", orgId)
+      .in("sp_status", ["failed", "permanent_failure"])
+      .eq("r2_status", "ready")
+      .limit(20);
+    setSyncFails(
+      ((data as Array<{ id: string; file_name: string; sync_last_error: string | null }>) ?? []).map(
+        (r) => ({
+          id: r.id,
+          file_name: r.file_name,
+          sync_last_error: r.sync_last_error,
+        }),
+      ),
+    );
+  }, [isAdmin, orgId]);
+
+  const refreshPipeline = useCallback(async () => {
+    const res = await fetchOrgMediaPipeline(orgId);
+    if (res.data?.mediaPipeline) setMediaPipeline(res.data.mediaPipeline);
+    else setMediaPipeline("legacy_sp");
+  }, [orgId]);
+
   useEffect(() => {
     void refresh();
+    void refreshSyncFails();
+    void refreshPipeline();
     setEditing(false);
     setError(null);
     setInfo(null);
-  }, [refresh]);
+  }, [refresh, refreshSyncFails, refreshPipeline]);
+
+  const setPipeline = async (next: "legacy_sp" | "r2_sp") => {
+    setPipelineSaving(true);
+    setError(null);
+    const res = await setOrgMediaPipeline(orgId, next);
+    setPipelineSaving(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    setMediaPipeline(res.data?.mediaPipeline ?? next);
+    setInfo(
+      next === "r2_sp"
+        ? "Pipeline galerii: R2 (hot) + SharePoint (archiwum)."
+        : "Pipeline galerii: legacy SharePoint (natychmiastowy rollback).",
+    );
+  };
+
+  const retrySync = async (itemId: string) => {
+    if (!supabase) return;
+    setRetryingId(itemId);
+    const { error: rpcErr } = await supabase.rpc("retry_gallery_item_sync", {
+      p_item_id: itemId,
+    });
+    if (rpcErr) {
+      setRetryingId(null);
+      setError(rpcErr.message);
+      return;
+    }
+    // Natychmiastowy enqueue do Workera (cron też złapie, ale wolniej).
+    if (cloudEnabled) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (token) {
+          const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+          const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+          await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              apikey: anon,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "media_enqueue_gallery_item",
+              itemId,
+            }),
+          });
+        }
+      } catch {
+        // best-effort — cron Workera i tak ponowi
+      }
+    }
+    setRetryingId(null);
+    setInfo("Ponowiono synchronizację do SharePoint.");
+    await refreshSyncFails();
+  };
 
   const openForm = (prefill: StorageStatus | null) => {
     setSiteId(prefill?.siteId ?? "");
@@ -236,6 +334,68 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
         <p className="text-[11px] leading-snug text-ink-faint">
           Galerie w czacie wymagają magazynu plików podłączonego przez administratora zespołu.
         </p>
+      )}
+
+      {isAdmin && (
+        <div className="rounded-lg border border-line bg-surface-raised px-2 py-1.5">
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+            Pipeline galerii (serwer)
+          </div>
+          <p className="mb-1.5 text-[11px] leading-snug text-ink-faint">
+            Domyślnie legacy. R2 włącza się tylko tu — flaga Vite nie włącza R2 samodzielnie.
+            Załączniki i voice pozostają na legacy.
+          </p>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              disabled={pipelineSaving || mediaPipeline === "legacy_sp"}
+              onClick={() => void setPipeline("legacy_sp")}
+              className="rounded-lg px-2 py-1 text-[11px] text-ink transition hover:underline disabled:opacity-40"
+            >
+              Legacy SP
+            </button>
+            <button
+              type="button"
+              disabled={pipelineSaving || mediaPipeline === "r2_sp"}
+              onClick={() => void setPipeline("r2_sp")}
+              className="rounded-lg px-2 py-1 text-[11px] text-accent transition hover:underline disabled:opacity-40"
+            >
+              R2 + SP
+            </button>
+            <span className="ml-auto self-center text-[10px] text-ink-faint">
+              teraz: {mediaPipeline === "r2_sp" ? "r2_sp" : "legacy_sp"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {isAdmin && syncFails.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2">
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-amber-400/90">
+            Problem z archiwizacją SharePoint
+          </div>
+          <ul className="space-y-1">
+            {syncFails.map((row) => (
+              <li
+                key={row.id}
+                className="flex items-center gap-2 text-[11px] text-ink-light"
+              >
+                <span className="min-w-0 flex-1 truncate" title={row.sync_last_error ?? undefined}>
+                  {row.file_name}
+                </span>
+                <button
+                  type="button"
+                  disabled={retryingId === row.id}
+                  onClick={() => void retrySync(row.id)}
+                  className="inline-flex shrink-0 items-center gap-1 text-accent hover:underline disabled:opacity-50"
+                >
+                  <RotateCw size={11} className={retryingId === row.id ? "animate-spin" : ""} />
+                  Ponów
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {error && <p className="text-[11px] text-red-400">{error}</p>}

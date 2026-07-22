@@ -16,3 +16,7 @@ tsconfig.tsbuildinfo
 tsconfig.node.tsbuildinfo
 dev-dist
 supabase/.temp
+
+# Wrangler local dry-run / cache
+.wrangler
+worker/.wrangler-dry/

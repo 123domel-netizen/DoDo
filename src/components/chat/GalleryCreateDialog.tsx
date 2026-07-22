@@ -5,11 +5,12 @@ import {
   createGallery,
   listStorageOrgsForConversation,
   MAX_GALLERY_ITEMS_PER_CALL,
+  clientR2BuildEnabled,
+  retryGalleryItemUpload,
   runGalleryUploadPipeline,
-  uploadGalleryItem,
   type StorageOrgOption,
 } from "@/lib/chat/galleryApi";
-import { formatFileSize, prepareGalleryPhoto } from "@/lib/chat/upload";
+import { formatFileSize } from "@/lib/chat/upload";
 import { galleryPerfReset } from "@/lib/chat/galleryUploadPerf";
 import { setGalleryLocalThumb } from "@/lib/chat/galleryLocalThumbs";
 
@@ -49,6 +50,8 @@ export function GalleryCreateDialog({
   const [prepProgress, setPrepProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [galleryId, setGalleryId] = useState<string | null>(null);
+  /** Pipeline z serwera dla bieżącego uploadu (nie z Vite). */
+  const [uploadPipeline, setUploadPipeline] = useState<"legacy_sp" | "r2_sp">("legacy_sp");
   const [items, setItems] = useState<UploadItem[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(true);
@@ -163,7 +166,10 @@ export function GalleryCreateDialog({
         return;
       }
 
-      const { gallery, items: galleryItems, messageId: newMessageId } = res.data;
+      const { gallery, items: galleryItems, messageId: newMessageId, pipeline } = res.data;
+      // Pipeline wyłącznie z serwera; Vite jest tylko kill switchem.
+      const usedPipeline =
+        pipeline === "r2_sp" && clientR2BuildEnabled() ? "r2_sp" : "legacy_sp";
       const nextItems: UploadItem[] = files.map((f, i) => {
         const id = galleryItems[i]?.id ?? `${gallery.id}-${i}`;
         setGalleryLocalThumb(gallery.id, id, f);
@@ -176,6 +182,7 @@ export function GalleryCreateDialog({
       });
 
       setGalleryId(gallery.id);
+      setUploadPipeline(usedPipeline);
       setItems(nextItems);
       setStep("uploading");
       setSubmitting(false);
@@ -186,20 +193,26 @@ export function GalleryCreateDialog({
 
       uploadRunningRef.current = true;
       const itemIds = nextItems.map((it) => it.id);
-      void runGalleryUploadPipeline(gallery.id, files, itemIds, {
-        onPrepareProgress: (done, total) => {
-          if (mountedRef.current) {
-            setPrepProgress(`Przygotowywanie… ${done}/${total}`);
-          }
+      void runGalleryUploadPipeline(
+        gallery.id,
+        files,
+        itemIds,
+        {
+          onPrepareProgress: (done, total) => {
+            if (mountedRef.current) {
+              setPrepProgress(`Przygotowywanie… ${done}/${total}`);
+            }
+          },
+          onItemStart: (itemId) => {
+            patchItem(itemId, { status: "uploading", errorMessage: null });
+          },
+          onItemDone: (itemId, _index, result) => {
+            if (result.ok) patchItem(itemId, { status: "ready", errorMessage: null });
+            else patchItem(itemId, { status: "failed", errorMessage: result.error });
+          },
         },
-        onItemStart: (itemId) => {
-          patchItem(itemId, { status: "uploading", errorMessage: null });
-        },
-        onItemDone: (itemId, _index, result) => {
-          if (result.ok) patchItem(itemId, { status: "ready", errorMessage: null });
-          else patchItem(itemId, { status: "failed", errorMessage: result.error });
-        },
-      }).finally(() => {
+        { pipeline: usedPipeline },
+      ).finally(() => {
         uploadRunningRef.current = false;
         if (mountedRef.current) {
           setPrepProgress(null);
@@ -218,15 +231,12 @@ export function GalleryCreateDialog({
     if (!galleryId) return;
     patchItem(it.id, { status: "uploading", errorMessage: null });
     try {
-      const photo = await prepareGalleryPhoto(it.sourceFile);
-      if (photo.thumb) setGalleryLocalThumb(galleryId, it.id, photo.thumb);
-      const res = await uploadGalleryItem(galleryId, it.id, photo.main, photo.thumb, {
-        fileName: photo.main.name,
-        mimeType: photo.main.type || "image/jpeg",
-        width: photo.width,
-        height: photo.height,
-        recompute: true,
-      });
+      const res = await retryGalleryItemUpload(
+        galleryId,
+        it.id,
+        it.sourceFile,
+        uploadPipeline,
+      );
       if (res.error) patchItem(it.id, { status: "failed", errorMessage: res.error });
       else patchItem(it.id, { status: "ready", errorMessage: null });
     } catch (e) {
@@ -400,7 +410,9 @@ export function GalleryCreateDialog({
               {allDone
                 ? failedCount > 0
                   ? `Gotowe · ${uploadedCount} ok · ${failedCount} nieudanych`
-                  : `Gotowe · ${uploadedCount} zdjęć`
+                  : uploadPipeline === "r2_sp"
+                    ? `Galeria została wysłana. Możesz zamknąć aplikację. · ${uploadedCount} zdjęć`
+                    : `Gotowe · ${uploadedCount} zdjęć`
                 : `Wysyłanie… ${uploadedCount}/${items.length}`}
               {prepProgress ? ` · ${prepProgress}` : ""}
             </div>

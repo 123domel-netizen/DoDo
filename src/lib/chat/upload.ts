@@ -6,6 +6,11 @@ import {
   galleryPerfNow,
 } from "@/lib/chat/galleryUploadPerf";
 
+function preferredAttachmentPipeline(): "legacy_supabase" | "r2_sp" {
+  // Pierwszy rollout: wyłącznie legacy Storage (R2 tylko galerie).
+  return "legacy_supabase";
+}
+
 /**
  * CHAT3-FILES: załączniki czatu w Supabase Storage.
  * Ścieżka: {conversationId}/{messageId}/{uuid}-{nazwa}. Obrazy kompresowane
@@ -269,16 +274,38 @@ export async function uploadAttachmentsForMessage(
   conversationId: string,
   messageId: string,
   files: File[],
+  options: { orgId?: string | null } = {},
 ): Promise<{ attachments: ChatAttachment[]; errors: string[] }> {
   const attachments: ChatAttachment[] = [];
   const errors: string[] = [];
   if (!supabase) return { attachments, errors: ["Brak chmury."] };
+
+  const useR2 =
+    preferredAttachmentPipeline() === "r2_sp" && Boolean(options.orgId);
 
   for (const file of files) {
     if (file.size > MAX_CHAT_FILE_BYTES) {
       errors.push(`${file.name}: plik przekracza 25 MB.`);
       continue;
     }
+
+    if (useR2 && options.orgId) {
+      try {
+        const att = await uploadOneAttachmentViaR2(
+          conversationId,
+          messageId,
+          options.orgId,
+          file,
+        );
+        attachments.push(att);
+      } catch (e) {
+        errors.push(
+          `${file.name}: ${e instanceof Error ? e.message : "Upload R2 nie powiódł się."}`,
+        );
+      }
+      continue;
+    }
+
     const prepared = await prepareUpload(file, { preferWebpMain: true });
     const attId = uid();
     const base = `${conversationId}/${messageId}/${attId}-${prepared.fileName}`;
@@ -315,6 +342,7 @@ export async function uploadAttachmentsForMessage(
         size_bytes: prepared.data.size,
         width: prepared.width,
         height: prepared.height,
+        pipeline: "legacy_supabase",
       })
       .select()
       .single();
@@ -339,6 +367,94 @@ export async function uploadAttachmentsForMessage(
   return { attachments, errors };
 }
 
+async function uploadOneAttachmentViaR2(
+  conversationId: string,
+  messageId: string,
+  orgId: string,
+  file: File,
+): Promise<ChatAttachment> {
+  const { supabase: sb } = await import("@/lib/supabase");
+  if (!sb) throw new Error("Brak chmury.");
+  const prepared = await prepareUpload(file, { preferWebpMain: true });
+  const attId = uid();
+
+  const { data: sessionData } = await sb.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) throw new Error("Brak sesji.");
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+  const presignRes = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: anon,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "r2_presign_attachment",
+      conversationId,
+      messageId,
+      orgId,
+      attachmentId: attId,
+      fileName: prepared.fileName,
+      mimeType: prepared.mimeType,
+    }),
+  });
+  const presignJson = (await presignRes.json()) as {
+    error?: string;
+    putUrl?: string;
+    r2Key?: string;
+    headers?: Record<string, string>;
+  };
+  if (!presignRes.ok || presignJson.error || !presignJson.putUrl || !presignJson.r2Key) {
+    throw new Error(presignJson.error || "Presign R2 nie powiódł się.");
+  }
+
+  const put = await fetch(presignJson.putUrl, {
+    method: "PUT",
+    headers: presignJson.headers ?? { "content-type": prepared.mimeType },
+    body: prepared.data,
+  });
+  if (!put.ok) throw new Error(`Upload R2 failed (${put.status}).`);
+
+  const confirmRes = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: anon,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "r2_confirm_attachment",
+      conversationId,
+      messageId,
+      attachmentId: attId,
+      orgId,
+      r2Key: presignJson.r2Key,
+      fileName: prepared.fileName,
+      mimeType: prepared.mimeType,
+    }),
+  });
+  const confirmJson = (await confirmRes.json()) as { error?: string };
+  if (!confirmRes.ok || confirmJson.error) {
+    throw new Error(confirmJson.error || "Confirm R2 nie powiódł się.");
+  }
+
+  return {
+    id: attId,
+    messageId,
+    bucketPath: presignJson.r2Key,
+    thumbPath: null,
+    fileName: prepared.fileName,
+    mimeType: prepared.mimeType,
+    sizeBytes: prepared.data.size,
+    width: prepared.width,
+    height: prepared.height,
+  };
+}
+
 // Signed URLs (bucket prywatny) z cache w pamięci.
 const urlCache = new Map<string, { url: string; expiresAt: number }>();
 const SIGNED_URL_TTL_S = 3600;
@@ -347,6 +463,36 @@ export async function signedUrlFor(path: string): Promise<string | null> {
   const cached = urlCache.get(path);
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.url;
   if (!supabase) return null;
+
+  // R2 hot keys — short-lived GET via Edge (membership check).
+  if (path.startsWith("hot/teams/")) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return null;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: anon,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "r2_signed_get", key: path }),
+      });
+      const json = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok || !json.url) return null;
+      urlCache.set(path, {
+        url: json.url,
+        expiresAt: Date.now() + Math.min(SIGNED_URL_TTL_S, 900) * 1000,
+      });
+      return json.url;
+    } catch {
+      return null;
+    }
+  }
+
   const { data, error } = await supabase.storage
     .from(CHAT_BUCKET)
     .createSignedUrl(path, SIGNED_URL_TTL_S);
