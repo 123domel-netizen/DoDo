@@ -566,6 +566,57 @@ async function actionStorageDisconnect(admin: SupabaseClient, callerId: string, 
   return { ok: true };
 }
 
+/** Test odczytu + zapisu folderu bazowego SharePoint (admin). */
+async function actionStorageProbe(admin: SupabaseClient, callerId: string, body: Row) {
+  const orgId = requireString(body, "orgId");
+  if (!(await isOrgAdmin(admin, orgId, callerId))) {
+    throw new ActionError("Tylko administrator organizacji może to zrobić.", 403);
+  }
+  if (!graphConfigured()) {
+    throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+  }
+  const storage = await getActiveStorage(admin, orgId);
+  if (!storage?.driveId || !storage.baseFolderId) {
+    throw new ActionError("Brak aktywnego magazynu SharePoint.", 200);
+  }
+  try {
+    await graphFetch(
+      `/drives/${storage.driveId}/items/${storage.baseFolderId}?$select=id,name`,
+    );
+  } catch (e) {
+    const msg = e instanceof GraphError ? e.message : "Odczyt folderu nie powiódł się.";
+    throw new ActionError(`Test odczytu: ${msg}`, 200);
+  }
+  const probeName = `_dodo_probe_${Date.now()}`;
+  let createdId: string | null = null;
+  try {
+    const created = await createFolder(
+      storage.driveId,
+      storage.baseFolderId,
+      probeName,
+    );
+    createdId = created.id;
+  } catch (e) {
+    const msg = e instanceof GraphError ? e.message : "Zapis do folderu nie powiódł się.";
+    throw new ActionError(`Test zapisu: ${msg}`, 200);
+  }
+  if (createdId) {
+    try {
+      await deleteItem(storage.driveId, createdId);
+    } catch {
+      // best-effort cleanup
+    }
+  }
+  return {
+    ok: true,
+    read: true,
+    write: true,
+    siteId: storage.siteId,
+    driveId: storage.driveId,
+    baseFolderId: storage.baseFolderId,
+  };
+}
+
 async function actionStorageListOrgsForConversation(
   admin: SupabaseClient,
   callerId: string,
@@ -695,7 +746,8 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
     throw new ActionError("Nie należysz do tej organizacji.", 403);
   }
 
-  // R2 pipeline: nie wymaga Graph na create; legacy wymaga SP.
+  // R2 pipeline: nie wymaga Graph ani SP na create (hot R2).
+  // Legacy wymaga aktywnego SharePoint.
   if (pipeline === "legacy_sp") {
     if (!graphConfigured()) {
       throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
@@ -705,7 +757,7 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
   }
 
   const storage = await getActiveStorage(admin, orgId);
-  if (!storage) {
+  if (pipeline === "legacy_sp" && !storage) {
     throw new ActionError("Organizacja nie ma aktywnego magazynu plików.", 200);
   }
 
@@ -718,21 +770,35 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
   if (pipeline === "legacy_sp") {
     try {
       const galerieFolder = await createFolder(
-        storage.driveId!,
-        storage.baseFolderId!,
+        storage!.driveId!,
+        storage!.baseFolderId!,
         "Galerie",
       );
-      const galleryFolder = await createFolder(storage.driveId!, galerieFolder.id, folderName);
+      const galleryFolder = await createFolder(storage!.driveId!, galerieFolder.id, folderName);
       folderId = galleryFolder.id;
       folderPath = galleryFolder.webUrl ?? null;
       try {
-        await ensureThumbnailsFolder(storage.driveId!, folderId);
+        await ensureThumbnailsFolder(storage!.driveId!, folderId);
       } catch (e) {
         console.warn("[gallery-api] ensure _thumbnails on create failed", e);
       }
     } catch (e) {
       const msg = e instanceof GraphError ? e.message : "Nie udało się utworzyć folderu.";
       throw new ActionError(`Nie udało się utworzyć folderu na SharePoint: ${msg}`, 200);
+    }
+  } else if (pipeline === "r2_sp" && storage?.driveId && storage.baseFolderId && graphConfigured()) {
+    // Best-effort: utwórz folder SP od razu gdy magazyn jest aktywny.
+    try {
+      const galerieFolder = await createFolder(
+        storage.driveId,
+        storage.baseFolderId,
+        "Galerie",
+      );
+      const galleryFolder = await createFolder(storage.driveId, galerieFolder.id, folderName);
+      folderId = galleryFolder.id;
+      folderPath = galleryFolder.webUrl ?? null;
+    } catch (e) {
+      console.warn("[gallery-api] deferred SP folder on r2_sp create", e);
     }
   }
 
@@ -2146,6 +2212,7 @@ const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Ro
   storage_status: actionStorageStatus,
   storage_save: actionStorageSave,
   storage_disconnect: actionStorageDisconnect,
+  storage_probe: actionStorageProbe,
   storage_list_orgs_for_conversation: actionStorageListOrgsForConversation,
   gallery_create: actionGalleryCreate,
   gallery_add_items: actionGalleryAddItems,

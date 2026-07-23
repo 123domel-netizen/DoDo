@@ -1,7 +1,6 @@
 {
   // Izolowany Worker preview — NIE używa produkcyjnego dodo-media / dodo-media-archive.
   // Deploy: npm run deploy:preview --prefix worker
-  // account_id: ustaw CLOUDFLARE_ACCOUNT_ID w środowisku (nie commituj lokalnych override'ów).
   "name": "dodo-media-sync-preview",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
@@ -10,22 +9,22 @@
   "r2_buckets": [
     {
       "binding": "MEDIA_BUCKET",
-      "bucket_name": "dodo-media"
+      "bucket_name": "dodo-media-preview"
     }
   ],
   "queues": {
     "producers": [
       {
         "binding": "MEDIA_ARCHIVE_QUEUE",
-        "queue": "dodo-media-archive"
+        "queue": "dodo-media-archive-preview"
       }
     ],
     "consumers": [
       {
-        "queue": "dodo-media-archive",
+        "queue": "dodo-media-archive-preview",
         "max_batch_size": 5,
         "max_retries": 8,
-        "dead_letter_queue": "dodo-media-archive-dlq"
+        "dead_letter_queue": "dodo-media-archive-preview-dlq"
       }
     ]
   },

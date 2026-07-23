@@ -364,14 +364,15 @@ async function syncGalleryFull(env: Env, job: ArchiveJob): Promise<void> {
   );
   if (!storage?.drive_id || !storage.base_folder_id) {
     await sbPatch(env, "gallery_items", item.id, {
-      sp_status: "failed",
+      sp_status: "permanent_failure",
       sync_last_error: "Brak aktywnego magazynu SharePoint",
       retention_hold: true,
     });
     if (jobRow) {
-      await markJobFailed(env, jobRow, "No active storage", true);
+      await markJobFailed(env, jobRow, "Brak magazynu SharePoint", true);
     }
-    throw new Error("No active storage");
+    // retention_hold: never auto-delete R2 without verified archive
+    return;
   }
 
   let folderId = gallery.provider_folder_id;
@@ -501,12 +502,12 @@ async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
   );
   if (!storage) {
     await sbPatch(env, "message_attachments", att.id, {
-      sp_status: "failed",
-      sync_last_error: "Brak magazynu",
+      sp_status: "permanent_failure",
+      sync_last_error: "Brak magazynu SharePoint",
       retention_hold: true,
     });
-    if (jobRow) await markJobFailed(env, jobRow, "No storage", true);
-    throw new Error("No storage");
+    if (jobRow) await markJobFailed(env, jobRow, "Brak magazynu SharePoint", true);
+    return;
   }
 
   const zal = await createFolder(env, storage.drive_id, storage.base_folder_id, "Zalaczniki");

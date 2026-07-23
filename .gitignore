@@ -31,3 +31,9 @@ worker/.media-hook-secret.local
 # Scratch SQL dumps
 _d*.sql
 _*.tmp.sql
+
+# Local secret env files (never commit)
+.env.r2.prod
+.env.r2.*
+!.env.example
+

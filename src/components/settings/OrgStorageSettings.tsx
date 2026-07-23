@@ -3,13 +3,16 @@ import { Cloud, CloudOff, ExternalLink, HardDrive, RotateCw } from "lucide-react
 import {
   disconnectStorage,
   fetchGraphConfigured,
+  fetchMediaPipelineInfo,
   fetchOrgMediaPipeline,
   fetchStorageStatus,
+  probeStorage,
   saveStorageConnection,
   setOrgMediaPipeline,
   type StorageStatus,
 } from "@/lib/chat/galleryApi";
 import { supabase, cloudEnabled } from "@/lib/supabase";
+import { clientBuildAllowsR2 } from "@/lib/media/pipelinePolicy";
 
 interface OrgStorageSettingsProps {
   orgId: string;
@@ -40,6 +43,9 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [mediaPipeline, setMediaPipeline] = useState<"legacy_sp" | "r2_sp">("legacy_sp");
   const [pipelineSaving, setPipelineSaving] = useState(false);
+  const [r2Configured, setR2Configured] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probeOk, setProbeOk] = useState<boolean | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -83,6 +89,8 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
     const res = await fetchOrgMediaPipeline(orgId);
     if (res.data?.mediaPipeline) setMediaPipeline(res.data.mediaPipeline);
     else setMediaPipeline("legacy_sp");
+    const info = await fetchMediaPipelineInfo();
+    setR2Configured(Boolean(info.data?.r2Configured));
   }, [orgId]);
 
   useEffect(() => {
@@ -92,8 +100,23 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
     setEditing(false);
     setError(null);
     setInfo(null);
+    setProbeOk(null);
   }, [refresh, refreshSyncFails, refreshPipeline]);
 
+  const runProbe = async () => {
+    setProbing(true);
+    setError(null);
+    setProbeOk(null);
+    const res = await probeStorage(orgId);
+    setProbing(false);
+    if (res.error) {
+      setError(res.error);
+      setProbeOk(false);
+      return;
+    }
+    setProbeOk(true);
+    setInfo("Test SharePoint: odczyt i zapis OK.");
+  };
   const setPipeline = async (next: "legacy_sp" | "r2_sp") => {
     if (next === "r2_sp" && !status?.connected) {
       setError(
@@ -343,17 +366,77 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
       )}
 
       {isAdmin && (
+        <div className="rounded-lg border border-line bg-surface-raised px-2 py-1.5 space-y-1.5">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+            Status mediów
+          </div>
+          <ul className="space-y-1 text-[11px] text-ink-light">
+            <li>
+              R2 aktywne:{" "}
+              <span className={r2Configured && clientBuildAllowsR2(import.meta.env.VITE_MEDIA_PIPELINE as string | undefined) ? "text-accent" : "text-ink-faint"}>
+                {r2Configured && clientBuildAllowsR2(import.meta.env.VITE_MEDIA_PIPELINE as string | undefined)
+                  ? "tak"
+                  : "nie"}
+              </span>
+            </li>
+            <li>
+              SharePoint połączony:{" "}
+              <span className={status?.connected ? "text-accent" : "text-ink-faint"}>
+                {status?.connected ? "tak" : "nie"}
+              </span>
+            </li>
+            <li>
+              Archiwizacja aktywna:{" "}
+              <span
+                className={
+                  mediaPipeline === "r2_sp" && status?.connected ? "text-accent" : "text-ink-faint"
+                }
+              >
+                {mediaPipeline === "r2_sp" && status?.connected
+                  ? "tak (r2_sp)"
+                  : mediaPipeline === "r2_sp"
+                    ? "R2 bez SharePoint — pliki nie będą kasowane z R2"
+                    : "nie (legacy_sp)"}
+              </span>
+            </li>
+            <li>
+              Problem z archiwizacją:{" "}
+              <span className={syncFails.length ? "text-amber-400" : "text-ink-faint"}>
+                {syncFails.length ? `${syncFails.length} pozycji` : "brak"}
+              </span>
+            </li>
+          </ul>
+          {status?.connected && (
+            <button
+              type="button"
+              disabled={probing}
+              onClick={() => void runProbe()}
+              className="rounded-lg px-2 py-1 text-[11px] text-accent transition hover:underline disabled:opacity-50"
+            >
+              {probing ? "Testuję…" : "Test odczytu i zapisu SharePoint"}
+            </button>
+          )}
+          {probeOk === true && (
+            <p className="text-[11px] text-accent">Ostatni test: OK</p>
+          )}
+          {probeOk === false && (
+            <p className="text-[11px] text-red-400">Ostatni test: nieudany</p>
+          )}
+        </div>
+      )}
+
+      {isAdmin && (
         <div className="rounded-lg border border-line bg-surface-raised px-2 py-1.5">
           <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
-            Pipeline galerii (serwer)
+            Pipeline mediów (serwer)
           </div>
           <p className="mb-1.5 text-[11px] leading-snug text-ink-faint">
-            Domyślnie legacy. R2 wymaga aktywnego magazynu SharePoint.
-            Bez magazynu zespół pozostaje na legacy_sp.
+            R2 + SharePoint: pliki najpierw do R2 DoDo, potem archiwum do SharePoint zespołu.
+            Bez SharePoint pliki zostają w R2 (bez auto-usuwania).
           </p>
           {!status?.connected && (
             <p className="mb-1.5 text-[11px] leading-snug text-amber-400">
-              Podłącz i zweryfikuj magazyn SharePoint, zanim włączysz R2 + SP.
+              Podłącz SharePoint i uruchom test odczytu/zapisu, zanim włączysz pełną archiwizację.
             </p>
           )}
           <div className="flex gap-1.5">
@@ -370,14 +453,17 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
               disabled={
                 pipelineSaving ||
                 mediaPipeline === "r2_sp" ||
-                !status?.connected
+                !status?.connected ||
+                probeOk !== true
               }
               onClick={() => void setPipeline("r2_sp")}
               className="rounded-lg px-2 py-1 text-[11px] text-accent transition hover:underline disabled:opacity-40"
               title={
                 !status?.connected
-                  ? "Najpierw podłącz aktywny magazyn SharePoint"
-                  : undefined
+                  ? "Najpierw podłącz SharePoint"
+                  : probeOk !== true
+                    ? "Najpierw przejdź test odczytu/zapisu"
+                    : undefined
               }
             >
               R2 + SP

@@ -269,6 +269,23 @@ export async function disconnectStorage(orgId: string): Promise<ApiResult<{ ok: 
   return callGalleryApi("storage_disconnect", { orgId });
 }
 
+/** Test odczytu/zapisu SharePoint (admin). */
+export async function probeStorage(orgId: string): Promise<
+  ApiResult<{ ok: boolean; read: boolean; write: boolean }>
+> {
+  return callGalleryApi("storage_probe", { orgId });
+}
+
+export async function fetchMediaPipelineInfo(): Promise<
+  ApiResult<{
+    r2Configured: boolean;
+    graphConfigured: boolean;
+    attachmentsR2Enabled: boolean;
+  }>
+> {
+  return callGalleryApi("media_pipeline_info", {});
+}
+
 /** Zespoły z aktywnym magazynem, dostępne dla galerii tej rozmowy (picker). */
 export async function listStorageOrgsForConversation(
   conversationId: string,
