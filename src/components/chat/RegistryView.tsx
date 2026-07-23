@@ -9,10 +9,10 @@ import {
   MoreHorizontal,
   StickyNote,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import {
-  deleteDecision,
   deleteNote,
   fetchDecisions,
   fetchNotes,
@@ -21,6 +21,7 @@ import {
   beginConvertToItem,
   decisionToNote,
   noteToDecision,
+  revokeDecision,
   type ConvertTarget,
 } from "@/lib/chat/convert";
 import type { ChatProfile } from "@/lib/chat/types";
@@ -61,7 +62,7 @@ const COPY: Record<
     icon: Gavel,
     empty: "Brak zapisanych decyzji.",
     hint: "„Zapisz jako decyzję”",
-    deleteConfirm: "Usunąć decyzję z rejestru?",
+    deleteConfirm: "Cofnąć decyzję? Zniknie z rejestru i pojawi się wpis w czacie.",
   },
   notes: {
     title: "Notatki",
@@ -132,15 +133,21 @@ export function RegistryView({
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [focusId, entries]);
 
-  const remove = async (id: string) => {
+  const remove = async (entry: RegistryEntry) => {
     if (!confirm(copy.deleteConfirm)) return;
     const { error } =
-      mode === "decisions" ? await deleteDecision(id) : await deleteNote(id);
+      mode === "decisions"
+        ? await revokeDecision({
+            id: entry.id,
+            conversationId: entry.conversationId,
+            body: entry.body,
+          })
+        : await deleteNote(entry.id);
     if (error) {
       alert(error);
       return;
     }
-    setEntries((d) => (d ? d.filter((x) => x.id !== id) : d));
+    setEntries((d) => (d ? d.filter((x) => x.id !== entry.id) : d));
   };
 
   const convertToItem = (entry: RegistryEntry, target: ConvertTarget) => {
@@ -326,11 +333,19 @@ export function RegistryView({
                           type="button"
                           onClick={() => {
                             setMenuFor(null);
-                            void remove(d.id);
+                            void remove(d);
                           }}
                           className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-red-400 transition hover:bg-surface-raised"
                         >
-                          <Trash2 size={13} /> Usuń
+                          {mode === "decisions" ? (
+                            <>
+                              <Undo2 size={13} /> Cofnij decyzję
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 size={13} /> Usuń
+                            </>
+                          )}
                         </button>
                       )}
                     </div>

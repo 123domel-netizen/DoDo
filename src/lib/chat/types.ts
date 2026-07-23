@@ -26,6 +26,10 @@ export interface ChatLastMessage {
   authorUserId: string;
   createdAt: string;
   deletedAt: string | null;
+  /** Gdy ostatnia aktywność to odpowiedź w wątku. */
+  threadRootId?: string | null;
+  /** Nazwa wątku (z rootu) — do podglądu „nazwa: treść”. */
+  threadTitle?: string | null;
 }
 
 export interface ChatOverviewEntry {
@@ -321,4 +325,23 @@ export function messagePreviewLabel(kind: MessageKind, body: string): string {
     default:
       return body;
   }
+}
+
+/**
+ * Jedna linia podglądu w liście kanałów / DM.
+ * Odpowiedź w wątku → „nazwa wątku: treść”; inaczej „Autor: treść”.
+ */
+export function formatConversationLastPreview(
+  last: ChatLastMessage | null | undefined,
+  authorName: string | null,
+): string {
+  if (!last) return "Brak wiadomości";
+  if (last.deletedAt) return "Wiadomość usunięta";
+  if (last.kind === "system") return last.body;
+  const content = messagePreviewLabel(last.kind, last.body) || "(załącznik)";
+  if (last.threadRootId) {
+    const title = (last.threadTitle ?? "").trim() || "Wątek";
+    return `${title}: ${content}`;
+  }
+  return `${authorName ? `${authorName}: ` : ""}${content}`;
 }

@@ -30,7 +30,7 @@ import { overviewTitle } from "@/lib/chat/feed";
 import { openConversation } from "@/lib/chat/init";
 import { setRouteHash } from "@/lib/navigation";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
-import { messagePreviewLabel } from "@/lib/chat/types";
+import { formatConversationLastPreview } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { dmPeerMember } from "@/lib/avatar";
@@ -327,15 +327,7 @@ function DashboardChatSection() {
                   : (entry.members.find((m) => m.userId === last.authorUserId)?.displayName ??
                     null)
                 : null;
-            const preview = last
-              ? last.deletedAt
-                ? "Wiadomość usunięta"
-                : last.kind === "system"
-                  ? last.body
-                  : `${authorName ? `${authorName}: ` : ""}${
-                      messagePreviewLabel(last.kind, last.body) || "(załącznik)"
-                    }`
-              : "Brak wiadomości";
+            const preview = formatConversationLastPreview(last, authorName);
             const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
             const peer = dmPeerMember(entry.members, myUserId, entry.kind);
             const peerAvatar = peer

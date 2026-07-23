@@ -7,6 +7,7 @@ import {
   markOverviewRead,
   mergeMessages,
   reconcilePinnedList,
+  threadDisplayTitle,
   trimList,
   upsertMessageInList,
 } from "@/lib/chat/feed";
@@ -330,6 +331,21 @@ export const useChatStore = create<ChatState>()(
           myUserId: s.userId,
           activeConversationId: s.activeConversationId,
           documentVisible,
+          resolveThreadTitle: (rootId) => {
+            const fromThread = s.threadByRoot[rootId]?.find((m) => m.id === rootId);
+            if (fromThread) return threadDisplayTitle(fromThread);
+            const fromFocus = s.focusFeed?.messages.find((m) => m.id === rootId);
+            if (fromFocus) return threadDisplayTitle(fromFocus);
+            for (const list of Object.values(s.pinnedByConv)) {
+              const hit = list.find((m) => m.id === rootId);
+              if (hit) return threadDisplayTitle(hit);
+            }
+            for (const list of Object.values(s.messagesByConv)) {
+              const hit = list.find((m) => m.id === rootId);
+              if (hit) return threadDisplayTitle(hit);
+            }
+            return null;
+          },
         });
 
         const patches = patchEverywhere(s, msg);

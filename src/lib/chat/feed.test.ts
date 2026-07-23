@@ -16,6 +16,7 @@ import {
   upsertMessageInList,
 } from "@/lib/chat/feed";
 import type { ChatMessage, ChatOverviewEntry, FocusFeed } from "@/lib/chat/types";
+import { formatConversationLastPreview } from "@/lib/chat/types";
 
 function msg(partial: Partial<ChatMessage>): ChatMessage {
   return {
@@ -142,12 +143,23 @@ describe("applyMessageToOverview", () => {
     expect(overview[0].unreadCount).toBe(1);
   });
 
-  it("odpowiedź w wątku nie zmienia lastMessage ani unread", () => {
-    const incoming = msg({ authorUserId: "other", threadRootId: "root" });
-    const prev = entry({ lastMessage: null });
-    const { overview } = applyMessageToOverview([prev], incoming, base);
+  it("odpowiedź w wątku nie podbija unread, ale aktualizuje lastMessage", () => {
+    const incoming = msg({
+      authorUserId: "other",
+      threadRootId: "root",
+      body: "odpowiedź",
+      createdAt: "2026-07-17T10:00:00.000Z",
+    });
+    const prev = entry({ lastMessage: null, lastMessageAt: null });
+    const { overview } = applyMessageToOverview([prev], incoming, {
+      ...base,
+      resolveThreadTitle: () => "Nazwa wątku",
+    });
     expect(overview[0].unreadCount).toBe(0);
-    expect(overview[0].lastMessage).toBeNull();
+    expect(overview[0].lastMessage?.body).toBe("odpowiedź");
+    expect(overview[0].lastMessage?.threadRootId).toBe("root");
+    expect(overview[0].lastMessage?.threadTitle).toBe("Nazwa wątku");
+    expect(overview[0].lastMessageAt).toBe("2026-07-17T10:00:00.000Z");
   });
 
   it("nieznana rozmowa → known=false", () => {
@@ -389,5 +401,41 @@ describe("threadDisplayTitle", () => {
     expect(threadDisplayTitle(msg({ body: "root", threadTitle: "Nazwa" }))).toBe("Nazwa");
     expect(threadDisplayTitle(msg({ body: "root", threadTitle: null }))).toBe("root");
     expect(threadDisplayTitle(msg({ kind: "gif", body: "" }))).toBe("GIF");
+  });
+});
+
+describe("formatConversationLastPreview", () => {
+  it("dla odpowiedzi w wątku pokazuje nazwę wątku i treść", () => {
+    expect(
+      formatConversationLastPreview(
+        {
+          id: "m1",
+          kind: "text",
+          body: "DFGHJ",
+          authorUserId: "u1",
+          createdAt: "2026-07-17T10:00:00.000Z",
+          deletedAt: null,
+          threadRootId: "root",
+          threadTitle: "Zapiski wątek",
+        },
+        "Ty",
+      ),
+    ).toBe("Zapiski wątek: DFGHJ");
+  });
+
+  it("dla wiadomości głównej pokazuje autora", () => {
+    expect(
+      formatConversationLastPreview(
+        {
+          id: "m1",
+          kind: "text",
+          body: "DFGHJ",
+          authorUserId: "u1",
+          createdAt: "2026-07-17T10:00:00.000Z",
+          deletedAt: null,
+        },
+        "Ty",
+      ),
+    ).toBe("Ty: DFGHJ");
   });
 });

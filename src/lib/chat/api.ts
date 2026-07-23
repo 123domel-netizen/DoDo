@@ -155,6 +155,8 @@ function rowToOverviewEntry(row: Row): ChatOverviewEntry {
           authorUserId: last.author_user_id as string,
           createdAt: last.created_at as string,
           deletedAt: (last.deleted_at as string | null) ?? null,
+          threadRootId: (last.thread_root_id as string | null) ?? null,
+          threadTitle: (last.thread_title as string | null) ?? null,
         }
       : null,
     members: members.map((m) => ({

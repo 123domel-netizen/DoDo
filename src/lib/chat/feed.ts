@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatOverviewEntry, FocusFeed } from "@/lib/chat/types";
+import type { ChatLastMessage, ChatMessage, ChatOverviewEntry, FocusFeed } from "@/lib/chat/types";
 
 /** Klucz porządku feedu: czas serwera, remis rozstrzyga id. */
 function isAfter(a: ChatMessage, b: ChatMessage): boolean {
@@ -98,12 +98,15 @@ export interface OverviewApplyOptions {
   myUserId: string | null;
   activeConversationId: string | null;
   documentVisible: boolean;
+  /** Tytuł wątku dla odpowiedzi (root może być w store / feedzie). */
+  resolveThreadTitle?: (rootId: string) => string | null;
 }
 
 /**
  * Zastosuj przychodzącą wiadomość do listy rozmów: podbij lastMessage,
  * lastMessageAt i unread (nie dla własnych; nie dla aktywnej, widocznej rozmowy;
- * nie dla odpowiedzi w wątkach — spójnie z serwerowym licznikiem).
+ * unread nie dla odpowiedzi w wątkach — spójnie z serwerowym licznikiem).
+ * Odpowiedzi w wątku aktualizują podgląd: „nazwa wątku: treść”.
  */
 export function applyMessageToOverview(
   overview: ChatOverviewEntry[],
@@ -130,24 +133,28 @@ export function applyMessageToOverview(
     unread = entry.unreadCount + 1;
   }
 
+  const threadTitle = isThreadReply
+    ? (opts.resolveThreadTitle?.(msg.threadRootId!) ?? null)
+    : null;
+
+  const nextLast: ChatLastMessage | null | undefined = isNewer
+    ? {
+        id: msg.id,
+        kind: msg.kind,
+        body: msg.body,
+        authorUserId: msg.authorUserId,
+        createdAt: msg.createdAt,
+        deletedAt: msg.deletedAt,
+        threadRootId: msg.threadRootId,
+        threadTitle: isThreadReply ? threadTitle || "Wątek" : null,
+      }
+    : entry.lastMessage;
+
   const updated: ChatOverviewEntry = {
     ...entry,
     unreadCount: unread,
-    ...(isThreadReply
-      ? {}
-      : {
-          lastMessageAt: isNewer ? msg.createdAt : entry.lastMessageAt,
-          lastMessage: isNewer
-            ? {
-                id: msg.id,
-                kind: msg.kind,
-                body: msg.body,
-                authorUserId: msg.authorUserId,
-                createdAt: msg.createdAt,
-                deletedAt: msg.deletedAt,
-              }
-            : entry.lastMessage,
-        }),
+    lastMessageAt: isNewer ? msg.createdAt : entry.lastMessageAt,
+    lastMessage: nextLast ?? entry.lastMessage,
   };
 
   const next = [...overview];

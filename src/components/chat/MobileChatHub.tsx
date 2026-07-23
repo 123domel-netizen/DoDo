@@ -31,7 +31,7 @@ import type {
   ChatOverviewEntry,
   ChatSearchResult,
 } from "@/lib/chat/types";
-import { messagePreviewLabel } from "@/lib/chat/types";
+import { formatConversationLastPreview } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { conversationRowAvatarLayout } from "@/lib/chat/conversationRowVisual";
@@ -101,15 +101,7 @@ function ConversationRow({
   const profiles = useChatStore((s) => s.profiles);
   const presence = dmPeerPresence(entry, myUserId, profiles, presenceNow);
   const last = entry.lastMessage;
-  const preview = last
-    ? last.deletedAt
-      ? "Wiadomość usunięta"
-      : last.kind === "system"
-        ? last.body
-        : `${authorName ? `${authorName}: ` : ""}${
-            messagePreviewLabel(last.kind, last.body) || "(załącznik)"
-          }`
-    : "Brak wiadomości";
+  const preview = formatConversationLastPreview(last, authorName);
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
   const avatarLayout = conversationRowAvatarLayout(showUnread);
@@ -467,6 +459,77 @@ export function MobileChatHub() {
         <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
           Nie masz jeszcze rozmów.
         </div>
+      );
+    }
+
+    // ALL: sekcje DM / Kanały (nie jedna mieszana lista).
+    if (mode.id === "all") {
+      const sectionBlock = (title: string, entries: typeof list, emptyHint?: string) => {
+        const secPinned = entries.filter((c) => c.myPinnedAt);
+        const secRest = entries.filter((c) => !c.myPinnedAt);
+        return (
+          <section key={title}>
+            <div className="sticky top-0 z-[1] border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                {title}
+                {entries.length > 0 && (
+                  <span className="ml-1.5 font-normal opacity-70">{entries.length}</span>
+                )}
+              </div>
+            </div>
+            {entries.length === 0 ? (
+              emptyHint ? (
+                <div className="px-3 py-3 text-[11px] leading-relaxed text-ink-faint">{emptyHint}</div>
+              ) : null
+            ) : (
+              <>
+                {secPinned.map(renderMobileRow)}
+                {secRest.map(renderMobileRow)}
+              </>
+            )}
+          </section>
+        );
+      };
+
+      const dms = list.filter((c) => c.kind === "dm");
+      const chans = list.filter((c) => c.kind === "channel" || c.kind === "item");
+
+      return (
+        <>
+          {sectionBlock(
+            "Wiadomości",
+            dms,
+            "Brak rozmów prywatnych. Dodaj osobę przez +.",
+          )}
+          {sectionBlock("Kanały", chans, "Brak kanałów.")}
+          {discoverable.length > 0 && (
+            <>
+              <div className="sticky top-0 z-[1] border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                  Kanały publiczne
+                </div>
+              </div>
+              {discoverable.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
+                    <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 32 : 15} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleJoin(c.id)}
+                    className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
+                  >
+                    Dołącz
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+        </>
       );
     }
 

@@ -1,7 +1,7 @@
 import type { Item } from "@/types";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { addDecision, addNote, createItemLink, upsertRegistryLabels } from "@/lib/chat/api";
+import { addDecision, addNote, createItemLink, deleteDecision, upsertRegistryLabels } from "@/lib/chat/api";
 import { sendChatMessage } from "@/lib/chat/init";
 import { draftFromMessage, type ConvertTarget } from "@/lib/chat/convertDraft";
 import { groupIdForNewItem } from "@/lib/groups";
@@ -112,6 +112,31 @@ export async function saveTextAsDecision(
     body: `📌 Zapisano decyzję: ${body.slice(0, 140)}`,
     kind: "system",
     payload: { registry: { kind: "decision", id: decision.id } },
+  });
+  return {};
+}
+
+/**
+ * Cofnij decyzję: usuń z rejestru + chmurka systemowa w czacie
+ * („Cofnięto decyzję: …”), lustrzanie do zapisu.
+ */
+export async function revokeDecision(input: {
+  id: string;
+  conversationId: string;
+  body: string;
+}): Promise<{ error?: string }> {
+  const userId = useChatStore.getState().userId;
+  if (!userId) return { error: "Brak zalogowanego użytkownika." };
+  const body = input.body.trim();
+  const { error } = await deleteDecision(input.id);
+  if (error) return { error };
+
+  useChatStore.getState().bumpRegistryEpoch();
+
+  sendChatMessage({
+    conversationId: input.conversationId,
+    body: `📌 Cofnięto decyzję: ${(body || "…").slice(0, 140)}`,
+    kind: "system",
   });
   return {};
 }

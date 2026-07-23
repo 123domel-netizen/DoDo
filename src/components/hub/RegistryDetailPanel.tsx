@@ -8,11 +8,11 @@ import {
   Gavel,
   MessageSquare,
   StickyNote,
+  Undo2,
   Trash2,
   X,
 } from "lucide-react";
 import {
-  deleteDecision,
   deleteNote,
   fetchRegistryLabels,
   updateDecision,
@@ -23,6 +23,7 @@ import {
   beginConvertToItem,
   decisionToNote,
   noteToDecision,
+  revokeDecision,
   type ConvertTarget,
 } from "@/lib/chat/convert";
 import {
@@ -209,10 +210,21 @@ function RegistryDetailBody({
   };
 
   const remove = async () => {
-    if (!confirm(isDecision ? "Usunąć decyzję z rejestru?" : "Usunąć notatkę?")) return;
+    if (
+      !confirm(
+        isDecision
+          ? "Cofnąć decyzję? Zniknie z rejestru i pojawi się wpis w czacie."
+          : "Usunąć notatkę?",
+      )
+    )
+      return;
     setBusy(true);
     const { error } = isDecision
-      ? await deleteDecision(focus.id)
+      ? await revokeDecision({
+          id: focus.id,
+          conversationId: focus.conversationId,
+          body: focus.body,
+        })
       : await deleteNote(focus.id);
     setBusy(false);
     if (error) {
@@ -545,7 +557,15 @@ function RegistryDetailBody({
             onClick={() => void remove()}
             className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-left text-xs text-red-400 transition hover:bg-surface-raised"
           >
-            <Trash2 size={14} /> Usuń
+            {isDecision ? (
+              <>
+                <Undo2 size={14} /> Cofnij decyzję
+              </>
+            ) : (
+              <>
+                <Trash2 size={14} /> Usuń
+              </>
+            )}
           </button>
         )}
       </div>

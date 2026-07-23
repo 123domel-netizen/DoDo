@@ -65,7 +65,7 @@ import type {
   ChatSearchResult,
   PublicChannelInfo,
 } from "@/lib/chat/types";
-import { messagePreviewLabel } from "@/lib/chat/types";
+import { formatConversationLastPreview } from "@/lib/chat/types";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { HubThreadsStrip } from "@/components/hub/HubThreadsStrip";
@@ -117,15 +117,7 @@ function ConversationRow({
   const profiles = useChatStore((s) => s.profiles);
   const presence = dmPeerPresence(entry, myUserId, profiles, presenceNow);
   const last = entry.lastMessage;
-  const preview = last
-    ? last.deletedAt
-      ? "Wiadomość usunięta"
-      : last.kind === "system"
-        ? last.body
-        : `${authorName ? `${authorName}: ` : ""}${
-            messagePreviewLabel(last.kind, last.body) || "(załącznik)"
-          }`
-    : "Brak wiadomości";
+  const preview = formatConversationLastPreview(last, authorName);
   const muted = isMuted(entry);
   const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
   const avatarLayout = conversationRowAvatarLayout(showUnread);

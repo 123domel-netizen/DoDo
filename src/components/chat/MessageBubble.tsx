@@ -634,6 +634,7 @@ export function MessageBubble({
         : msg.body.startsWith("📌 Zapisano decyzję")
           ? "decision"
           : null);
+    // „Cofnięto decyzję” — chmurka jak zapis, bez otwierania rejestru.
     const clickable = Boolean(registryKind && onOpenRegistry);
     const pill = (
       <div
