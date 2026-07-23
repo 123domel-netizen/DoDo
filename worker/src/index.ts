@@ -437,6 +437,22 @@ async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
   }>(env, `message_attachments?id=eq.${job.refId}&select=*`);
 
   if (!att) return;
+
+  let jobRow = await findMediaSyncJob(env, job);
+
+  if (
+    jobRow &&
+    shouldReconcileJobWithoutUpload({
+      itemSpStatus: att.sp_status,
+      itemHasSpDriveItem: Boolean(att.sp_drive_item_id),
+      jobState: jobRow.state,
+    })
+  ) {
+    await markJobDone(env, jobRow.id);
+    return;
+  }
+  if (jobRow?.state === "done") return;
+
   const gate = shouldProcessArchiveJob({
     spStatus: att.sp_status,
     spDriveItemId: att.sp_drive_item_id,
@@ -445,10 +461,18 @@ async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
     rowOpId: att.sync_operation_id,
   });
   if (!gate.process) {
+    if (gate.reason === "already_verified") {
+      if (jobRow) await markJobDone(env, jobRow.id);
+      return;
+    }
     if (gate.reason === "not_r2_ready") throw new Error("Attachment not r2_ready");
     return;
   }
   if (!att.r2_key) throw new Error("Attachment not r2_ready");
+
+  if (jobRow) {
+    jobRow = await markJobRunning(env, jobRow);
+  }
 
   const orgId = att.org_id || job.orgId;
   if (!orgId) throw new Error("Missing orgId");
@@ -462,6 +486,7 @@ async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
       sp_status: "none",
       sync_last_error: "message deleted",
     });
+    if (jobRow) await markJobFailed(env, jobRow, "message deleted", true);
     return;
   }
 
@@ -480,6 +505,7 @@ async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
       sync_last_error: "Brak magazynu",
       retention_hold: true,
     });
+    if (jobRow) await markJobFailed(env, jobRow, "No storage", true);
     throw new Error("No storage");
   }
 
@@ -509,6 +535,10 @@ async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
     r2_delete_after: deleteAfter,
     sync_last_error: null,
   });
+
+  if (jobRow) {
+    await markJobDone(env, jobRow.id);
+  }
 }
 
 async function handleJob(env: Env, job: ArchiveJob): Promise<void> {
@@ -528,11 +558,12 @@ async function handleJob(env: Env, job: ArchiveJob): Promise<void> {
       return;
     }
 
-    // If item was verified before job mark failed → reconcile to done (no R2 delete).
-    if (job.kind === "gallery_full") {
+    // If item/attachment was verified before job mark failed → reconcile to done.
+    if (job.kind === "gallery_full" || job.kind === "attachment") {
+      const table = job.kind === "attachment" ? "message_attachments" : "gallery_items";
       const item = await sbGet<{ sp_status: string; sp_drive_item_id: string | null }>(
         env,
-        `gallery_items?id=eq.${job.refId}&select=sp_status,sp_drive_item_id`,
+        `${table}?id=eq.${job.refId}&select=sp_status,sp_drive_item_id`,
       ).catch(() => null);
       if (
         item &&

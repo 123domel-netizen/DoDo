@@ -129,7 +129,22 @@ describe("pipeline policy", () => {
   });
 
   it("attachments stay legacy in first rollout", () => {
-    expect(resolveAttachmentPipeline("r2_sp")).toBe("legacy_supabase");
+    expect(
+      resolveAttachmentPipeline({ orgMediaPipeline: "r2_sp", r2Configured: true }),
+    ).toBe("r2_sp");
+    expect(
+      resolveAttachmentPipeline({ orgMediaPipeline: "r2_sp", r2Configured: false }),
+    ).toBe("legacy_supabase");
+    expect(
+      resolveAttachmentPipeline({
+        orgMediaPipeline: "r2_sp",
+        r2Configured: true,
+        forceLegacy: true,
+      }),
+    ).toBe("legacy_supabase");
+    expect(
+      resolveAttachmentPipeline({ orgMediaPipeline: "legacy_sp", r2Configured: true }),
+    ).toBe("legacy_supabase");
   });
 
   it("Vite kill switch only blocks client R2 attempts", () => {

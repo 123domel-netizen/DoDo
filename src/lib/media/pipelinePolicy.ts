@@ -187,9 +187,18 @@ export function resolveOrgGalleryPipeline(input: {
   return "r2_sp";
 }
 
-/** Pierwszy rollout: załączniki / voice zawsze legacy niezależnie od org. */
-export function resolveAttachmentPipeline(_orgMediaPipeline?: string | null): "legacy_supabase" {
-  return "legacy_supabase";
+/** Attachment pipeline: R2 when org is r2_sp AND Edge R2 is configured. Voice/forward keep legacy separately. */
+export function resolveAttachmentPipeline(input: {
+  orgMediaPipeline?: string | null;
+  r2Configured: boolean;
+  /** voice | forward | move → always legacy */
+  forceLegacy?: boolean;
+}): "legacy_supabase" | "r2_sp" {
+  if (input.forceLegacy) return "legacy_supabase";
+  const org = (input.orgMediaPipeline ?? "").trim();
+  if (org !== "r2_sp") return "legacy_supabase";
+  if (!input.r2Configured) return "legacy_supabase";
+  return "r2_sp";
 }
 
 export function galleryFullKey(orgId: string, galleryId: string, itemId: string): string {
@@ -219,6 +228,19 @@ export function attachmentKey(
   assertUuidLike(attId, "attId");
   const safe = fileName.replace(/[^a-zA-Z0-9._\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+/g, "_").slice(0, 80);
   return `hot/teams/${orgId}/attachments/${conversationId}/${messageId}/${attId}-${safe}`;
+}
+
+export function attachmentThumbKey(
+  orgId: string,
+  conversationId: string,
+  messageId: string,
+  attId: string,
+): string {
+  assertUuidLike(orgId, "orgId");
+  assertUuidLike(conversationId, "conversationId");
+  assertUuidLike(messageId, "messageId");
+  assertUuidLike(attId, "attId");
+  return `hot/teams/${orgId}/attachments/${conversationId}/${messageId}/${attId}-thumb.webp`;
 }
 
 function assertUuidLike(value: string, label: string): void {

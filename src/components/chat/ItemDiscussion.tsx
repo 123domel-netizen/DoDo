@@ -57,7 +57,12 @@ export function ItemDiscussion({ itemId }: { itemId: string }) {
     );
   }
 
-  const startConversationAndSend = async (body: string, files: File[]) => {
+  const startConversationAndSend = async (
+    body: string,
+    files: File[],
+    _mentions?: string[],
+    opts?: { attachMode?: "photo" | "file" },
+  ) => {
     const { id, error } = await ensureItemConversation(itemId);
     if (error || !id) {
       alert(error ?? "Nie udało się utworzyć dyskusji.");
@@ -65,7 +70,22 @@ export function ItemDiscussion({ itemId }: { itemId: string }) {
     }
     setConvId(id);
     if (files.length > 0) {
-      const res = await sendChatMessageWithFiles({ conversationId: id, body, files });
+      const { useStore } = await import("@/state/store");
+      const { fetchOrgMediaPipeline } = await import("@/lib/chat/galleryApi");
+      const orgId = useStore.getState().activeOrgId;
+      let orgMediaPipeline: string | null = null;
+      if (orgId) {
+        const pipe = await fetchOrgMediaPipeline(orgId);
+        orgMediaPipeline = pipe.data?.mediaPipeline ?? null;
+      }
+      const res = await sendChatMessageWithFiles({
+        conversationId: id,
+        body,
+        files,
+        attachMode: opts?.attachMode ?? "file",
+        orgId,
+        orgMediaPipeline,
+      });
       if (res.error) alert(res.error);
     } else if (body.trim()) {
       sendChatMessage({ conversationId: id, body });

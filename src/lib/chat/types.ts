@@ -71,6 +71,12 @@ export interface ChatAttachment {
   sizeBytes: number;
   width: number | null;
   height: number | null;
+  pipeline?: "legacy_supabase" | "r2_sp";
+  r2Key?: string | null;
+  r2KeyThumb?: string | null;
+  r2Status?: string | null;
+  spStatus?: string | null;
+  spDriveItemId?: string | null;
 }
 
 export interface ChatReaction {

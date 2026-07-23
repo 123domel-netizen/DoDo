@@ -11,9 +11,9 @@ import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 
 const MARKER = "SYNTH_MEDIA1";
-const ACCOUNT = "fd3dc60b3c5f1949adef60cc03400877";
-const BUCKET = "dodo-media-preview";
-const WORKER = "https://dodo-media-sync-preview.123domel.workers.dev";
+const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || "fd3dc60b3c5f1949adef60cc03400877";
+const BUCKET = process.env.R2_BUCKET || process.env.BUCKET || "dodo-media";
+const WORKER = process.env.MEDIA_SYNC_WORKER_URL?.replace(/\/$/, "") || process.env.WORKER || "https://dodo-media-sync-preview.123domel.workers.dev";
 const ORG = "dc47be30-6861-4874-b1ab-389e407544ff";
 const CONV = "f5e57719-4bf0-474e-90fd-0d37b1aea750";
 

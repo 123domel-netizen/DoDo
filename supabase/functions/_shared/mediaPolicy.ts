@@ -35,10 +35,17 @@ export function legacyUploadItemRejectionForPipeline(
   return null;
 }
 
-export function resolveAttachmentPipeline(
-  _orgMediaPipeline?: string | null,
-): "legacy_supabase" {
-  return "legacy_supabase";
+/** Attachment pipeline: R2 when org is r2_sp AND Edge R2 is configured. */
+export function resolveAttachmentPipeline(input: {
+  orgMediaPipeline?: string | null;
+  r2Configured: boolean;
+  forceLegacy?: boolean;
+}): "legacy_supabase" | "r2_sp" {
+  if (input.forceLegacy) return "legacy_supabase";
+  const org = (input.orgMediaPipeline ?? "").trim();
+  if (org !== "r2_sp") return "legacy_supabase";
+  if (!input.r2Configured) return "legacy_supabase";
+  return "r2_sp";
 }
 
 export function galleryFullKey(orgId: string, galleryId: string, itemId: string): string {
@@ -53,6 +60,34 @@ export function galleryThumbKey(orgId: string, galleryId: string, itemId: string
   assertUuidLike(galleryId, "galleryId");
   assertUuidLike(itemId, "itemId");
   return `hot/teams/${orgId}/galleries/${galleryId}/thumb/${itemId}.webp`;
+}
+
+export function attachmentKey(
+  orgId: string,
+  conversationId: string,
+  messageId: string,
+  attId: string,
+  fileName: string,
+): string {
+  assertUuidLike(orgId, "orgId");
+  assertUuidLike(conversationId, "conversationId");
+  assertUuidLike(messageId, "messageId");
+  assertUuidLike(attId, "attId");
+  const safe = fileName.replace(/[^a-zA-Z0-9._\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+/g, "_").slice(0, 80);
+  return `hot/teams/${orgId}/attachments/${conversationId}/${messageId}/${attId}-${safe}`;
+}
+
+export function attachmentThumbKey(
+  orgId: string,
+  conversationId: string,
+  messageId: string,
+  attId: string,
+): string {
+  assertUuidLike(orgId, "orgId");
+  assertUuidLike(conversationId, "conversationId");
+  assertUuidLike(messageId, "messageId");
+  assertUuidLike(attId, "attId");
+  return `hot/teams/${orgId}/attachments/${conversationId}/${messageId}/${attId}-thumb.webp`;
 }
 
 function assertUuidLike(value: string, label: string): void {

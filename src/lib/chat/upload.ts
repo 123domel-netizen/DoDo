@@ -5,19 +5,29 @@ import {
   galleryPerfMark,
   galleryPerfNow,
 } from "@/lib/chat/galleryUploadPerf";
+import {
+  clientBuildAllowsR2,
+  resolveAttachmentPipeline,
+} from "@/lib/media/pipelinePolicy";
 
-function preferredAttachmentPipeline(): "legacy_supabase" | "r2_sp" {
-  // Pierwszy rollout: wyłącznie legacy Storage (R2 tylko galerie).
-  return "legacy_supabase";
-}
+export type AttachSendMode = "photo" | "file";
 
 /**
- * CHAT3-FILES: załączniki czatu w Supabase Storage.
- * Ścieżka: {conversationId}/{messageId}/{uuid}-{nazwa}. Obrazy kompresowane
- * po stronie klienta (obrona przed limitem egress) + miniatura do feedu.
- *
- * Galerie SharePoint: prepareGalleryPhoto — główne ≤2560 JPEG + miniatura ~480 WebP.
+ * CHAT attachments: R2 when org.media_pipeline=r2_sp and client build allows R2.
+ * Voice / forward / move pass forceLegacy.
  */
+function preferredAttachmentPipeline(
+  orgMediaPipeline?: string | null,
+  forceLegacy?: boolean,
+): "legacy_supabase" | "r2_sp" {
+  return resolveAttachmentPipeline({
+    orgMediaPipeline,
+    r2Configured: clientBuildAllowsR2(
+      import.meta.env.VITE_MEDIA_PIPELINE as string | undefined,
+    ),
+    forceLegacy,
+  });
+}
 
 export const CHAT_BUCKET = "chat-attachments";
 export const MAX_CHAT_FILE_BYTES = 25 * 1024 * 1024;
@@ -274,14 +284,23 @@ export async function uploadAttachmentsForMessage(
   conversationId: string,
   messageId: string,
   files: File[],
-  options: { orgId?: string | null } = {},
+  options: {
+    orgId?: string | null;
+    orgMediaPipeline?: string | null;
+    /** photo = compress ≤2560 + thumb ~480; file = original bytes */
+    attachMode?: AttachSendMode;
+    /** voice / forward / move */
+    forceLegacy?: boolean;
+  } = {},
 ): Promise<{ attachments: ChatAttachment[]; errors: string[] }> {
   const attachments: ChatAttachment[] = [];
   const errors: string[] = [];
   if (!supabase) return { attachments, errors: ["Brak chmury."] };
 
+  const mode: AttachSendMode = options.attachMode ?? "file";
   const useR2 =
-    preferredAttachmentPipeline() === "r2_sp" && Boolean(options.orgId);
+    preferredAttachmentPipeline(options.orgMediaPipeline, options.forceLegacy) ===
+      "r2_sp" && Boolean(options.orgId);
 
   for (const file of files) {
     if (file.size > MAX_CHAT_FILE_BYTES) {
@@ -296,6 +315,7 @@ export async function uploadAttachmentsForMessage(
           messageId,
           options.orgId,
           file,
+          mode,
         );
         attachments.push(att);
       } catch (e) {
@@ -306,7 +326,24 @@ export async function uploadAttachmentsForMessage(
       continue;
     }
 
-    const prepared = await prepareUpload(file, { preferWebpMain: true });
+    const prepared =
+      mode === "photo" && isRasterImageMime(file.type)
+        ? await prepareUpload(file, {
+            maxDim: GALLERY_MAIN_MAX_DIM,
+            thumbMaxDim: GALLERY_THUMB_MAX_DIM,
+            preferWebpMain: false,
+            mainQuality: 0.84,
+          })
+        : mode === "photo"
+          ? await prepareUpload(file, { preferWebpMain: true })
+          : {
+              data: file,
+              thumb: null as Blob | null,
+              fileName: sanitizeFileName(file.name),
+              mimeType: file.type || "application/octet-stream",
+              width: null as number | null,
+              height: null as number | null,
+            };
     const attId = uid();
     const base = `${conversationId}/${messageId}/${attId}-${prepared.fileName}`;
 
@@ -361,6 +398,7 @@ export async function uploadAttachmentsForMessage(
       sizeBytes: prepared.data.size,
       width: prepared.width,
       height: prepared.height,
+      pipeline: "legacy_supabase",
     });
   }
 
@@ -372,11 +410,31 @@ async function uploadOneAttachmentViaR2(
   messageId: string,
   orgId: string,
   file: File,
+  mode: AttachSendMode,
 ): Promise<ChatAttachment> {
   const { supabase: sb } = await import("@/lib/supabase");
   if (!sb) throw new Error("Brak chmury.");
-  const prepared = await prepareUpload(file, { preferWebpMain: true });
+
+  const isImage = isRasterImageMime(file.type) || /^image\//i.test(file.type);
+  const prepared =
+    mode === "photo" && isImage
+      ? await prepareUpload(file, {
+          maxDim: GALLERY_MAIN_MAX_DIM,
+          thumbMaxDim: GALLERY_THUMB_MAX_DIM,
+          preferWebpMain: false,
+          mainQuality: 0.84,
+        })
+      : {
+          data: file as Blob,
+          thumb: null as Blob | null,
+          fileName: sanitizeFileName(file.name),
+          mimeType: file.type || "application/octet-stream",
+          width: null as number | null,
+          height: null as number | null,
+        };
+
   const attId = uid();
+  const withThumb = Boolean(prepared.thumb);
 
   const { data: sessionData } = await sb.auth.getSession();
   const token = sessionData.session?.access_token;
@@ -400,13 +458,17 @@ async function uploadOneAttachmentViaR2(
       attachmentId: attId,
       fileName: prepared.fileName,
       mimeType: prepared.mimeType,
+      withThumb,
     }),
   });
   const presignJson = (await presignRes.json()) as {
     error?: string;
     putUrl?: string;
+    putUrlThumb?: string | null;
     r2Key?: string;
+    r2KeyThumb?: string | null;
     headers?: Record<string, string>;
+    thumbHeaders?: Record<string, string> | null;
   };
   if (!presignRes.ok || presignJson.error || !presignJson.putUrl || !presignJson.r2Key) {
     throw new Error(presignJson.error || "Presign R2 nie powiódł się.");
@@ -418,6 +480,18 @@ async function uploadOneAttachmentViaR2(
     body: prepared.data,
   });
   if (!put.ok) throw new Error(`Upload R2 failed (${put.status}).`);
+
+  if (prepared.thumb && presignJson.putUrlThumb && presignJson.r2KeyThumb) {
+    try {
+      await fetch(presignJson.putUrlThumb, {
+        method: "PUT",
+        headers: presignJson.thumbHeaders ?? { "content-type": "image/webp" },
+        body: prepared.thumb,
+      });
+    } catch {
+      // thumb failure must not block main file
+    }
+  }
 
   const confirmRes = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
     method: "POST",
@@ -433,26 +507,40 @@ async function uploadOneAttachmentViaR2(
       attachmentId: attId,
       orgId,
       r2Key: presignJson.r2Key,
+      r2KeyThumb: presignJson.r2KeyThumb,
       fileName: prepared.fileName,
       mimeType: prepared.mimeType,
+      sizeBytes: prepared.data.size,
+      width: prepared.width,
+      height: prepared.height,
     }),
   });
-  const confirmJson = (await confirmRes.json()) as { error?: string };
+  const confirmJson = (await confirmRes.json()) as {
+    error?: string;
+    attachment?: ChatAttachment;
+  };
   if (!confirmRes.ok || confirmJson.error) {
     throw new Error(confirmJson.error || "Confirm R2 nie powiódł się.");
   }
 
-  return {
-    id: attId,
-    messageId,
-    bucketPath: presignJson.r2Key,
-    thumbPath: null,
-    fileName: prepared.fileName,
-    mimeType: prepared.mimeType,
-    sizeBytes: prepared.data.size,
-    width: prepared.width,
-    height: prepared.height,
-  };
+  return (
+    confirmJson.attachment ?? {
+      id: attId,
+      messageId,
+      bucketPath: presignJson.r2Key,
+      thumbPath: prepared.thumb ? (presignJson.r2KeyThumb ?? null) : null,
+      fileName: prepared.fileName,
+      mimeType: prepared.mimeType,
+      sizeBytes: prepared.data.size,
+      width: prepared.width,
+      height: prepared.height,
+      pipeline: "r2_sp",
+      r2Key: presignJson.r2Key,
+      r2KeyThumb: prepared.thumb ? (presignJson.r2KeyThumb ?? null) : null,
+      r2Status: "ready",
+      spStatus: "queued",
+    }
+  );
 }
 
 // Signed URLs (bucket prywatny) z cache w pamięci.
@@ -480,6 +568,40 @@ export async function signedUrlFor(path: string): Promise<string | null> {
           "content-type": "application/json",
         },
         body: JSON.stringify({ action: "r2_signed_get", key: path }),
+      });
+      const json = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok || !json.url) return null;
+      urlCache.set(path, {
+        url: json.url,
+        expiresAt: Date.now() + Math.min(SIGNED_URL_TTL_S, 900) * 1000,
+      });
+      return json.url;
+    } catch {
+      return null;
+    }
+  }
+
+  // SharePoint fallback after R2 retention cleanup (sp:{driveItemId}).
+  if (path.startsWith("sp:")) {
+    const driveItemId = path.slice(3);
+    if (!driveItemId) return null;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return null;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: anon,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "attachment_sp_download",
+          driveItemId,
+        }),
       });
       const json = (await res.json()) as { url?: string; error?: string };
       if (!res.ok || !json.url) return null;

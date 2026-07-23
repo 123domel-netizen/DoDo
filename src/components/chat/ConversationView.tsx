@@ -609,12 +609,25 @@ export function ConversationView({
   );
 
   const handleSend = useCallback(
-    async (body: string, files: File[], mentions: string[]) => {
+    async (
+      body: string,
+      files: File[],
+      mentions: string[],
+      opts?: { attachMode?: "photo" | "file" },
+    ) => {
       const reply = replyTo;
       setReplyTo(null);
       // Wysyłka z widoku głównego wraca do ogona (nowa wiadomość ląduje na dole).
       if (!threadRootId) returnToLatest(conversationId);
       if (files.length > 0) {
+        const { useStore } = await import("@/state/store");
+        const { fetchOrgMediaPipeline } = await import("@/lib/chat/galleryApi");
+        const orgId = useStore.getState().activeOrgId;
+        let orgMediaPipeline: string | null = null;
+        if (orgId) {
+          const pipe = await fetchOrgMediaPipeline(orgId);
+          orgMediaPipeline = pipe.data?.mediaPipeline ?? null;
+        }
         const { error } = await sendChatMessageWithFiles({
           conversationId,
           body,
@@ -622,6 +635,9 @@ export function ConversationView({
           mentions,
           threadRootId: threadRootId ?? null,
           replyToMessageId: reply?.id ?? null,
+          attachMode: opts?.attachMode ?? "file",
+          orgId,
+          orgMediaPipeline,
         });
         if (error) alert(error);
       } else {

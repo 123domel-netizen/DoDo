@@ -482,7 +482,7 @@ export function sendGifMessage(
   });
 }
 
-/** Wiadomość głosowa: nagranie jako załącznik, czas trwania w payloadzie. */
+/** Wiadomość głosowa: nagranie jako załącznik — zawsze legacy Storage (nie R2). */
 export async function sendVoiceMessage(
   conversationId: string,
   file: File,
@@ -496,15 +496,23 @@ export async function sendVoiceMessage(
     payload: { voice: { durationSec } },
     threadRootId,
     files: [file],
+    forceLegacy: true,
+    attachMode: "file",
   });
 }
 
 /**
- * Wysyłka z załącznikami — wymaga online (upload do Storage po INSERT wiersza;
+ * Wysyłka z załącznikami — wymaga online (upload do Storage/R2 po INSERT wiersza;
  * plików nie da się bezpiecznie persystować w outboxie JSON).
  */
 export async function sendChatMessageWithFiles(
-  opts: SendOptions & { files: File[] },
+  opts: SendOptions & {
+    files: File[];
+    attachMode?: "photo" | "file";
+    forceLegacy?: boolean;
+    orgId?: string | null;
+    orgMediaPipeline?: string | null;
+  },
 ): Promise<{ error?: string }> {
   const st = useChatStore.getState();
   if (!st.userId) return { error: "Brak zalogowanego użytkownika." };
@@ -527,6 +535,12 @@ export async function sendChatMessageWithFiles(
     msg.conversationId,
     msg.id,
     opts.files,
+    {
+      orgId: opts.orgId,
+      orgMediaPipeline: opts.orgMediaPipeline,
+      attachMode: opts.attachMode ?? "file",
+      forceLegacy: opts.forceLegacy === true || opts.kind === "voice",
+    },
   );
   const after = useChatStore.getState();
   after.removeFromOutbox(msg.id);

@@ -38,6 +38,8 @@ import {
   resolveAttachmentPipeline,
   galleryFullKey,
   galleryThumbKey,
+  attachmentKey,
+  attachmentThumbKey,
   assertGalleryFullKeyScope,
   validateConfirmHead,
   resolveThumbStatusAfterConfirm,
@@ -1362,8 +1364,7 @@ async function actionGalleryDeleteStorage(admin: SupabaseClient, callerId: strin
 async function actionMediaPipelineInfo(_admin: SupabaseClient, _callerId: string, _body: Row) {
   return {
     globalDefault: GLOBAL_DEFAULT_PIPELINE,
-    // Pierwszy rollout: resolveAttachmentPipeline() → zawsze legacy_supabase.
-    attachmentsR2Enabled: false,
+    attachmentsR2Enabled: r2Configured(),
     r2Configured: r2Configured(),
     graphConfigured: graphConfigured(),
     galleryFullRetentionDays: GALLERY_FULL_RETENTION_DAYS,
@@ -1751,25 +1752,258 @@ async function actionR2ConfirmGalleryItem(
 }
 
 async function actionR2PresignAttachment(
-  _admin: SupabaseClient,
-  _callerId: string,
-  _body: Row,
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
 ) {
-  throw new ActionError(
-    "Pipeline R2 dla załączników jest wyłączony w pierwszym rolloutcie — użyj legacy Storage.",
-    200,
-  );
+  if (!r2Configured()) throw new ActionError("R2 nie jest skonfigurowany na serwerze.", 200);
+  const conversationId = requireString(body, "conversationId");
+  const messageId = requireString(body, "messageId");
+  const orgId = requireString(body, "orgId");
+  const attachmentId = requireString(body, "attachmentId");
+  const fileName = requireString(body, "fileName", 200);
+  const mimeType =
+    typeof body.mimeType === "string" && body.mimeType.trim()
+      ? body.mimeType.trim().slice(0, 120)
+      : "application/octet-stream";
+  const withThumb = body.withThumb === true;
+
+  if (!(await isConversationMember(admin, conversationId, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+  if (!(await isOrgMember(admin, orgId, callerId))) {
+    throw new ActionError("Nie należysz do tej organizacji.", 403);
+  }
+
+  const orgPipe = await loadOrgMediaPipeline(admin, orgId);
+  const pipe = resolveAttachmentPipeline({
+    orgMediaPipeline: orgPipe.pipeline,
+    r2Configured: r2Configured(),
+  });
+  if (pipe !== "r2_sp") {
+    throw new ActionError(
+      "Pipeline R2 dla załączników jest wyłączony dla tego zespołu — użyj legacy Storage.",
+      200,
+    );
+  }
+
+  const r2Key = attachmentKey(orgId, conversationId, messageId, attachmentId, fileName);
+  const r2KeyThumb = withThumb
+    ? attachmentThumbKey(orgId, conversationId, messageId, attachmentId)
+    : null;
+
+  const putUrl = await presignR2Url({
+    key: r2Key,
+    method: "PUT",
+    contentType: mimeType,
+    expiresInSec: PRESIGN_TTL_SEC,
+  });
+  let putUrlThumb: string | null = null;
+  if (r2KeyThumb) {
+    putUrlThumb = await presignR2Url({
+      key: r2KeyThumb,
+      method: "PUT",
+      contentType: "image/webp",
+      expiresInSec: PRESIGN_TTL_SEC,
+    });
+  }
+
+  return {
+    putUrl,
+    putUrlThumb,
+    r2Key,
+    r2KeyThumb,
+    headers: { "content-type": mimeType },
+    thumbHeaders: r2KeyThumb ? { "content-type": "image/webp" } : null,
+    expiresInSec: PRESIGN_TTL_SEC,
+  };
 }
 
 async function actionR2ConfirmAttachment(
-  _admin: SupabaseClient,
-  _callerId: string,
-  _body: Row,
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
 ) {
-  throw new ActionError(
-    "Pipeline R2 dla załączników jest wyłączony w pierwszym rolloutcie — użyj legacy Storage.",
-    200,
-  );
+  if (!r2Configured()) throw new ActionError("R2 nie jest skonfigurowany na serwerze.", 200);
+  const conversationId = requireString(body, "conversationId");
+  const messageId = requireString(body, "messageId");
+  const orgId = requireString(body, "orgId");
+  const attachmentId = requireString(body, "attachmentId");
+  const r2Key = requireString(body, "r2Key", 512);
+  const fileName = requireString(body, "fileName", 200);
+  const mimeType =
+    typeof body.mimeType === "string" && body.mimeType.trim()
+      ? body.mimeType.trim().slice(0, 120)
+      : "application/octet-stream";
+  const r2KeyThumb =
+    typeof body.r2KeyThumb === "string" && body.r2KeyThumb.trim()
+      ? body.r2KeyThumb.trim()
+      : null;
+  const sizeBytes =
+    typeof body.sizeBytes === "number" && Number.isFinite(body.sizeBytes)
+      ? (body.sizeBytes as number)
+      : null;
+  const width =
+    typeof body.width === "number" && Number.isFinite(body.width) ? (body.width as number) : null;
+  const height =
+    typeof body.height === "number" && Number.isFinite(body.height)
+      ? (body.height as number)
+      : null;
+
+  if (!(await isConversationMember(admin, conversationId, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+
+  const orgPipe = await loadOrgMediaPipeline(admin, orgId);
+  const pipe = resolveAttachmentPipeline({
+    orgMediaPipeline: orgPipe.pipeline,
+    r2Configured: r2Configured(),
+  });
+  if (pipe !== "r2_sp") {
+    throw new ActionError("Pipeline R2 dla załączników jest wyłączony dla tego zespołu.", 200);
+  }
+
+  const expectedKey = attachmentKey(orgId, conversationId, messageId, attachmentId, fileName);
+  if (r2Key !== expectedKey) {
+    throw new ActionError("Klucz R2 poza zakresem załącznika.", 403);
+  }
+
+  const head = await headR2Object(r2Key);
+  const headCheck = validateConfirmHead({
+    objectExists: head.exists,
+    actualSize: head.size,
+    expectedSize: sizeBytes,
+  });
+  if (!headCheck.ok) {
+    if (headCheck.reason === "missing_object") {
+      throw new ActionError("Plik nie znaleziony w R2 — dokończ upload.", 200);
+    }
+    if (headCheck.reason === "size_mismatch") {
+      throw new ActionError("Niezgodny rozmiar pliku w R2.", 200);
+    }
+    throw new ActionError("Nieprawidłowy klucz R2.", 400);
+  }
+
+  let thumbExists = false;
+  if (r2KeyThumb) {
+    const th = await headR2Object(r2KeyThumb);
+    thumbExists = th.exists;
+  }
+
+  const opId = crypto.randomUUID();
+  const { data: existing } = await admin
+    .from("message_attachments")
+    .select("id, r2_status, sp_status, sync_operation_id")
+    .eq("id", attachmentId)
+    .maybeSingle();
+
+  const rowPayload = {
+    id: attachmentId,
+    message_id: messageId,
+    bucket_path: r2Key,
+    thumb_path: thumbExists && r2KeyThumb ? r2KeyThumb : null,
+    file_name: fileName,
+    mime_type: mimeType,
+    size_bytes: sizeBytes ?? head.size ?? 0,
+    width,
+    height,
+    pipeline: "r2_sp",
+    org_id: orgId,
+    r2_key: r2Key,
+    r2_key_thumb: thumbExists && r2KeyThumb ? r2KeyThumb : null,
+    r2_etag: head.etag ?? null,
+    r2_size_bytes: head.size ?? sizeBytes,
+    r2_status: "ready",
+    sp_status: "queued",
+    sync_operation_id: opId,
+    sync_next_at: new Date().toISOString(),
+    retention_days: ATTACHMENT_RETENTION_DAYS,
+  };
+
+  if (existing) {
+    const { error } = await admin
+      .from("message_attachments")
+      .update(rowPayload)
+      .eq("id", attachmentId);
+    if (error) throw new ActionError(`Confirm failed: ${error.message}`, 500);
+  } else {
+    const { error } = await admin.from("message_attachments").insert(rowPayload);
+    if (error) throw new ActionError(`Confirm failed: ${error.message}`, 500);
+  }
+
+  const { data: existingJobRows } = await admin
+    .from("media_sync_jobs")
+    .select("id, kind, ref_id, state, payload")
+    .eq("ref_id", attachmentId)
+    .eq("kind", "attachment");
+
+  const existingJobs = ((existingJobRows as Row[] | null) ?? []).map((j) => {
+    const payload = (j.payload as Row | null) ?? null;
+    return {
+      kind: j.kind as string,
+      refId: j.ref_id as string,
+      opId: typeof payload?.opId === "string" ? (payload.opId as string) : null,
+      state: j.state as string,
+    };
+  });
+
+  let jobId: string | undefined;
+  if (
+    shouldCreateSyncJob({
+      existingJobs,
+      kind: "attachment",
+      refId: attachmentId,
+      opId,
+    })
+  ) {
+    const { data: insertedJob } = await admin
+      .from("media_sync_jobs")
+      .insert({
+        kind: "attachment",
+        ref_id: attachmentId,
+        state: "pending",
+        payload: { orgId, conversationId, messageId, opId, r2Key },
+      })
+      .select("id")
+      .single();
+    jobId =
+      insertedJob && typeof (insertedJob as Row).id === "string"
+        ? ((insertedJob as Row).id as string)
+        : undefined;
+  } else {
+    const pending = ((existingJobRows as Row[] | null) ?? []).find(
+      (j) => j.state === "pending" || j.state === "running" || j.state === "failed",
+    );
+    if (pending && typeof pending.id === "string") jobId = pending.id as string;
+  }
+
+  await enqueueMediaSync({
+    kind: "attachment",
+    refId: attachmentId,
+    orgId,
+    opId,
+    ...(jobId ? { jobId } : {}),
+  });
+
+  return {
+    attachment: {
+      id: attachmentId,
+      messageId,
+      bucketPath: r2Key,
+      thumbPath: thumbExists && r2KeyThumb ? r2KeyThumb : null,
+      fileName,
+      mimeType,
+      sizeBytes: sizeBytes ?? head.size ?? 0,
+      width,
+      height,
+      pipeline: "r2_sp",
+      r2Key,
+      r2KeyThumb: thumbExists && r2KeyThumb ? r2KeyThumb : null,
+      r2Status: "ready",
+      spStatus: "queued",
+    },
+    r2Ready: true,
+  };
 }
 
 /** Cleanup R2: tylko verified + po terminie retencji. Service/admin. */
@@ -1883,6 +2117,31 @@ async function actionMediaCleanupR2(admin: SupabaseClient, callerId: string, bod
 // Router
 // ---------------------------------------------------------------------------
 
+async function actionAttachmentSpDownload(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  const driveItemId = requireString(body, "driveItemId", 200);
+  const { data: att } = await admin
+    .from("message_attachments")
+    .select("id, message_id, org_id, sp_drive_item_id, messages!inner(conversation_id)")
+    .eq("sp_drive_item_id", driveItemId)
+    .maybeSingle();
+  if (!att) throw new ActionError("Załącznik nie istnieje.", 404);
+  const conversationId = (att.messages as { conversation_id?: string } | null)?.conversation_id;
+  if (!conversationId || !(await isConversationMember(admin, conversationId, callerId))) {
+    throw new ActionError("Brak dostępu.", 403);
+  }
+  const orgId = att.org_id as string | null;
+  if (!orgId) throw new ActionError("Brak organizacji.", 200);
+  const storage = await getActiveStorage(admin, orgId);
+  if (!storage?.driveId) throw new ActionError("Magazyn plików niedostępny.", 200);
+  if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+  const url = await getDownloadUrl(storage.driveId, driveItemId);
+  return { url };
+}
+
 const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Row) => Promise<unknown>> = {
   storage_status: actionStorageStatus,
   storage_save: actionStorageSave,
@@ -1901,6 +2160,7 @@ const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Ro
   r2_confirm_gallery_item: actionR2ConfirmGalleryItem,
   r2_presign_attachment: actionR2PresignAttachment,
   r2_confirm_attachment: actionR2ConfirmAttachment,
+  attachment_sp_download: actionAttachmentSpDownload,
   media_cleanup_r2: actionMediaCleanupR2,
   media_pipeline_info: actionMediaPipelineInfo,
   media_enqueue_gallery_item: actionMediaEnqueueGalleryItem,

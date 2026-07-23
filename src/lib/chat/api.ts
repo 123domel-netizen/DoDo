@@ -29,16 +29,39 @@ const MESSAGE_SELECT =
 type Row = Record<string, unknown>;
 
 function rowToAttachment(row: Row): ChatAttachment {
+  const pipeline =
+    row.pipeline === "r2_sp" ? "r2_sp" : "legacy_supabase";
+  const r2Key = (row.r2_key as string | null) ?? null;
+  const r2KeyThumb = (row.r2_key_thumb as string | null) ?? null;
+  const r2Status = (row.r2_status as string | null) ?? null;
+  const spDriveItemId = (row.sp_drive_item_id as string | null) ?? null;
+  const r2Ready = r2Status === "ready" && Boolean(r2Key);
+  // Dual-read: R2 while ready; after retention cleanup fall back to SP id via bucketPath marker.
+  const bucketPath = r2Ready
+    ? (r2Key as string)
+    : spDriveItemId && pipeline === "r2_sp"
+      ? `sp:${spDriveItemId}`
+      : (row.bucket_path as string);
+  const thumbPath =
+    r2Ready && r2KeyThumb
+      ? r2KeyThumb
+      : ((row.thumb_path as string | null) ?? null);
   return {
     id: row.id as string,
     messageId: row.message_id as string,
-    bucketPath: row.bucket_path as string,
-    thumbPath: (row.thumb_path as string | null) ?? null,
+    bucketPath,
+    thumbPath,
     fileName: (row.file_name as string) ?? "",
     mimeType: (row.mime_type as string) ?? "application/octet-stream",
     sizeBytes: (row.size_bytes as number) ?? 0,
     width: (row.width as number | null) ?? null,
     height: (row.height as number | null) ?? null,
+    pipeline,
+    r2Key,
+    r2KeyThumb,
+    r2Status,
+    spStatus: (row.sp_status as string | null) ?? null,
+    spDriveItemId,
   };
 }
 

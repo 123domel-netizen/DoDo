@@ -39,7 +39,12 @@ export interface ReplyTarget {
 }
 
 interface MessageComposerProps {
-  onSend: (body: string, files: File[], mentions: string[]) => void | Promise<void>;
+  onSend: (
+    body: string,
+    files: File[],
+    mentions: string[],
+    opts?: { attachMode?: "photo" | "file" },
+  ) => void | Promise<void>;
   placeholder?: string;
   /** Tryb edycji istniejącej wiadomości. */
   editing?: { id: string; body: string } | null;
@@ -83,6 +88,8 @@ export function MessageComposer({
 }: MessageComposerProps) {
   const [body, setBody] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [attachMode, setAttachMode] = useState<"photo" | "file">("file");
+  const [imageModePrompt, setImageModePrompt] = useState<File[] | null>(null);
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<MentionQuery | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
@@ -181,9 +188,10 @@ export function MessageComposer({
     if (!trimmed && files.length === 0) return;
     setSending(true);
     try {
-      await onSend(trimmed, files, mentions);
+      await onSend(trimmed, files, mentions, { attachMode });
       setBody("");
       setFiles([]);
+      setAttachMode("file");
       setMention(null);
       if (taRef.current) taRef.current.style.height = "auto";
     } finally {
@@ -193,15 +201,28 @@ export function MessageComposer({
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
-    const next: File[] = [...files];
-    for (const f of Array.from(list)) {
+    const incoming = Array.from(list).filter((f) => {
       if (f.size > MAX_CHAT_FILE_BYTES) {
         alert(`${f.name}: plik przekracza 25 MB.`);
-        continue;
+        return false;
       }
-      next.push(f);
+      return true;
+    });
+    if (!incoming.length) return;
+    const hasImage = incoming.some((f) => /^image\//i.test(f.type));
+    if (hasImage) {
+      setImageModePrompt(incoming);
+      return;
     }
-    setFiles(next.slice(0, 6));
+    setAttachMode("file");
+    setFiles((prev) => [...prev, ...incoming].slice(0, 6));
+  };
+
+  const confirmImageMode = (mode: "photo" | "file") => {
+    if (!imageModePrompt) return;
+    setAttachMode(mode);
+    setFiles((prev) => [...prev, ...imageModePrompt].slice(0, 6));
+    setImageModePrompt(null);
   };
 
   const startRecording = async () => {
@@ -238,6 +259,40 @@ export function MessageComposer({
 
   return (
     <div className="relative border-t border-line bg-surface px-2 py-2">
+      {imageModePrompt && (
+        <div className="absolute inset-x-2 bottom-full z-50 mb-2 rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
+          <p className="mb-2 text-sm font-medium text-ink">Jak wysłać zdjęcie?</p>
+          <div className="flex flex-col gap-1.5">
+            <button
+              type="button"
+              onClick={() => confirmImageMode("photo")}
+              className="rounded-lg bg-accent px-3 py-2.5 text-left text-sm font-medium text-white"
+            >
+              Wyślij jako zdjęcie
+              <span className="mt-0.5 block text-[11px] font-normal opacity-90">
+                Optymalizacja do 2560 px + miniatura
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => confirmImageMode("file")}
+              className="rounded-lg border border-line bg-surface-raised px-3 py-2.5 text-left text-sm text-ink"
+            >
+              Wyślij jako plik
+              <span className="mt-0.5 block text-[11px] text-ink-faint">
+                Oryginał bez kompresji
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setImageModePrompt(null)}
+              className="py-1.5 text-center text-xs text-ink-faint"
+            >
+              Anuluj
+            </button>
+          </div>
+        </div>
+      )}
       {suggestions.length > 0 && !editing && (
         <div className="absolute bottom-full left-2 right-2 z-50 mb-1 overflow-hidden rounded-xl border border-line bg-surface-overlay shadow-pop">
           {suggestions.map((m) => (
