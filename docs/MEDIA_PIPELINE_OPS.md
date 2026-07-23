@@ -79,4 +79,13 @@ Admin UI: Ustawienia → Zespół → Magazyn — pipeline + Ponów sync.
 ## Health
 
 - Worker: `GET /health`
-- Edge: `action: media_pipeline_info` → `globalDefault: legacy_sp`, `attachmentsR2Enabled: false`
+- Edge: `action: media_pipeline_info` → `attachmentsR2Enabled: true` gdy `r2Configured()`, `globalDefault: legacy_sp`
+
+## R2 API token (produkcja)
+
+Token Edge musi mieć **Object Read & Write** na bucketcie **`dodo-media`**
+(opcjonalnie też `dodo-media-preview`). Token scoped tylko do preview
+powoduje **403** na PUT po cutoverze `R2_BUCKET=dodo-media`.
+
+Po rotacji: `npx supabase secrets set` dla `R2_ACCESS_KEY_ID` /
+`R2_SECRET_ACCESS_KEY` (wartości poza gitem), bez commita.
