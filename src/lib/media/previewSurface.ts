@@ -2,24 +2,24 @@ import { CLIENT_BUILD_VERSION } from "@/lib/appVersion";
 import { clientBuildAllowsR2 } from "@/lib/media/pipelinePolicy";
 
 /**
- * Powierzchnia R2 PREVIEW:
- * 1) build z `VITE_MEDIA_PIPELINE=r2` (preview Pages / lokalnie) — niezależnie od hosta
- *    (unikalny URL deploymentu też działa),
- * 2) albo host aliasu `media-r2-preview.*`.
+ * Diagnostyka / banner „R2 PREVIEW” — NIGDY na produkcji (`dodo-c39.pages.dev`).
  *
- * Produkcja budowana BEZ VITE=r2 → nigdy nie pokazuje banneru/diag.
+ * Widoczne tylko gdy host:
+ * - `media-r2-preview.*`, albo
+ * - `localhost` / `127.0.0.1` (dev lokalny).
+ *
+ * `VITE_MEDIA_PIPELINE=r2` na produkcyjnym Pages NIE włącza bannera —
+ * służy wyłącznie do direct PUT (`clientBuildPipelineLabel`).
  */
 export function isR2PreviewSurface(): boolean {
-  if (clientBuildAllowsR2(import.meta.env.VITE_MEDIA_PIPELINE as string | undefined)) {
-    return true;
-  }
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname.toLowerCase();
-    if (host.startsWith("media-r2-preview.")) return true;
-  }
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname.toLowerCase();
+  if (host.startsWith("media-r2-preview.")) return true;
+  if (host === "localhost" || host === "127.0.0.1") return true;
   return false;
 }
 
+/** Etykieta buildu: czy klient potrafi R2 (prod + preview z VITE=r2). */
 export function clientBuildPipelineLabel(): "r2" | "legacy" {
   return clientBuildAllowsR2(import.meta.env.VITE_MEDIA_PIPELINE as string | undefined)
     ? "r2"

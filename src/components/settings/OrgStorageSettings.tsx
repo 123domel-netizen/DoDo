@@ -95,6 +95,12 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
   }, [refresh, refreshSyncFails, refreshPipeline]);
 
   const setPipeline = async (next: "legacy_sp" | "r2_sp") => {
+    if (next === "r2_sp" && !status?.connected) {
+      setError(
+        "Aby włączyć R2, najpierw podłącz aktywny magazyn SharePoint (site, drive, folder).",
+      );
+      return;
+    }
     setPipelineSaving(true);
     setError(null);
     const res = await setOrgMediaPipeline(orgId, next);
@@ -342,9 +348,14 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
             Pipeline galerii (serwer)
           </div>
           <p className="mb-1.5 text-[11px] leading-snug text-ink-faint">
-            Domyślnie legacy. R2 włącza się tylko tu — flaga Vite nie włącza R2 samodzielnie.
-            Załączniki i voice pozostają na legacy.
+            Domyślnie legacy. R2 wymaga aktywnego magazynu SharePoint.
+            Bez magazynu zespół pozostaje na legacy_sp.
           </p>
+          {!status?.connected && (
+            <p className="mb-1.5 text-[11px] leading-snug text-amber-400">
+              Podłącz i zweryfikuj magazyn SharePoint, zanim włączysz R2 + SP.
+            </p>
+          )}
           <div className="flex gap-1.5">
             <button
               type="button"
@@ -356,9 +367,18 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
             </button>
             <button
               type="button"
-              disabled={pipelineSaving || mediaPipeline === "r2_sp"}
+              disabled={
+                pipelineSaving ||
+                mediaPipeline === "r2_sp" ||
+                !status?.connected
+              }
               onClick={() => void setPipeline("r2_sp")}
               className="rounded-lg px-2 py-1 text-[11px] text-accent transition hover:underline disabled:opacity-40"
+              title={
+                !status?.connected
+                  ? "Najpierw podłącz aktywny magazyn SharePoint"
+                  : undefined
+              }
             >
               R2 + SP
             </button>

@@ -16,7 +16,16 @@ Brak/błąd odczytu flagi → `legacy_sp`.
 ## Pierwszy rollout
 
 - **Galerie:** możliwe po `orgs.media_pipeline=r2_sp` + sekrety R2 + Worker
-- **Załączniki / voice / forward-move:** zawsze legacy (Edge odrzuca `r2_presign_attachment`)
+- **Załączniki czatu:** R2 gdy org `r2_sp` (voice / forward / move = legacy)
+- **Voice / forward / move:** zawsze legacy
+
+## Worker bridge (MEDIA3)
+
+Dopóki `MICROSOFT_*` nie są ustawione na `dodo-media-sync`, consumer kolejki
+`dodo-media-archive` i `MEDIA_SYNC_HOOK_URL` wskazują na
+`dodo-media-sync-preview` (ten sam bucket `dodo-media`). Po ustawieniu sekretów
+Graph na prod: przywróć consumer w `wrangler.jsonc` i przełącz hook na
+`https://dodo-media-sync.123domel.workers.dev/enqueue`.
 
 ## Główne źródło jobów sync
 
