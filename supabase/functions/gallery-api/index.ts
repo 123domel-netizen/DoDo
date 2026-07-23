@@ -31,6 +31,7 @@ import {
   headR2Object,
   presignR2Url,
   r2Configured,
+  r2BucketName,
   deleteR2Object,
 } from "../_shared/r2.ts";
 import {
@@ -1432,6 +1433,7 @@ async function actionMediaPipelineInfo(_admin: SupabaseClient, _callerId: string
     globalDefault: GLOBAL_DEFAULT_PIPELINE,
     attachmentsR2Enabled: r2Configured(),
     r2Configured: r2Configured(),
+    r2Bucket: r2BucketName(),
     graphConfigured: graphConfigured(),
     galleryFullRetentionDays: GALLERY_FULL_RETENTION_DAYS,
     attachmentRetentionDays: ATTACHMENT_RETENTION_DAYS,

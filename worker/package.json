@@ -6,9 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "deploy:preview": "wrangler deploy -c wrangler.preview.jsonc",
     "tail": "wrangler tail",
-    "tail:preview": "wrangler tail -c wrangler.preview.jsonc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

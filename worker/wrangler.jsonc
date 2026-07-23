@@ -3,13 +3,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
-  "account_id": "",
   "workers_dev": true,
   "r2_buckets": [
     {
       "binding": "MEDIA_BUCKET",
-      "bucket_name": "dodo-media",
-      "preview_bucket_name": "dodo-media-preview"
+      "bucket_name": "dodo-media"
     }
   ],
   "queues": {

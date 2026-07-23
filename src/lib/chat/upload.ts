@@ -13,7 +13,7 @@ import {
 export type AttachSendMode = "photo" | "file";
 
 /**
- * CHAT attachments: R2 when org.media_pipeline=r2_sp and client build allows R2.
+ * CHAT attachments: R2 when client build allows R2 (org legacy_sp = rollback).
  * Voice / forward / move pass forceLegacy.
  */
 function preferredAttachmentPipeline(

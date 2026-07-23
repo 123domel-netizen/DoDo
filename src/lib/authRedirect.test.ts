@@ -22,15 +22,13 @@ describe("OAuth redirect origins", () => {
     ).toBe("https://dodo-c39.pages.dev/");
   });
 
-  it("preview login passes preview origin", () => {
+  it("oauthRedirectUrlFromOrigin uses current origin (preview host no longer allowlisted)", () => {
     expect(
       oauthRedirectUrlFromOrigin("https://media-r2-preview.dodo-c39.pages.dev"),
     ).toBe("https://media-r2-preview.dodo-c39.pages.dev/");
-    expect(
-      buildOAuthRedirectTo({
-        origin: "https://media-r2-preview.dodo-c39.pages.dev",
-      }),
-    ).toBe("https://media-r2-preview.dodo-c39.pages.dev/");
+    expect(isAllowedOAuthOrigin("https://media-r2-preview.dodo-c39.pages.dev")).toBe(
+      false,
+    );
   });
 
   it("localhost login passes localhost", () => {

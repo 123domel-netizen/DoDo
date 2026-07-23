@@ -118,12 +118,6 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
     setInfo("Test SharePoint: odczyt i zapis OK.");
   };
   const setPipeline = async (next: "legacy_sp" | "r2_sp") => {
-    if (next === "r2_sp" && !status?.connected) {
-      setError(
-        "Aby włączyć R2, najpierw podłącz aktywny magazyn SharePoint (site, drive, folder).",
-      );
-      return;
-    }
     setPipelineSaving(true);
     setError(null);
     const res = await setOrgMediaPipeline(orgId, next);
@@ -135,8 +129,10 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
     setMediaPipeline(res.data?.mediaPipeline ?? next);
     setInfo(
       next === "r2_sp"
-        ? "Pipeline galerii: R2 (hot) + SharePoint (archiwum)."
-        : "Pipeline galerii: legacy SharePoint (natychmiastowy rollback).",
+        ? status?.connected
+          ? "Pipeline: R2 (hot) + SharePoint (archiwum zespołu)."
+          : "Pipeline: R2 aktywne. Podłącz SharePoint, aby włączyć archiwizację."
+        : "Pipeline: legacy SharePoint (rollback).",
     );
   };
 
@@ -450,28 +446,22 @@ export function OrgStorageSettings({ orgId, isAdmin }: OrgStorageSettingsProps) 
             </button>
             <button
               type="button"
-              disabled={
-                pipelineSaving ||
-                mediaPipeline === "r2_sp" ||
-                !status?.connected ||
-                probeOk !== true
-              }
+              disabled={pipelineSaving || mediaPipeline === "r2_sp"}
               onClick={() => void setPipeline("r2_sp")}
               className="rounded-lg px-2 py-1 text-[11px] text-accent transition hover:underline disabled:opacity-40"
-              title={
-                !status?.connected
-                  ? "Najpierw podłącz SharePoint"
-                  : probeOk !== true
-                    ? "Najpierw przejdź test odczytu/zapisu"
-                    : undefined
-              }
             >
-              R2 + SP
+              R2 (hot)
             </button>
             <span className="ml-auto self-center text-[10px] text-ink-faint">
               teraz: {mediaPipeline === "r2_sp" ? "r2_sp" : "legacy_sp"}
             </span>
           </div>
+          {mediaPipeline === "r2_sp" && !status?.connected && (
+            <p className="mt-1.5 text-[11px] leading-snug text-amber-400">
+              Brak archiwum SharePoint — pliki zostają w R2 bez auto-usuwania.
+              Podłącz magazyn i uruchom test, aby włączyć archiwizację.
+            </p>
+          )}
         </div>
       )}
 

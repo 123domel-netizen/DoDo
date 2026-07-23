@@ -13,10 +13,10 @@ export function resolveOrgGalleryPipeline(input: {
   r2Configured: boolean;
   clientRequestedPipeline?: string | null;
 }): MediaPipeline {
-  if (input.orgReadFailed) return GLOBAL_DEFAULT_PIPELINE;
-  const org = (input.orgMediaPipeline ?? "").trim();
-  if (org !== "r2_sp") return GLOBAL_DEFAULT_PIPELINE;
   if (!input.r2Configured) return GLOBAL_DEFAULT_PIPELINE;
+  if (input.orgReadFailed) return "r2_sp";
+  const org = (input.orgMediaPipeline ?? "").trim();
+  if (org === "legacy_sp") return "legacy_sp";
   return "r2_sp";
 }
 
@@ -35,16 +35,16 @@ export function legacyUploadItemRejectionForPipeline(
   return null;
 }
 
-/** Attachment pipeline: R2 when org is r2_sp AND Edge R2 is configured. */
+/** Attachment pipeline: R2 gdy Edge ma R2; forceLegacy = voice/forward/move. */
 export function resolveAttachmentPipeline(input: {
   orgMediaPipeline?: string | null;
   r2Configured: boolean;
   forceLegacy?: boolean;
 }): "legacy_supabase" | "r2_sp" {
   if (input.forceLegacy) return "legacy_supabase";
-  const org = (input.orgMediaPipeline ?? "").trim();
-  if (org !== "r2_sp") return "legacy_supabase";
   if (!input.r2Configured) return "legacy_supabase";
+  const org = (input.orgMediaPipeline ?? "").trim();
+  if (org === "legacy_sp") return "legacy_supabase";
   return "r2_sp";
 }
 

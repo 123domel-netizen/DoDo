@@ -94,10 +94,16 @@ describe("pipeline policy", () => {
     ).toBe("legacy_sp");
   });
 
-  it("enables r2_sp only for org flag + r2 configured", () => {
+  it("enables r2_sp for all teams when R2 configured (explicit legacy = rollback)", () => {
     expect(
       resolveOrgGalleryPipeline({
         orgMediaPipeline: "r2_sp",
+        r2Configured: true,
+      }),
+    ).toBe("r2_sp");
+    expect(
+      resolveOrgGalleryPipeline({
+        orgMediaPipeline: null,
         r2Configured: true,
       }),
     ).toBe("r2_sp");
@@ -109,17 +115,17 @@ describe("pipeline policy", () => {
     ).toBe("legacy_sp");
   });
 
-  it("org read failure → legacy_sp", () => {
+  it("org read failure → r2_sp when R2 configured", () => {
     expect(
       resolveOrgGalleryPipeline({
         orgMediaPipeline: "r2_sp",
         orgReadFailed: true,
         r2Configured: true,
       }),
-    ).toBe("legacy_sp");
+    ).toBe("r2_sp");
   });
 
-  it("per-team rollout and immediate rollback", () => {
+  it("per-team rollback to legacy_sp", () => {
     expect(
       resolveOrgGalleryPipeline({ orgMediaPipeline: "r2_sp", r2Configured: true }),
     ).toBe("r2_sp");
@@ -128,9 +134,12 @@ describe("pipeline policy", () => {
     ).toBe("legacy_sp");
   });
 
-  it("attachments stay legacy in first rollout", () => {
+  it("attachments use R2 when configured; voice forceLegacy", () => {
     expect(
       resolveAttachmentPipeline({ orgMediaPipeline: "r2_sp", r2Configured: true }),
+    ).toBe("r2_sp");
+    expect(
+      resolveAttachmentPipeline({ orgMediaPipeline: null, r2Configured: true }),
     ).toBe("r2_sp");
     expect(
       resolveAttachmentPipeline({ orgMediaPipeline: "r2_sp", r2Configured: false }),

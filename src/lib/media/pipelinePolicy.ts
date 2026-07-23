@@ -66,8 +66,15 @@ export function resolveCreateGalleryGate(input: {
   const buildPipeline: BuildPipelineLabel = clientBuildAllowsR2(input.viteMediaPipeline)
     ? "r2"
     : "legacy";
+  const raw = (input.organizationPipeline ?? "").trim();
   const organizationPipeline: MediaPipeline =
-    (input.organizationPipeline ?? "").trim() === "r2_sp" ? "r2_sp" : GLOBAL_DEFAULT_PIPELINE;
+    raw === "legacy_sp"
+      ? "legacy_sp"
+      : raw === "r2_sp"
+        ? "r2_sp"
+        : buildPipeline === "r2"
+          ? "r2_sp"
+          : GLOBAL_DEFAULT_PIPELINE;
   if (organizationPipeline === "r2_sp" && buildPipeline !== "r2") {
     return {
       ok: false,
@@ -169,9 +176,9 @@ export function preferLocalThumbOverRemoteMiss(input: {
 
 /**
  * Ostateczna decyzja pipeline'u galerii (backend).
- * - brak/błąd odczytu org → legacy_sp
- * - klient NIE może samodzielnie włączyć r2_sp
- * - r2 wymaga org.media_pipeline=r2_sp ORAZ r2Configured
+ * Produkcja: gdy R2 skonfigurowane → r2_sp dla wszystkich zespołów
+ * (wyjątek: jawne `legacy_sp` jako rollback admina).
+ * SharePoint nie jest wymagany do hot path — brak SP → retention_hold.
  */
 export function resolveOrgGalleryPipeline(input: {
   orgMediaPipeline: string | null | undefined;
@@ -180,14 +187,17 @@ export function resolveOrgGalleryPipeline(input: {
   /** Ignorowane przy włączaniu — tylko dokumentacja / logi */
   clientRequestedPipeline?: string | null;
 }): MediaPipeline {
-  if (input.orgReadFailed) return GLOBAL_DEFAULT_PIPELINE;
-  const org = (input.orgMediaPipeline ?? "").trim();
-  if (org !== "r2_sp") return GLOBAL_DEFAULT_PIPELINE;
   if (!input.r2Configured) return GLOBAL_DEFAULT_PIPELINE;
+  if (input.orgReadFailed) {
+    // Preferuj R2 gdy dostępne — unikaj legacy Graph przy błędzie odczytu org.
+    return "r2_sp";
+  }
+  const org = (input.orgMediaPipeline ?? "").trim();
+  if (org === "legacy_sp") return "legacy_sp";
   return "r2_sp";
 }
 
-/** Attachment pipeline: R2 when org is r2_sp AND Edge R2 is configured. Voice/forward keep legacy separately. */
+/** Attachment pipeline: R2 gdy Edge ma R2; forceLegacy = voice/forward/move. */
 export function resolveAttachmentPipeline(input: {
   orgMediaPipeline?: string | null;
   r2Configured: boolean;
@@ -195,9 +205,9 @@ export function resolveAttachmentPipeline(input: {
   forceLegacy?: boolean;
 }): "legacy_supabase" | "r2_sp" {
   if (input.forceLegacy) return "legacy_supabase";
-  const org = (input.orgMediaPipeline ?? "").trim();
-  if (org !== "r2_sp") return "legacy_supabase";
   if (!input.r2Configured) return "legacy_supabase";
+  const org = (input.orgMediaPipeline ?? "").trim();
+  if (org === "legacy_sp") return "legacy_supabase";
   return "r2_sp";
 }
 

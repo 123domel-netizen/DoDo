@@ -5,7 +5,6 @@
 
 export const OAUTH_REDIRECT_ALLOWLIST: readonly string[] = [
   "https://dodo-c39.pages.dev",
-  "https://media-r2-preview.dodo-c39.pages.dev",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ];

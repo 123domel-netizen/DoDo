@@ -9,9 +9,12 @@ import {
 } from "./pipelinePolicy";
 
 describe("ATTACH1 attachment pipeline", () => {
-  it("enables R2 for r2_sp org when configured", () => {
+  it("enables R2 for any org when configured (legacy_sp = rollback)", () => {
     expect(
       resolveAttachmentPipeline({ orgMediaPipeline: "r2_sp", r2Configured: true }),
+    ).toBe("r2_sp");
+    expect(
+      resolveAttachmentPipeline({ orgMediaPipeline: null, r2Configured: true }),
     ).toBe("r2_sp");
   });
 

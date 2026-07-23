@@ -12,6 +12,11 @@ export function r2Configured(): boolean {
   return Boolean(ACCOUNT_ID && ACCESS_KEY && SECRET_KEY && BUCKET);
 }
 
+/** Nazwa bucketu z env (nie sekret) — do weryfikacji deployu. */
+export function r2BucketName(): string {
+  return BUCKET;
+}
+
 function endpointHost(): string {
   return `${ACCOUNT_ID}.r2.cloudflarestorage.com`;
 }
