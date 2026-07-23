@@ -11,12 +11,25 @@ import {
   normalizeQueueMessage,
   orgIdFromHotKey,
   resolveAttachmentPipeline,
+  resolveClientGalleryUploadPipeline,
+  clientGalleryUploadUsesR2,
+  legacyUploadItemRejectionForPipeline,
+  preferLocalThumbOverRemoteMiss,
+  resolveCreateGalleryGate,
+  R2_CLIENT_REQUIRED_MESSAGE,
+  selectGalleryDeckItems,
   resolveDualReadSource,
   resolveOrgGalleryPipeline,
   resolveThumbStatusAfterConfirm,
   shouldCleanupR2Object,
   shouldCreateSyncJob,
+  shouldCronEnqueueGalleryItem,
+  shouldDeleteR2OnPermanentFailure,
   shouldProcessArchiveJob,
+  shouldReconcileJobWithoutUpload,
+  canTransitionJobState,
+  jobStateAfterSuccessfulSync,
+  jobStateAfterSyncError,
   validateConfirmHead,
 } from "./pipelinePolicy";
 
@@ -122,6 +135,132 @@ describe("pipeline policy", () => {
   it("Vite kill switch only blocks client R2 attempts", () => {
     expect(clientBuildAllowsR2("legacy")).toBe(false);
     expect(clientBuildAllowsR2(undefined)).toBe(false);
+  });
+
+  it("never silently falls back from r2_sp gallery to legacy upload", () => {
+    expect(
+      resolveClientGalleryUploadPipeline({
+        galleryPipeline: "r2_sp",
+        viteMediaPipeline: "r2",
+      }),
+    ).toEqual({ ok: true, pipeline: "r2_sp", uploadRoute: "R2" });
+    const blocked = resolveClientGalleryUploadPipeline({
+      galleryPipeline: "r2_sp",
+      viteMediaPipeline: "legacy",
+    });
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.error).toBe(R2_CLIENT_REQUIRED_MESSAGE);
+    expect(
+      resolveClientGalleryUploadPipeline({
+        galleryPipeline: "legacy_sp",
+        viteMediaPipeline: "legacy",
+      }),
+    ).toEqual({ ok: true, pipeline: "legacy_sp", uploadRoute: "Legacy SharePoint" });
+  });
+
+  it("r2_sp uses R2 path only; legacy_sp uses multipart upload path", () => {
+    expect(clientGalleryUploadUsesR2("r2_sp")).toBe(true);
+    expect(clientGalleryUploadUsesR2("legacy_sp")).toBe(false);
+  });
+
+  it("create gate blocks before gallery row when org is r2_sp but build is legacy", () => {
+    const gate = resolveCreateGalleryGate({
+      organizationPipeline: "r2_sp",
+      viteMediaPipeline: "legacy",
+    });
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) {
+      expect(gate.error).toBe(R2_CLIENT_REQUIRED_MESSAGE);
+      expect(gate.buildPipeline).toBe("legacy");
+      expect(gate.organizationPipeline).toBe("r2_sp");
+    }
+    const ok = resolveCreateGalleryGate({
+      organizationPipeline: "r2_sp",
+      viteMediaPipeline: "r2",
+    });
+    expect(ok).toEqual({
+      ok: true,
+      buildPipeline: "r2",
+      organizationPipeline: "r2_sp",
+      effectivePipeline: "r2_sp",
+    });
+  });
+
+  it("blocks creating/uploading r2_sp when Vite kill switch is off (no orphan r2 record)", () => {
+    const beforeCreate = resolveClientGalleryUploadPipeline({
+      galleryPipeline: "r2_sp",
+      viteMediaPipeline: undefined,
+    });
+    expect(beforeCreate.ok).toBe(false);
+    if (!beforeCreate.ok) {
+      expect(beforeCreate.error).toBe(R2_CLIENT_REQUIRED_MESSAGE);
+    }
+  });
+
+  it("missing or unknown gallery.pipeline is protocol error (no legacy fallback)", () => {
+    expect(
+      resolveClientGalleryUploadPipeline({
+        galleryPipeline: null,
+        viteMediaPipeline: "r2",
+      }).ok,
+    ).toBe(false);
+    expect(
+      resolveClientGalleryUploadPipeline({
+        galleryPipeline: "mystery",
+        viteMediaPipeline: "r2",
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("wrong_pipeline soft-rejects with HTTP 409 and does not imply markFailed", () => {
+    expect(legacyUploadItemRejectionForPipeline("r2_sp")).toEqual({
+      errorCode: "wrong_pipeline",
+      errorMessage:
+        "Galeria R2 — użyj bezpośredniego uploadu (presign/confirm), nie SharePoint.",
+      httpStatus: 409,
+    });
+    expect(legacyUploadItemRejectionForPipeline("legacy_sp")).toBeNull();
+    expect(legacyUploadItemRejectionForPipeline(null)).toBeNull();
+  });
+
+  it("deck includes pending/uploading/failed when local thumb exists", () => {
+    const items = [
+      { id: "a", status: "pending" },
+      { id: "b", status: "uploading" },
+      { id: "c", status: "failed" },
+      { id: "d", status: "ready" },
+      { id: "e", status: "pending" },
+    ];
+    const local = new Set(["a", "c"]);
+    const deck = selectGalleryDeckItems({
+      items,
+      maxSlots: 3,
+      hasLocalThumb: (id) => local.has(id),
+    });
+    expect(deck.map((x) => x.id)).toEqual(["d", "a", "c"]);
+  });
+
+  it("remote thumb miss does not imply gallery failure when local thumb exists", () => {
+    const withLocal = preferLocalThumbOverRemoteMiss({
+      localThumbUrl: "blob:http://local/thumb",
+      remoteThumbUrl: null,
+    });
+    expect(withLocal.url).toBe("blob:http://local/thumb");
+    expect(withLocal.remoteMissOnly).toBe(false);
+
+    const remoteOnly = preferLocalThumbOverRemoteMiss({
+      localThumbUrl: null,
+      remoteThumbUrl: "https://example/thumb",
+    });
+    expect(remoteOnly.url).toBe("https://example/thumb");
+    expect(remoteOnly.remoteMissOnly).toBe(false);
+
+    const miss = preferLocalThumbOverRemoteMiss({
+      localThumbUrl: null,
+      remoteThumbUrl: null,
+    });
+    expect(miss.url).toBeNull();
+    expect(miss.remoteMissOnly).toBe(true);
   });
 });
 
@@ -336,5 +475,142 @@ describe("cleanup", () => {
 
   it("never cleans gallery thumbs", () => {
     expect(shouldCleanupR2Object({ ...base, objectKind: "gallery_thumb" })).toBe(false);
+  });
+
+  it("cleanup still requires verified + r2_delete_after elapsed", () => {
+    expect(
+      shouldCleanupR2Object({
+        ...base,
+        spStatus: "permanent_failure",
+        objectKind: "gallery_full",
+      }),
+    ).toBe(false);
+    expect(
+      shouldCleanupR2Object({
+        ...base,
+        r2DeleteAfter: null,
+        objectKind: "gallery_full",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("media_sync_jobs lifecycle", () => {
+  it("1. successful sync targets item verified + job done", () => {
+    expect(jobStateAfterSuccessfulSync("running")).toBe("done");
+    expect(jobStateAfterSuccessfulSync("pending")).toBe("done");
+  });
+
+  it("2. done clears error/lock fields conceptually (nulls)", () => {
+    // Worker markJobDone sets last_error=null, locked_at=null — policy only asserts target state.
+    expect(jobStateAfterSuccessfulSync("running")).toBe("done");
+    expect(canTransitionJobState("running", "done")).toBe(true);
+  });
+
+  it("3. verified + pending reconciles without re-upload", () => {
+    expect(
+      shouldReconcileJobWithoutUpload({
+        itemSpStatus: "verified",
+        itemHasSpDriveItem: true,
+        jobState: "pending",
+      }),
+    ).toBe(true);
+    expect(
+      shouldProcessArchiveJob({
+        spStatus: "verified",
+        spDriveItemId: "sp-1",
+        r2Status: "ready",
+      }).reason,
+    ).toBe("already_verified");
+  });
+
+  it("4. redelivery of done skips upload", () => {
+    expect(jobStateAfterSuccessfulSync("done")).toBeNull();
+    expect(
+      shouldReconcileJobWithoutUpload({
+        itemSpStatus: "verified",
+        itemHasSpDriveItem: true,
+        jobState: "done",
+      }),
+    ).toBe(false);
+  });
+
+  it("5. cron never enqueues verified items", () => {
+    expect(shouldCronEnqueueGalleryItem("verified")).toBe(false);
+    expect(shouldCronEnqueueGalleryItem("queued")).toBe(true);
+    expect(shouldCronEnqueueGalleryItem("failed")).toBe(true);
+    expect(shouldCronEnqueueGalleryItem("retry_scheduled")).toBe(true);
+    expect(shouldCronEnqueueGalleryItem("copying")).toBe(false);
+  });
+
+  it("6. error before upload leaves job retryable (failed)", () => {
+    expect(jobStateAfterSyncError({ permanent: false, attempts: 1 })).toBe("failed");
+    expect(canTransitionJobState("failed", "pending")).toBe(true);
+    expect(canTransitionJobState("failed", "running")).toBe(true);
+  });
+
+  it("7. error after item verified reconciles job without duplicate upload", () => {
+    expect(
+      shouldReconcileJobWithoutUpload({
+        itemSpStatus: "verified",
+        itemHasSpDriveItem: true,
+        jobState: "running",
+      }),
+    ).toBe(true);
+  });
+
+  it("8. permanent failure never deletes R2", () => {
+    expect(jobStateAfterSyncError({ permanent: true, attempts: 1 })).toBe("dead");
+    expect(shouldDeleteR2OnPermanentFailure()).toBe(false);
+    expect(
+      shouldCleanupR2Object({
+        spStatus: "permanent_failure",
+        r2Status: "ready",
+        r2DeletedAt: null,
+        r2DeleteAfter: "2020-01-01T00:00:00.000Z",
+        retentionHold: true,
+        nowIso: "2026-07-22T00:00:00.000Z",
+        objectKind: "gallery_full",
+      }),
+    ).toBe(false);
+  });
+
+  it("9–10. cleanup requires verified+due; thumbs never cleaned", () => {
+    expect(
+      shouldCleanupR2Object({
+        spStatus: "verified",
+        r2Status: "ready",
+        r2DeletedAt: null,
+        r2DeleteAfter: "2020-01-01T00:00:00.000Z",
+        retentionHold: false,
+        nowIso: "2026-07-22T00:00:00.000Z",
+        objectKind: "gallery_full",
+      }),
+    ).toBe(true);
+    expect(
+      shouldCleanupR2Object({
+        spStatus: "verified",
+        r2Status: "ready",
+        r2DeletedAt: null,
+        r2DeleteAfter: "2020-01-01T00:00:00.000Z",
+        retentionHold: false,
+        nowIso: "2026-07-22T00:00:00.000Z",
+        objectKind: "gallery_thumb",
+      }),
+    ).toBe(false);
+  });
+
+  it("forbids done → pending without admin", () => {
+    expect(canTransitionJobState("done", "pending")).toBe(false);
+    expect(canTransitionJobState("pending", "running")).toBe(true);
+    expect(canTransitionJobState("running", "done")).toBe(true);
+    expect(canTransitionJobState("running", "failed")).toBe(true);
+    expect(canTransitionJobState("failed", "pending")).toBe(true);
+    expect(canTransitionJobState("failed", "dead")).toBe(true);
+  });
+
+  it("attempts past max become dead", () => {
+    expect(jobStateAfterSyncError({ permanent: false, attempts: 8 })).toBe("dead");
+    expect(jobStateAfterSyncError({ permanent: false, attempts: 7 })).toBe("failed");
   });
 });

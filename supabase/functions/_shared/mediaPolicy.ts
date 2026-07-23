@@ -20,6 +20,21 @@ export function resolveOrgGalleryPipeline(input: {
   return "r2_sp";
 }
 
+/** Edge: soft-reject legacy gallery_upload_item dla r2_sp — HTTP 409, bez markFailed. */
+export function legacyUploadItemRejectionForPipeline(
+  galleryPipeline: string | null | undefined,
+): { errorCode: "wrong_pipeline"; errorMessage: string; httpStatus: 409 } | null {
+  if ((galleryPipeline ?? "").trim() === "r2_sp") {
+    return {
+      errorCode: "wrong_pipeline",
+      errorMessage:
+        "Galeria R2 — użyj bezpośredniego uploadu (presign/confirm), nie SharePoint.",
+      httpStatus: 409,
+    };
+  }
+  return null;
+}
+
 export function resolveAttachmentPipeline(
   _orgMediaPipeline?: string | null,
 ): "legacy_supabase" {

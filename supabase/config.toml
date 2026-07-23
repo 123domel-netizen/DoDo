@@ -7,6 +7,26 @@
 
 project_id = "kalendarz-todo"
 
+# Site URL = produkcja (NIE zmieniać na preview).
+# Preview musi być na additional_redirect_urls — już na remote; lokalna kopia
+# dokumentuje wymagane wpisy (config push tylko gdy świadomie synchronizujemy auth).
+[auth]
+enabled = true
+site_url = "https://dodo-c39.pages.dev"
+additional_redirect_urls = [
+  "https://dodo-c39.pages.dev",
+  "https://dodo-c39.pages.dev/**",
+  "https://media-r2-preview.dodo-c39.pages.dev",
+  "https://media-r2-preview.dodo-c39.pages.dev/",
+  "https://media-r2-preview.dodo-c39.pages.dev/**",
+  "http://localhost:5173",
+  "http://localhost:5173/**",
+  "http://localhost:5199",
+  "http://localhost:5199/**",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5173/**",
+]
+
 # Auth Hook „before-user-created" (whitelista logowania).
 # GoTrue podpisuje żądanie sekretem hooka (v1,whsec_...), nie tokenem JWT.
 [functions.auth-allowlist]

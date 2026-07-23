@@ -5,14 +5,28 @@ import {
   createGallery,
   listStorageOrgsForConversation,
   MAX_GALLERY_ITEMS_PER_CALL,
-  clientR2BuildEnabled,
   retryGalleryItemUpload,
   runGalleryUploadPipeline,
+  type Gallery,
   type StorageOrgOption,
 } from "@/lib/chat/galleryApi";
+import {
+  resolveClientGalleryUploadPipeline,
+  resolveCreateGalleryGate,
+  type MediaPipeline,
+} from "@/lib/media/pipelinePolicy";
 import { formatFileSize } from "@/lib/chat/upload";
 import { galleryPerfReset } from "@/lib/chat/galleryUploadPerf";
 import { setGalleryLocalThumb } from "@/lib/chat/galleryLocalThumbs";
+import { clientBuildPipelineLabel } from "@/lib/media/previewSurface";
+import { GalleryMediaDiagPanel } from "@/components/media/GalleryMediaDiagPanel";
+import {
+  nextActionForGalleryPipeline,
+  patchMediaUploadDiag,
+  plannedRouteFromTeamPipeline,
+  recordLastMediaAction,
+  resetMediaUploadDiag,
+} from "@/lib/media/mediaUploadDiag";
 
 interface GalleryCreateDialogProps {
   open: boolean;
@@ -49,13 +63,16 @@ export function GalleryCreateDialog({
   const [submitting, setSubmitting] = useState(false);
   const [prepProgress, setPrepProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [galleryId, setGalleryId] = useState<string | null>(null);
-  /** Pipeline z serwera dla bieżącego uploadu (nie z Vite). */
-  const [uploadPipeline, setUploadPipeline] = useState<"legacy_sp" | "r2_sp">("legacy_sp");
+  /** Galeria z odpowiedzi create — pipeline wyłącznie stąd (nie z gate / Vite). */
+  const [createdGallery, setCreatedGallery] = useState<Pick<Gallery, "id" | "pipeline"> | null>(
+    null,
+  );
   const [items, setItems] = useState<UploadItem[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(true);
   const uploadRunningRef = useRef(false);
+  /** Snapshot pipeline z create — retry nie czyta state, tylko ten ref. */
+  const galleryRef = useRef<Pick<Gallery, "id" | "pipeline"> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -72,13 +89,18 @@ export function GalleryCreateDialog({
     setFiles([]);
     setPreviews([]);
     setError(null);
-    setGalleryId(null);
+    setCreatedGallery(null);
+    galleryRef.current = null;
     setItems([]);
     setSubmitting(false);
     setPrepProgress(null);
     setOrgs(null);
     setOrgId(null);
     uploadRunningRef.current = false;
+    resetMediaUploadDiag({
+      nextAction: "gallery_create",
+      plannedUploadRoute: plannedRouteFromTeamPipeline(null, clientBuildPipelineLabel()),
+    });
     void listStorageOrgsForConversation(conversationId).then((res) => {
       if (!mountedRef.current) return;
       const list = res.data?.orgs ?? [];
@@ -86,6 +108,18 @@ export function GalleryCreateDialog({
       if (list.length === 1) setOrgId(list[0]!.orgId);
     });
   }, [open, conversationId]);
+
+  useEffect(() => {
+    if (!open || step !== "form") return;
+    const selectedOrg = (orgs ?? []).find((o) => o.orgId === orgId);
+    const team = selectedOrg?.mediaPipeline ?? (orgId ? "legacy_sp" : null);
+    const build = clientBuildPipelineLabel();
+    patchMediaUploadDiag({
+      teamPipeline: team,
+      plannedUploadRoute: plannedRouteFromTeamPipeline(team, build),
+      nextAction: "gallery_create",
+    });
+  }, [open, step, orgId, orgs]);
 
   useEffect(() => {
     const urls = files.map((f) => URL.createObjectURL(f));
@@ -99,6 +133,7 @@ export function GalleryCreateDialog({
 
   const orgsWithStorage = orgs ?? [];
   const noStorageAvailable = orgs !== null && orgsWithStorage.length === 0;
+  const galleryPipeline = (createdGallery?.pipeline ?? null) as MediaPipeline | null;
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -141,11 +176,23 @@ export function GalleryCreateDialog({
       return;
     }
 
+    // Przed create: Vite tylko jako capability (org r2_sp + build bez R2 → blokada).
+    const selectedOrg = orgsWithStorage.find((o) => o.orgId === orgId);
+    const gate = resolveCreateGalleryGate({
+      organizationPipeline: selectedOrg?.mediaPipeline ?? "legacy_sp",
+      viteMediaPipeline: import.meta.env.VITE_MEDIA_PIPELINE as string | undefined,
+    });
+    if (!gate.ok) {
+      setError(gate.error);
+      return;
+    }
+
     setSubmitting(true);
     setPrepProgress("Tworzenie galerii…");
     galleryPerfReset();
+    recordLastMediaAction("gallery_create");
+    patchMediaUploadDiag({ nextAction: "gallery_create", lastMediaAction: "gallery_create" });
     try {
-      // Twórz od razu z metadanymi oryginałów — prepare+upload w pipeline.
       const res = await createGallery({
         conversationId,
         orgId,
@@ -160,6 +207,7 @@ export function GalleryCreateDialog({
 
       if (!mountedRef.current) return;
       if (res.error || !res.data) {
+        recordLastMediaAction("gallery_create failed");
         setError(res.error || "Nie udało się utworzyć galerii.");
         setSubmitting(false);
         setPrepProgress(null);
@@ -167,9 +215,40 @@ export function GalleryCreateDialog({
       }
 
       const { gallery, items: galleryItems, messageId: newMessageId, pipeline } = res.data;
-      // Pipeline wyłącznie z serwera; Vite jest tylko kill switchem.
-      const usedPipeline =
-        pipeline === "r2_sp" && clientR2BuildEnabled() ? "r2_sp" : "legacy_sp";
+      // Jedynie pipeline z odpowiedzi serwera — NIE gate.effectivePipeline / Vite / formularz.
+      const serverPipeline = gallery.pipeline ?? pipeline;
+      const uploadDecision = resolveClientGalleryUploadPipeline({
+        galleryPipeline: serverPipeline,
+        viteMediaPipeline: import.meta.env.VITE_MEDIA_PIPELINE as string | undefined,
+      });
+      if (!uploadDecision.ok) {
+        patchMediaUploadDiag({
+          galleryId: gallery.id,
+          serverGalleryPipeline: String(serverPipeline ?? "—"),
+          nextAction: "blocked (protocol / build)",
+          lastMediaAction: "gallery_create ok — upload blocked",
+        });
+        setError(uploadDecision.error);
+        setSubmitting(false);
+        setPrepProgress(null);
+        // Rekord galerii zostaje do diagnostyki.
+        return;
+      }
+
+      const galleryForUpload: Pick<Gallery, "id" | "pipeline"> = {
+        id: gallery.id,
+        pipeline: uploadDecision.pipeline,
+      };
+      galleryRef.current = galleryForUpload;
+
+      patchMediaUploadDiag({
+        galleryId: gallery.id,
+        serverGalleryPipeline: uploadDecision.pipeline,
+        selectedUploadRoute: uploadDecision.uploadRoute,
+        nextAction: nextActionForGalleryPipeline(uploadDecision.pipeline),
+        lastMediaAction: "gallery_create ok",
+      });
+
       const nextItems: UploadItem[] = files.map((f, i) => {
         const id = galleryItems[i]?.id ?? `${gallery.id}-${i}`;
         setGalleryLocalThumb(gallery.id, id, f);
@@ -181,23 +260,21 @@ export function GalleryCreateDialog({
         };
       });
 
-      setGalleryId(gallery.id);
-      setUploadPipeline(usedPipeline);
+      setCreatedGallery(galleryForUpload);
       setItems(nextItems);
       setStep("uploading");
       setSubmitting(false);
       setPrepProgress(null);
 
-      // Karta w czacie od razu — nie czekamy na upload.
       onCreated?.(gallery.id, newMessageId ?? null);
 
       uploadRunningRef.current = true;
       const itemIds = nextItems.map((it) => it.id);
-      void runGalleryUploadPipeline(
-        gallery.id,
+      void runGalleryUploadPipeline({
+        gallery: galleryForUpload,
         files,
         itemIds,
-        {
+        callbacks: {
           onPrepareProgress: (done, total) => {
             if (mountedRef.current) {
               setPrepProgress(`Przygotowywanie… ${done}/${total}`);
@@ -211,8 +288,7 @@ export function GalleryCreateDialog({
             else patchItem(itemId, { status: "failed", errorMessage: result.error });
           },
         },
-        { pipeline: usedPipeline },
-      ).finally(() => {
+      }).finally(() => {
         uploadRunningRef.current = false;
         if (mountedRef.current) {
           setPrepProgress(null);
@@ -228,15 +304,15 @@ export function GalleryCreateDialog({
   };
 
   const retryItem = async (it: UploadItem) => {
-    if (!galleryId) return;
+    const g = galleryRef.current;
+    if (!g) return;
     patchItem(it.id, { status: "uploading", errorMessage: null });
     try {
-      const res = await retryGalleryItemUpload(
-        galleryId,
-        it.id,
-        it.sourceFile,
-        uploadPipeline,
-      );
+      const res = await retryGalleryItemUpload({
+        gallery: g,
+        itemId: it.id,
+        file: it.sourceFile,
+      });
       if (res.error) patchItem(it.id, { status: "failed", errorMessage: res.error });
       else patchItem(it.id, { status: "ready", errorMessage: null });
     } catch (e) {
@@ -267,6 +343,7 @@ export function GalleryCreateDialog({
 
         {step === "form" && (
           <>
+            <GalleryMediaDiagPanel phase="form" />
             <div className="space-y-2.5">
               <input
                 value={title}
@@ -406,11 +483,12 @@ export function GalleryCreateDialog({
 
         {(step === "uploading" || step === "done") && (
           <>
+            <GalleryMediaDiagPanel phase="post-create" />
             <div className="mb-2 text-xs text-ink-faint">
               {allDone
                 ? failedCount > 0
                   ? `Gotowe · ${uploadedCount} ok · ${failedCount} nieudanych`
-                  : uploadPipeline === "r2_sp"
+                  : galleryPipeline === "r2_sp"
                     ? `Galeria została wysłana. Możesz zamknąć aplikację. · ${uploadedCount} zdjęć`
                     : `Gotowe · ${uploadedCount} zdjęć`
                 : `Wysyłanie… ${uploadedCount}/${items.length}`}

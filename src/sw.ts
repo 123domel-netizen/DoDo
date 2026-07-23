@@ -4,7 +4,15 @@ declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[];
 };
 
-const CACHE = "kalendarz-todo-v2";
+declare const __APP_BUILD_VERSION__: string;
+
+const BUILD =
+  typeof __APP_BUILD_VERSION__ !== "undefined" && __APP_BUILD_VERSION__
+    ? __APP_BUILD_VERSION__
+    : "dev";
+const HOST = self.location.hostname;
+/** Osobny cache per host + build — preview nie dziedziczy produkcji. */
+const CACHE = `dodo-pwa-${HOST}-${BUILD}`;
 // vite-plugin-pwa (injectManifest) replaces this with the build asset list.
 const ASSETS = (self.__WB_MANIFEST || []).map((e) => e.url);
 
@@ -23,7 +31,17 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k.startsWith("kalendarz-todo-") && k !== CACHE).map((k) => caches.delete(k))),
+        Promise.all(
+          keys
+            .filter(
+              (k) =>
+                k !== CACHE &&
+                (k.startsWith("kalendarz-todo-") ||
+                  k.startsWith("dodo-pwa-") ||
+                  k.startsWith("dodo-")),
+            )
+            .map((k) => caches.delete(k)),
+        ),
       )
       .then(() => self.clients.claim()),
   );
@@ -64,6 +82,12 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   );
 });
 
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  if (event.data && (event.data as { type?: string }).type === "SKIP_WAITING") {
+    void self.skipWaiting();
+  }
+});
+
 self.addEventListener("push", (event: PushEvent) => {
   let data: { title?: string; body?: string; url?: string; tag?: string } = {};
   try {
@@ -77,10 +101,7 @@ self.addEventListener("push", (event: PushEvent) => {
       body: data.body ?? "",
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      // Wibracja na telefonie (gdy system pozwala).
       vibrate: [40, 60, 40],
-      // tag: czat nadpisuje poprzednie powiadomienie z tej samej rozmowy.
-      // renotify: kolejna wiadomość znów dzwoni / wibruje.
       ...(data.tag ? { tag: data.tag, renotify: true } : {}),
       data: { url: data.url ?? "/" },
     }),
@@ -94,7 +115,6 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
         if ("focus" in client) {
-          // Otwarta aplikacja: nawiguj wewnątrz SPA (hash-router), bez reloadu.
           (client as WindowClient).postMessage({ type: "navigate", url });
           return (client as WindowClient).focus();
         }

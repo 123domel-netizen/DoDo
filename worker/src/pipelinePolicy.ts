@@ -56,3 +56,60 @@ export function shouldCleanupR2Object(input: {
   if (!input.r2DeleteAfter) return false;
   return input.r2DeleteAfter < input.nowIso;
 }
+
+/** Job ledger: `running` ≈ processing; `dead` ≈ permanent_failure. */
+export type MediaSyncJobState = "pending" | "running" | "done" | "failed" | "dead";
+
+export function shouldReconcileJobWithoutUpload(input: {
+  itemSpStatus: string | null | undefined;
+  itemHasSpDriveItem: boolean;
+  jobState: string | null | undefined;
+}): boolean {
+  if ((input.itemSpStatus ?? "").trim() !== "verified") return false;
+  if (!input.itemHasSpDriveItem) return false;
+  const st = (input.jobState ?? "").trim();
+  return st !== "done" && st !== "";
+}
+
+/** Cron must never re-enqueue items that are already verified. */
+export function shouldCronEnqueueGalleryItem(spStatus: string | null | undefined): boolean {
+  const s = (spStatus ?? "").trim();
+  return s === "queued" || s === "failed" || s === "retry_scheduled";
+}
+
+export function canTransitionJobState(
+  from: string | null | undefined,
+  to: string,
+): boolean {
+  const f = (from ?? "pending").trim();
+  const allowed: Record<string, readonly string[]> = {
+    pending: ["running", "done", "failed"],
+    running: ["done", "failed", "dead"],
+    failed: ["pending", "running", "dead", "done"],
+    done: [],
+    dead: ["done"],
+  };
+  return (allowed[f] ?? []).includes(to);
+}
+
+export function jobStateAfterSuccessfulSync(
+  current: string | null | undefined,
+): "done" | null {
+  if ((current ?? "").trim() === "done") return null;
+  return "done";
+}
+
+export function jobStateAfterSyncError(input: {
+  permanent: boolean;
+  attempts: number;
+  maxAttempts?: number;
+}): "failed" | "dead" {
+  const max = input.maxAttempts ?? 8;
+  if (input.permanent || input.attempts >= max) return "dead";
+  return "failed";
+}
+
+/** Permanent failure must never trigger R2 delete. */
+export function shouldDeleteR2OnPermanentFailure(): boolean {
+  return false;
+}

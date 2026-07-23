@@ -5,6 +5,7 @@ import {
   getGalleryLocalThumb,
   subscribeGalleryLocalThumbs,
 } from "@/lib/chat/galleryLocalThumbs";
+import { preferLocalThumbOverRemoteMiss, selectGalleryDeckItems } from "@/lib/media/pipelinePolicy";
 
 /** Ile kart w talii w bańce czatu (reszta jako +N). */
 const DECK_SLOTS = 3;
@@ -47,7 +48,10 @@ function Thumb({ galleryId, itemId }: { galleryId: string; itemId: string }) {
   useEffect(() => {
     return subscribeGalleryLocalThumbs(() => {
       const local = getGalleryLocalThumb(galleryId, itemId);
-      if (local) setUrl(local);
+      if (local) {
+        setUrl(local);
+        setFailed(false);
+      }
     });
   }, [galleryId, itemId]);
 
@@ -61,8 +65,19 @@ function Thumb({ galleryId, itemId }: { galleryId: string; itemId: string }) {
     let cancelled = false;
     void fetchGalleryItemUrl(galleryId, itemId, "thumb").then((res) => {
       if (cancelled) return;
-      if (res.data?.url) setUrl(res.data.url);
-      else setFailed(true);
+      // Lokalna miniatura mogła pojawić się w trakcie fetcha (kreator → karta).
+      const lateLocal = getGalleryLocalThumb(galleryId, itemId);
+      const chosen = preferLocalThumbOverRemoteMiss({
+        localThumbUrl: lateLocal,
+        remoteThumbUrl: res.data?.url ?? null,
+      });
+      if (chosen.url) {
+        setUrl(chosen.url);
+        setFailed(false);
+        return;
+      }
+      // remoteMissOnly — tylko UI thumb; NIE zmienia gallery.status
+      setFailed(true);
     });
     return () => {
       cancelled = true;
@@ -241,13 +256,26 @@ export function GalleryCard({
   itemCountHint,
 }: GalleryCardProps) {
   const { gallery, items, loading } = useGalleryData(galleryId, galleryProp, itemsProp);
+  const [, setThumbEpoch] = useState(0);
+  useEffect(() => {
+    return subscribeGalleryLocalThumbs(() => setThumbEpoch((n) => n + 1));
+  }, []);
   const readyItems = items.filter((i) => i.status === "ready");
-  const total = gallery?.itemCount ?? itemCountHint ?? readyItems.length;
+  const deckLen = selectGalleryDeckItems({
+    items,
+    maxSlots: Math.max(DECK_SLOTS, ROW_THUMB_SLOTS),
+    hasLocalThumb: (itemId) => Boolean(getGalleryLocalThumb(galleryId, itemId)),
+  }).length;
+  const total = gallery?.itemCount ?? itemCountHint ?? Math.max(readyItems.length, deckLen);
   const status = gallery ? statusLabel(gallery) : null;
   const isRow = variant === "panel" || variant === "row";
 
   if (isRow) {
-    const thumbs = readyItems.slice(0, ROW_THUMB_SLOTS);
+    const thumbs = selectGalleryDeckItems({
+      items,
+      maxSlots: ROW_THUMB_SLOTS,
+      hasLocalThumb: (itemId) => Boolean(getGalleryLocalThumb(galleryId, itemId)),
+    });
     const extra = Math.max(0, total - thumbs.length);
     const metaParts: string[] = [];
     if (meta?.trim()) metaParts.push(meta.trim());
@@ -279,7 +307,11 @@ export function GalleryCard({
     );
   }
 
-  const thumbs = readyItems.slice(0, DECK_SLOTS);
+  const thumbs = selectGalleryDeckItems({
+    items,
+    maxSlots: DECK_SLOTS,
+    hasLocalThumb: (itemId) => Boolean(getGalleryLocalThumb(galleryId, itemId)),
+  });
   const extra = Math.max(0, total - thumbs.length);
   const n = thumbs.length;
 

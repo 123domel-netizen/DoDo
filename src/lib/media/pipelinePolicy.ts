@@ -14,6 +14,160 @@ export function clientBuildAllowsR2(viteMediaPipeline: string | undefined | null
 }
 
 /**
+ * Ścieżka uploadu po `gallery_create` — wyłącznie wg `gallery.pipeline`.
+ * NIGDY nie degraduj r2_sp → legacy Graph (brak folderu SP → fałszywe `no_storage`).
+ * NIGDY nie fallbackuj brak/nieznany pipeline → legacy_sp.
+ */
+export type ClientGalleryUploadDecision =
+  | { ok: true; pipeline: MediaPipeline; uploadRoute: UploadRouteLabel }
+  | { ok: false; error: string };
+
+export const R2_CLIENT_REQUIRED_MESSAGE =
+  "Ta wersja aplikacji nie obsługuje nowego przesyłania galerii. Odśwież aplikację albo otwórz wersję testową ponownie.";
+
+export const GALLERY_PIPELINE_PROTOCOL_ERROR =
+  "Niezgodność klienta i serwera: brak lub nieprawidłowy pipeline galerii. Rekord zachowany do diagnostyki — odśwież aplikację.";
+
+export type BuildPipelineLabel = "r2" | "legacy";
+export type UploadRouteLabel = "R2" | "Legacy SharePoint";
+
+export function uploadRouteLabel(pipeline: MediaPipeline): UploadRouteLabel {
+  return pipeline === "r2_sp" ? "R2" : "Legacy SharePoint";
+}
+
+/** Dopuszczalne wartości protokołu — wszystko inne to błąd. */
+export function parseGalleryPipeline(
+  value: string | null | undefined,
+): MediaPipeline | null {
+  const raw = (value ?? "").trim();
+  if (raw === "legacy_sp" || raw === "r2_sp") return raw;
+  return null;
+}
+
+/**
+ * Brama przed createGallery: org r2_sp + build bez R2 → przerwij BEZ zapisu.
+ */
+export function resolveCreateGalleryGate(input: {
+  organizationPipeline: string | null | undefined;
+  viteMediaPipeline: string | null | undefined;
+}):
+  | {
+      ok: true;
+      buildPipeline: BuildPipelineLabel;
+      organizationPipeline: MediaPipeline;
+      effectivePipeline: MediaPipeline;
+    }
+  | {
+      ok: false;
+      error: string;
+      buildPipeline: BuildPipelineLabel;
+      organizationPipeline: MediaPipeline;
+    } {
+  const buildPipeline: BuildPipelineLabel = clientBuildAllowsR2(input.viteMediaPipeline)
+    ? "r2"
+    : "legacy";
+  const organizationPipeline: MediaPipeline =
+    (input.organizationPipeline ?? "").trim() === "r2_sp" ? "r2_sp" : GLOBAL_DEFAULT_PIPELINE;
+  if (organizationPipeline === "r2_sp" && buildPipeline !== "r2") {
+    return {
+      ok: false,
+      error: R2_CLIENT_REQUIRED_MESSAGE,
+      buildPipeline,
+      organizationPipeline,
+    };
+  }
+  return {
+    ok: true,
+    buildPipeline,
+    organizationPipeline,
+    effectivePipeline: organizationPipeline,
+  };
+}
+
+/**
+ * Routing uploadu po create / retry / viewer — wyłącznie `gallery.pipeline`.
+ * `viteMediaPipeline` NIE wybiera ścieżki; tylko blokuje R2, gdy build nie obsługuje R2
+ * (błąd, nie fallback do legacy).
+ *
+ * Ignoruj wszelkie lokalne usedPipeline / org / formularz — nie przekazuj ich tutaj.
+ */
+export function resolveClientGalleryUploadPipeline(input: {
+  galleryPipeline: string | null | undefined;
+  /** Kill switch build — tylko przy gallery.pipeline=r2_sp. */
+  viteMediaPipeline?: string | null | undefined;
+}): ClientGalleryUploadDecision {
+  const parsed = parseGalleryPipeline(input.galleryPipeline);
+  if (!parsed) {
+    return { ok: false, error: GALLERY_PIPELINE_PROTOCOL_ERROR };
+  }
+  if (parsed === "r2_sp" && !clientBuildAllowsR2(input.viteMediaPipeline)) {
+    return { ok: false, error: R2_CLIENT_REQUIRED_MESSAGE };
+  }
+  return {
+    ok: true,
+    pipeline: parsed,
+    uploadRoute: uploadRouteLabel(parsed),
+  };
+}
+
+/** Czy klient powinien iść ścieżką R2 (presign → PUT → confirm), nie multipart SP. */
+export function clientGalleryUploadUsesR2(pipeline: MediaPipeline): boolean {
+  return pipeline === "r2_sp";
+}
+
+/**
+ * Edge: soft-reject legacy `gallery_upload_item` dla galerii r2_sp.
+ * HTTP 409 — bez markFailed (stary klient ≠ trwała awaria pliku).
+ */
+export function legacyUploadItemRejectionForPipeline(
+  galleryPipeline: string | null | undefined,
+): { errorCode: "wrong_pipeline"; errorMessage: string; httpStatus: 409 } | null {
+  if ((galleryPipeline ?? "").trim() === "r2_sp") {
+    return {
+      errorCode: "wrong_pipeline",
+      errorMessage:
+        "Galeria R2 — użyj bezpośredniego uploadu (presign/confirm), nie SharePoint.",
+      httpStatus: 409,
+    };
+  }
+  return null;
+}
+
+/** Elementy talii karty: ready + pending/uploading/failed z lokalnym Blob URL. */
+export function selectGalleryDeckItems<T extends { id: string; status: string }>(input: {
+  items: T[];
+  maxSlots: number;
+  hasLocalThumb: (itemId: string) => boolean;
+}): T[] {
+  const eligible = input.items.filter(
+    (it) => it.status === "ready" || input.hasLocalThumb(it.id),
+  );
+  eligible.sort((a, b) => {
+    const ar = a.status === "ready" ? 1 : 0;
+    const br = b.status === "ready" ? 1 : 0;
+    return br - ar;
+  });
+  return eligible.slice(0, input.maxSlots);
+}
+
+/**
+ * UI karty: brak zdalnego thumb URL nie zmienia statusu galerii.
+ * Lokalny Blob URL ma pierwszeństwo nad failed remote fetch.
+ */
+export function preferLocalThumbOverRemoteMiss(input: {
+  localThumbUrl: string | null | undefined;
+  remoteThumbUrl: string | null | undefined;
+}): { url: string | null; remoteMissOnly: boolean } {
+  if (input.localThumbUrl) {
+    return { url: input.localThumbUrl, remoteMissOnly: false };
+  }
+  if (input.remoteThumbUrl) {
+    return { url: input.remoteThumbUrl, remoteMissOnly: false };
+  }
+  return { url: null, remoteMissOnly: true };
+}
+
+/**
  * Ostateczna decyzja pipeline'u galerii (backend).
  * - brak/błąd odczytu org → legacy_sp
  * - klient NIE może samodzielnie włączyć r2_sp
@@ -204,6 +358,72 @@ export function shouldProcessArchiveJob(input: {
     return { process: false, reason: "stale_op" };
   }
   return { process: true };
+}
+
+/** Job ledger states (DB CHECK). `running` ≈ processing; `dead` ≈ permanent_failure. */
+export type MediaSyncJobState = "pending" | "running" | "done" | "failed" | "dead";
+
+/**
+ * Item already verified + job not done → reconcile job to done WITHOUT SharePoint re-upload.
+ */
+export function shouldReconcileJobWithoutUpload(input: {
+  itemSpStatus: string | null | undefined;
+  itemHasSpDriveItem: boolean;
+  jobState: string | null | undefined;
+}): boolean {
+  if ((input.itemSpStatus ?? "").trim() !== "verified") return false;
+  if (!input.itemHasSpDriveItem) return false;
+  const st = (input.jobState ?? "").trim();
+  return st !== "done" && st !== "";
+}
+
+/** Cron must never re-enqueue items that are already verified. */
+export function shouldCronEnqueueGalleryItem(spStatus: string | null | undefined): boolean {
+  const s = (spStatus ?? "").trim();
+  return s === "queued" || s === "failed" || s === "retry_scheduled";
+}
+
+/**
+ * Allowed job state transitions (no done→pending without admin).
+ * `running` is the processing state.
+ */
+export function canTransitionJobState(
+  from: string | null | undefined,
+  to: string,
+): boolean {
+  const f = (from ?? "pending").trim();
+  const allowed: Record<string, readonly string[]> = {
+    pending: ["running", "done", "failed"],
+    running: ["done", "failed", "dead"],
+    failed: ["pending", "running", "dead", "done"],
+    done: [],
+    dead: ["done"],
+  };
+  return (allowed[f] ?? []).includes(to);
+}
+
+/** After successful SP verify — target job state is always done. */
+export function jobStateAfterSuccessfulSync(
+  current: string | null | undefined,
+): "done" | null {
+  if ((current ?? "").trim() === "done") return null;
+  return "done";
+}
+
+/** Permanent failure → dead (schema); otherwise failed for retry. */
+export function jobStateAfterSyncError(input: {
+  permanent: boolean;
+  attempts: number;
+  maxAttempts?: number;
+}): "failed" | "dead" {
+  const max = input.maxAttempts ?? 8;
+  if (input.permanent || input.attempts >= max) return "dead";
+  return "failed";
+}
+
+/** Permanent failure must never delete R2 objects. */
+export function shouldDeleteR2OnPermanentFailure(): boolean {
+  return false;
 }
 
 /**

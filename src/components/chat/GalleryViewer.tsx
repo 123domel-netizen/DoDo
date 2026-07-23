@@ -15,9 +15,9 @@ import {
   fetchGallery,
   fetchGalleryItemUrl,
   prepareGalleryPhoto,
+  retryGalleryItemUpload,
   retryGalleryThumb,
   runGalleryUploadPipeline,
-  uploadGalleryItem,
   type Gallery,
   type GalleryItem,
 } from "@/lib/chat/galleryApi";
@@ -321,22 +321,29 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
     gId: string,
     item: GalleryItem,
     file: File,
-    thumb?: Blob | null,
+    _thumb?: Blob | null,
   ) => {
+    const g = gallery;
+    if (!g || g.id !== gId) {
+      patchItem(item.id, {
+        status: "failed",
+        errorMessage: "Brak danych galerii do ponowienia uploadu.",
+      });
+      return;
+    }
     patchItem(item.id, { status: "uploading", errorMessage: null });
-    const res = await uploadGalleryItem(gId, item.id, file, thumb);
+    const res = await retryGalleryItemUpload({
+      gallery: g,
+      itemId: item.id,
+      file,
+    });
     if (!mountedRef.current) return;
     if (res.error) {
       patchItem(item.id, { status: "failed", errorMessage: res.error });
-    } else if (res.data?.item) {
-      patchItem(item.id, {
-        ...res.data.item,
-        status: "ready",
-        errorMessage: null,
-      });
-      if (res.data.gallery) setGallery(res.data.gallery);
+      void refresh();
     } else {
       patchItem(item.id, { status: "ready", errorMessage: null });
+      void refresh();
     }
   };
 
@@ -371,20 +378,26 @@ export function GalleryViewer({ galleryId, open, onClose }: GalleryViewerProps) 
     }
     if (!mountedRef.current) return;
     const newItems = res.data.items;
-    setGallery(res.data.gallery);
+    const updatedGallery = res.data.gallery;
+    setGallery(updatedGallery);
     setItems((prev) => [...prev, ...newItems]);
     const itemIds = newItems.map((it) => it.id);
     for (let i = 0; i < picked.length; i++) {
       const id = itemIds[i];
-      if (id && picked[i]) setGalleryLocalThumb(gallery.id, id, picked[i]!);
+      if (id && picked[i]) setGalleryLocalThumb(updatedGallery.id, id, picked[i]!);
     }
-    await runGalleryUploadPipeline(gallery.id, picked, itemIds, {
-      onItemStart: (itemId) => {
-        patchItem(itemId, { status: "uploading", errorMessage: null });
-      },
-      onItemDone: (itemId, _index, result) => {
-        if (result.ok) patchItem(itemId, { status: "ready", errorMessage: null });
-        else patchItem(itemId, { status: "failed", errorMessage: result.error });
+    await runGalleryUploadPipeline({
+      gallery: updatedGallery,
+      files: picked,
+      itemIds,
+      callbacks: {
+        onItemStart: (itemId) => {
+          patchItem(itemId, { status: "uploading", errorMessage: null });
+        },
+        onItemDone: (itemId, _index, result) => {
+          if (result.ok) patchItem(itemId, { status: "ready", errorMessage: null });
+          else patchItem(itemId, { status: "failed", errorMessage: result.error });
+        },
       },
     });
     void refresh();

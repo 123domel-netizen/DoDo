@@ -9,7 +9,22 @@ import {
 import { prepareThenUploadPool } from "@/lib/chat/galleryUploadPool";
 import { setGalleryLocalThumb } from "@/lib/chat/galleryLocalThumbs";
 
-import { clientBuildAllowsR2 } from "@/lib/media/pipelinePolicy";
+import {
+  clientBuildAllowsR2,
+  clientGalleryUploadUsesR2,
+  resolveClientGalleryUploadPipeline,
+  type MediaPipeline,
+} from "@/lib/media/pipelinePolicy";
+import {
+  clientBuildPipelineLabel,
+  isR2PreviewSurface,
+  logMediaPipelineDiag,
+} from "@/lib/media/previewSurface";
+import {
+  nextActionForGalleryPipeline,
+  patchMediaUploadDiag,
+  recordLastMediaAction,
+} from "@/lib/media/mediaUploadDiag";
 
 /**
  * CHAT: galerie zdjęć w czacie (SharePoint V1) — klient Edge Function
@@ -17,8 +32,8 @@ import { clientBuildAllowsR2 } from "@/lib/media/pipelinePolicy";
  * Microsoft Graph pozostają na serwerze, klient dostaje tylko wyniki
  * (adresy pobrania, statusy, dane galerii/itemów).
  *
- * Pipeline R2: decyzja wyłącznie serwerowa (`orgs.media_pipeline`).
- * `VITE_MEDIA_PIPELINE` to tylko build-time kill switch (nie włącza R2).
+ * Pipeline R2: po create wyłącznie `gallery.pipeline` z serwera.
+ * `VITE_MEDIA_PIPELINE` to tylko build-time kill switch (nie wybiera uploadu).
  */
 
 export const MAX_GALLERY_UPLOAD_BYTES = 12 * 1024 * 1024; // ~12 MB
@@ -388,19 +403,43 @@ export interface UploadGalleryItemOptions {
   height?: number | null;
   /** Domyślnie true — przy pipeline ustaw false i wywołaj recompute na końcu. */
   recompute?: boolean;
+  /**
+   * Pipeline galerii z serwera — wymagane.
+   * Przy `r2_sp` request HTTP jest blokowany (nigdy nie wysyłaj gallery_upload_item).
+   */
+  galleryPipeline: string | null | undefined;
 }
 
 /**
- * Wysyła zdjęcie główne (+ opcjonalną miniaturę) binarnie (multipart).
+ * Legacy SharePoint multipart (`gallery_upload_item`).
+ * Wyłącznie dla `legacy_sp` — wywołuj tylko z `runGalleryUploadPipeline` /
+ * `retryGalleryItemUpload` po decyzji pipeline. Nie używaj bezpośrednio z UI.
  * Awaria miniatury nie zwraca błędu — item i tak jest `ready` z `thumbStatus=failed`.
  */
 export async function uploadGalleryItem(
   galleryId: string,
   itemId: string,
   file: Blob,
-  thumb?: Blob | null,
-  options: UploadGalleryItemOptions = {},
+  thumb: Blob | null | undefined,
+  options: UploadGalleryItemOptions,
 ): Promise<ApiResult<UploadGalleryItemResult>> {
+  const pipe = (options.galleryPipeline ?? "").trim();
+  if (pipe === "r2_sp") {
+    recordLastMediaAction("BLOCKED_gallery_upload_item (gallery.pipeline=r2_sp)");
+    patchMediaUploadDiag({
+      nextAction: "blocked — use r2_presign_gallery_items",
+      lastMediaAction: "BLOCKED_gallery_upload_item (gallery.pipeline=r2_sp)",
+    });
+    return {
+      error:
+        "Galeria R2 — zablokowano gallery_upload_item przed HTTP. Użyj ścieżki presign/PUT/confirm.",
+    };
+  }
+  if (pipe && pipe !== "legacy_sp") {
+    recordLastMediaAction(`BLOCKED_gallery_upload_item (invalid pipeline=${pipe})`);
+    return { error: "Nieprawidłowy pipeline galerii — przerwano gallery_upload_item." };
+  }
+
   if (!cloudEnabled || !supabase || !supabaseUrl || !supabaseAnonKey) {
     return { error: "Brak chmury." };
   }
@@ -419,6 +458,9 @@ export async function uploadGalleryItem(
       data: { session },
     } = await supabase.auth.getSession();
     if (!session?.access_token) return { error: "Brak sesji — zaloguj się ponownie." };
+
+    recordLastMediaAction("gallery_upload_item");
+    patchMediaUploadDiag({ nextAction: "gallery_upload_item", lastMediaAction: "gallery_upload_item" });
 
     const form = new FormData();
     form.append("action", "gallery_upload_item");
@@ -451,11 +493,13 @@ export async function uploadGalleryItem(
     galleryPerfMark("upload_http", tHttp, itemId);
 
     if (!res.ok) {
+      recordLastMediaAction(`gallery_upload_item HTTP ${res.status}`);
       return { error: await extractFetchError(res) };
     }
     const row = (await res.json()) as Record<string, unknown>;
     if (typeof row.error === "string") return { error: row.error };
     galleryPerfMark("upload_item_total", tTotal, itemId);
+    recordLastMediaAction("gallery_upload_item ok");
     return { data: row as unknown as UploadGalleryItemResult };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Błąd komunikacji z serwerem." };
@@ -579,22 +623,51 @@ export interface PipelineUploadCallbacks {
 }
 
 /**
- * Pipeline: create już zrobione — prepare sekwencyjnie + upload max 3 równolegle.
- * Lokalne miniatury ustawiane zaraz po prepare.
- * Gdy `pipeline=r2_sp` — PUT bezpośrednio do R2 (presign), potem confirm.
+ * Jedyna funkcja startu uploadu po create / add items.
+ * Ścieżka wyłącznie z `gallery.pipeline` — bez usedPipeline / org / Vite jako wyboru.
  */
-export async function runGalleryUploadPipeline(
-  galleryId: string,
-  files: File[],
-  itemIds: string[],
-  callbacks: PipelineUploadCallbacks = {},
-  options: { pipeline?: "legacy_sp" | "r2_sp" } = {},
-): Promise<void> {
+export async function runGalleryUploadPipeline(input: {
+  gallery: Pick<Gallery, "id"> & { pipeline?: string | null };
+  files: File[];
+  itemIds: string[];
+  callbacks?: PipelineUploadCallbacks;
+}): Promise<void> {
+  const { gallery, files, itemIds, callbacks = {} } = input;
+  const galleryId = gallery.id;
   galleryPerfReset();
   const tPipe = galleryPerfNow();
   const n = Math.min(files.length, itemIds.length);
   let prepareDone = 0;
-  const useR2 = options.pipeline === "r2_sp" && clientR2BuildEnabled();
+
+  const decision = resolveClientGalleryUploadPipeline({
+    galleryPipeline: gallery.pipeline,
+    viteMediaPipeline: import.meta.env.VITE_MEDIA_PIPELINE as string | undefined,
+  });
+  if (!decision.ok) {
+    for (let i = 0; i < n; i++) {
+      callbacks.onItemDone?.(itemIds[i]!, i, { ok: false, error: decision.error });
+    }
+    throw new Error(decision.error);
+  }
+
+  if (isR2PreviewSurface()) {
+    logMediaPipelineDiag({
+      galleryId,
+      buildPipeline: clientBuildPipelineLabel(),
+      galleryPipeline: decision.pipeline,
+      selectedUploadRoute: decision.uploadRoute,
+    });
+  }
+
+  patchMediaUploadDiag({
+    galleryId,
+    serverGalleryPipeline: decision.pipeline,
+    selectedUploadRoute: decision.uploadRoute,
+    nextAction: nextActionForGalleryPipeline(decision.pipeline),
+    lastMediaAction: "runGalleryUploadPipeline start",
+  });
+
+  const useR2 = clientGalleryUploadUsesR2(decision.pipeline);
 
   let presignById: Map<
     string,
@@ -602,6 +675,8 @@ export async function runGalleryUploadPipeline(
   > | null = null;
 
   if (useR2) {
+    recordLastMediaAction("r2_presign_gallery_items");
+    patchMediaUploadDiag({ nextAction: "r2_presign_gallery_items" });
     const presign = await callGalleryApi<{
       items: Array<{
         itemId: string;
@@ -611,8 +686,11 @@ export async function runGalleryUploadPipeline(
       }>;
     }>("r2_presign_gallery_items", { galleryId, itemIds: itemIds.slice(0, n) });
     if (presign.error || !presign.data?.items?.length) {
+      recordLastMediaAction(`r2_presign_gallery_items failed`);
       throw new Error(presign.error || "Nie udało się uzyskać adresów R2.");
     }
+    recordLastMediaAction(`r2_presign_gallery_items ok (${presign.data.items.length})`);
+    patchMediaUploadDiag({ nextAction: "PUT full (R2)" });
     presignById = new Map(
       presign.data.items.map((p) => [
         p.itemId,
@@ -651,6 +729,7 @@ export async function runGalleryUploadPipeline(
       callbacks.onItemStart?.(itemId, index);
       const isLast = index === n - 1;
 
+      // gallery.pipeline=r2_sp → wyłącznie R2; nigdy gallery_upload_item.
       if (useR2 && presignById) {
         const urls = presignById.get(itemId);
         if (!urls) {
@@ -661,15 +740,21 @@ export async function runGalleryUploadPipeline(
           return;
         }
         try {
+          recordLastMediaAction("PUT full (R2)");
+          patchMediaUploadDiag({ nextAction: "PUT full (R2)" });
           const putFull = await fetch(urls.putUrlFull, {
             method: "PUT",
             headers: urls.headers.full,
             body: photo.main,
           });
           if (!putFull.ok) {
+            recordLastMediaAction(`PUT full HTTP ${putFull.status}`);
             throw new Error(`Upload R2 full failed (${putFull.status}).`);
           }
+          recordLastMediaAction(`PUT full ok (${putFull.status})`);
           if (photo.thumb) {
+            recordLastMediaAction("PUT thumb (R2)");
+            patchMediaUploadDiag({ nextAction: "PUT thumb (R2)" });
             const putThumb = await fetch(urls.putUrlThumb, {
               method: "PUT",
               headers: urls.headers.thumb,
@@ -677,8 +762,13 @@ export async function runGalleryUploadPipeline(
             });
             if (!putThumb.ok) {
               console.warn("[gallery] R2 thumb upload failed", putThumb.status);
+              recordLastMediaAction(`PUT thumb HTTP ${putThumb.status}`);
+            } else {
+              recordLastMediaAction(`PUT thumb ok (${putThumb.status})`);
             }
           }
+          recordLastMediaAction("r2_confirm_gallery_item");
+          patchMediaUploadDiag({ nextAction: "r2_confirm_gallery_item" });
           const confirm = await callGalleryApi("r2_confirm_gallery_item", {
             galleryId,
             itemId,
@@ -690,8 +780,11 @@ export async function runGalleryUploadPipeline(
             recompute: isLast,
           });
           if (confirm.error) {
+            recordLastMediaAction("r2_confirm_gallery_item failed");
             callbacks.onItemDone?.(itemId, index, { ok: false, error: confirm.error });
           } else {
+            recordLastMediaAction("r2_confirm_gallery_item ok");
+            patchMediaUploadDiag({ nextAction: "done (await media_sync_job)" });
             callbacks.onItemDone?.(itemId, index, { ok: true });
           }
         } catch (e) {
@@ -709,6 +802,7 @@ export async function runGalleryUploadPipeline(
         width: photo.width,
         height: photo.height,
         recompute: isLast,
+        galleryPipeline: decision.pipeline,
       });
       if (res.error) {
         callbacks.onItemDone?.(itemId, index, { ok: false, error: res.error });
@@ -723,16 +817,32 @@ export async function runGalleryUploadPipeline(
   galleryPerfSummary(`gallery ${galleryId} · ${n} zdjęć`);
 }
 
-export async function retryGalleryItemUpload(
-  galleryId: string,
-  itemId: string,
-  file: File,
-  pipeline?: "legacy_sp" | "r2_sp",
-): Promise<ApiResult<{ ok: true }>> {
+export async function retryGalleryItemUpload(input: {
+  gallery: Pick<Gallery, "id"> & { pipeline?: string | null };
+  itemId: string;
+  file: File;
+}): Promise<ApiResult<{ ok: true }>> {
+  const { gallery, itemId, file } = input;
+  const galleryId = gallery.id;
   const photo = await prepareGalleryPhoto(file);
   if (photo.thumb) setGalleryLocalThumb(galleryId, itemId, photo.thumb);
 
-  const useR2 = pipeline === "r2_sp" && clientR2BuildEnabled();
+  const decision = resolveClientGalleryUploadPipeline({
+    galleryPipeline: gallery.pipeline,
+    viteMediaPipeline: import.meta.env.VITE_MEDIA_PIPELINE as string | undefined,
+  });
+  if (!decision.ok) return { error: decision.error };
+
+  if (isR2PreviewSurface()) {
+    logMediaPipelineDiag({
+      galleryId,
+      buildPipeline: clientBuildPipelineLabel(),
+      galleryPipeline: decision.pipeline,
+      selectedUploadRoute: decision.uploadRoute,
+    });
+  }
+
+  const useR2 = clientGalleryUploadUsesR2(decision.pipeline);
   if (!useR2) {
     const res = await uploadGalleryItem(galleryId, itemId, photo.main, photo.thumb, {
       fileName: photo.main.name,
@@ -740,10 +850,18 @@ export async function retryGalleryItemUpload(
       width: photo.width,
       height: photo.height,
       recompute: true,
+      galleryPipeline: decision.pipeline,
     });
     return res.error ? { error: res.error } : { data: { ok: true } };
   }
 
+  recordLastMediaAction("r2_presign_gallery_items (retry)");
+  patchMediaUploadDiag({
+    galleryId,
+    serverGalleryPipeline: decision.pipeline,
+    selectedUploadRoute: decision.uploadRoute,
+    nextAction: "r2_presign_gallery_items",
+  });
   const presign = await callGalleryApi<{
     items: Array<{
       itemId: string;
@@ -755,19 +873,25 @@ export async function retryGalleryItemUpload(
   const urls = presign.data?.items?.[0];
   if (presign.error || !urls) return { error: presign.error || "Brak URL R2." };
 
+  recordLastMediaAction("PUT full (R2 retry)");
   const putFull = await fetch(urls.putUrlFull, {
     method: "PUT",
     headers: urls.headers.full,
     body: photo.main,
   });
-  if (!putFull.ok) return { error: `Upload R2 failed (${putFull.status}).` };
+  if (!putFull.ok) {
+    recordLastMediaAction(`PUT full HTTP ${putFull.status}`);
+    return { error: `Upload R2 failed (${putFull.status}).` };
+  }
   if (photo.thumb) {
+    recordLastMediaAction("PUT thumb (R2 retry)");
     await fetch(urls.putUrlThumb, {
       method: "PUT",
       headers: urls.headers.thumb,
       body: photo.thumb,
     });
   }
+  recordLastMediaAction("r2_confirm_gallery_item (retry)");
   const confirm = await callGalleryApi("r2_confirm_gallery_item", {
     galleryId,
     itemId,
@@ -778,5 +902,13 @@ export async function retryGalleryItemUpload(
     height: photo.height,
     recompute: true,
   });
-  return confirm.error ? { error: confirm.error } : { data: { ok: true } };
+  if (confirm.error) {
+    recordLastMediaAction("r2_confirm_gallery_item failed");
+    return { error: confirm.error };
+  }
+  recordLastMediaAction("r2_confirm_gallery_item ok");
+  return { data: { ok: true } };
 }
+
+/** @deprecated Prefer runGalleryUploadPipeline({ gallery, ... }) — pipeline z galerii. */
+export type GalleryUploadPipeline = MediaPipeline;

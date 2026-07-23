@@ -46,6 +46,7 @@ import {
   shouldCreateSyncJob,
   normalizeOrgMediaPipeline,
   authorizeGalleryMediaAccess,
+  legacyUploadItemRejectionForPipeline,
   orgIdFromHotKey,
   GLOBAL_DEFAULT_PIPELINE,
 } from "../_shared/mediaPolicy.ts";
@@ -68,9 +69,11 @@ const MEDIA_SYNC_HOOK_SECRET = Deno.env.get("MEDIA_SYNC_HOOK_SECRET") ?? "";
 
 class ActionError extends Error {
   status: number;
-  constructor(message: string, status = 200) {
+  code?: string;
+  constructor(message: string, status = 200, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -206,6 +209,7 @@ async function enqueueMediaSync(job: {
   galleryId?: string;
   orgId?: string;
   opId?: string;
+  jobId?: string;
 }): Promise<void> {
   if (!MEDIA_SYNC_HOOK_URL) return;
   try {
@@ -949,6 +953,29 @@ async function actionGalleryUploadItem(admin: SupabaseClient, callerId: string, 
     return { gallery: rowToGallery(updatedGallery) };
   };
 
+  // Soft reject: stary/niezgodny klient — NIE markFailed (409).
+  const wrongPipe = legacyUploadItemRejectionForPipeline(gallery.pipeline as string);
+  if (wrongPipe) {
+    console.warn("[gallery-api] wrong_pipeline soft-reject", {
+      galleryId,
+      itemId,
+      galleryPipeline: gallery.pipeline,
+      errorCode: wrongPipe.errorCode,
+    });
+    try {
+      await admin
+        .from("gallery_items")
+        .update({
+          sync_last_error: "wrong_pipeline: legacy gallery_upload_item rejected (soft)",
+        })
+        .eq("id", itemId)
+        .eq("gallery_id", galleryId);
+    } catch (e) {
+      console.warn("[gallery-api] wrong_pipeline diag write failed", e);
+    }
+    throw new ActionError(wrongPipe.errorMessage, wrongPipe.httpStatus, wrongPipe.errorCode);
+  }
+
   const storage = await getActiveStorage(admin, gallery.org_id as string);
   if (!storage || !gallery.provider_folder_id) {
     const { gallery: g } = await markFailed("no_storage", "Magazyn plików niedostępny.");
@@ -1405,12 +1432,23 @@ async function actionMediaEnqueueGalleryItem(
   if (item.r2_status !== "ready") {
     throw new ActionError("Brak pliku w R2.", 200);
   }
+  const { data: jobRow } = await admin
+    .from("media_sync_jobs")
+    .select("id")
+    .eq("ref_id", itemId)
+    .eq("kind", "gallery_full")
+    .in("state", ["pending", "running", "failed"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   await enqueueMediaSync({
     kind: "gallery_full",
     refId: itemId,
     galleryId: item.gallery_id as string,
     orgId,
     opId: (item.sync_operation_id as string) ?? undefined,
+    ...(jobRow?.id ? { jobId: jobRow.id as string } : {}),
   });
   return { ok: true };
 }
@@ -1638,7 +1676,7 @@ async function actionR2ConfirmGalleryItem(
 
   const { data: existingJobRows } = await admin
     .from("media_sync_jobs")
-    .select("kind, ref_id, state, payload")
+    .select("id, kind, ref_id, state, payload")
     .eq("ref_id", itemId)
     .eq("kind", "gallery_full");
 
@@ -1659,19 +1697,35 @@ async function actionR2ConfirmGalleryItem(
     opId,
   });
 
+  let enqueuedJobId: string | undefined;
   // Re-confirm gdy already ready + SP queued/verified → sukces, bez duplikatu joba.
   if (createJob && !(alreadyReady && spAlreadyQueuedOrVerified)) {
-    await admin.from("media_sync_jobs").insert({
-      kind: "gallery_full",
-      ref_id: itemId,
-      state: "pending",
-      payload: {
-        galleryId,
-        orgId: gallery.org_id,
-        opId,
-        r2Key: fullKey,
-      },
-    });
+    const { data: insertedJob } = await admin
+      .from("media_sync_jobs")
+      .insert({
+        kind: "gallery_full",
+        ref_id: itemId,
+        state: "pending",
+        payload: {
+          galleryId,
+          orgId: gallery.org_id,
+          opId,
+          r2Key: fullKey,
+        },
+      })
+      .select("id")
+      .single();
+    enqueuedJobId =
+      insertedJob && typeof (insertedJob as Row).id === "string"
+        ? ((insertedJob as Row).id as string)
+        : undefined;
+  } else {
+    const pending = ((existingJobRows as Row[] | null) ?? []).find(
+      (j) => j.state === "pending" || j.state === "running" || j.state === "failed",
+    );
+    if (pending && typeof pending.id === "string") {
+      enqueuedJobId = pending.id as string;
+    }
   }
 
   // Zawsze enqueue — idempotentny consumer obsłuży duplikaty.
@@ -1681,6 +1735,7 @@ async function actionR2ConfirmGalleryItem(
     galleryId,
     orgId: gallery.org_id as string,
     opId,
+    ...(enqueuedJobId ? { jobId: enqueuedJobId } : {}),
   });
 
   const doRecompute = body.recompute !== false;
@@ -1910,7 +1965,13 @@ Deno.serve(async (req) => {
     return json(result, 200);
   } catch (e) {
     if (e instanceof ActionError) {
-      return json({ error: e.message }, e.status);
+      return json(
+        {
+          error: e.message,
+          ...(e.code ? { errorCode: e.code } : {}),
+        },
+        e.status,
+      );
     }
     console.error(`[gallery-api] action=${action}`, e);
     return json({ error: "Wewnętrzny błąd serwera." }, 500);

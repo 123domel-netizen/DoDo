@@ -26,6 +26,7 @@ export default defineConfig({
       strategies: "injectManifest",
       srcDir: "src",
       filename: "sw.ts",
+      // Nie bierz SW z HTTP cache przeglądarki — szybsza aktualizacja po deployu preview.
       injectManifest: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
       },

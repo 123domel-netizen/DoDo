@@ -20,3 +20,14 @@ supabase/.temp
 # Wrangler local dry-run / cache
 .wrangler
 worker/.wrangler-dry/
+worker/wrangler.preview.local.jsonc
+.dev.vars
+worker/.dev.vars
+
+
+# Local media sync hook secret (do not commit)
+worker/.media-hook-secret.local
+
+# Scratch SQL dumps
+_d*.sql
+_*.tmp.sql

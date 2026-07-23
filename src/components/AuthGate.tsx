@@ -3,6 +3,7 @@ import { cloudEnabled, supabase } from "@/lib/supabase";
 import {
   clearAuthErrorFromUrl,
   parseAuthErrorFromUrl,
+  recordOAuthCallbackOrigin,
   signInWithGoogle,
 } from "@/lib/auth";
 import { Logo } from "@/components/brand/Logo";
@@ -19,6 +20,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!cloudEnabled || !supabase) return;
+    // Po powrocie z Google — zapisz origin callback (bez code/tokenów).
+    if (typeof window !== "undefined" && window.location.search.includes("code=")) {
+      recordOAuthCallbackOrigin();
+    }
     supabase.auth.getSession().then(({ data }) => {
       setSignedIn(Boolean(data.session));
       setReady(true);
@@ -28,6 +33,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       if (session) {
         setErr(null);
         clearAuthErrorFromUrl();
+        recordOAuthCallbackOrigin();
       }
     });
     return () => sub.subscription.unsubscribe();
@@ -99,4 +105,4 @@ function GoogleIcon() {
     </svg>
   );
 }
-
+

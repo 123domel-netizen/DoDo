@@ -9,6 +9,7 @@ import { MobileShell } from "@/components/mobile/MobileShell";
 import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { NotificationPermissionPrompt } from "@/components/prompts/NotificationPermissionPrompt";
 import { AppUpdatePrompt } from "@/components/prompts/AppUpdatePrompt";
+import { R2PreviewBanner } from "@/components/media/R2PreviewBanner";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
@@ -76,6 +77,8 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      {/* Poza AuthGate — widoczny także na ekranie logowania (potwierdzenie bundla). */}
+      <R2PreviewBanner />
       <AuthGate>
         <GroupSelectPrompt />
         <NotificationPermissionPrompt />

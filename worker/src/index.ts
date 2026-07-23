@@ -1,7 +1,10 @@
 import {
+  jobStateAfterSyncError,
   normalizeQueueMessage,
   shouldCleanupR2Object,
+  shouldCronEnqueueGalleryItem,
   shouldProcessArchiveJob,
+  shouldReconcileJobWithoutUpload,
 } from "./pipelinePolicy";
 
 /**
@@ -32,7 +35,75 @@ export type ArchiveJob = {
   orgId?: string;
   opId?: string;
   r2Key?: string;
+  /** Optional media_sync_jobs.id from Edge insert. */
+  jobId?: string;
 };
+
+type MediaSyncJobRow = {
+  id: string;
+  state: string;
+  attempts: number;
+  last_error: string | null;
+  locked_at: string | null;
+};
+
+async function findMediaSyncJob(
+  env: Env,
+  job: ArchiveJob,
+): Promise<MediaSyncJobRow | null> {
+  if (job.jobId) {
+    return sbGet<MediaSyncJobRow>(
+      env,
+      `media_sync_jobs?id=eq.${job.jobId}&select=id,state,attempts,last_error,locked_at`,
+    );
+  }
+  if (job.kind === "cleanup_r2") return null;
+  return sbGet<MediaSyncJobRow>(
+    env,
+    `media_sync_jobs?ref_id=eq.${job.refId}&kind=eq.${job.kind}&order=created_at.desc&limit=1&select=id,state,attempts,last_error,locked_at`,
+  );
+}
+
+async function markJobRunning(env: Env, jobRow: MediaSyncJobRow): Promise<MediaSyncJobRow> {
+  const attempts = (jobRow.attempts ?? 0) + 1;
+  const lockedAt = new Date().toISOString();
+  await sbPatch(env, "media_sync_jobs", jobRow.id, {
+    state: "running",
+    attempts,
+    locked_at: lockedAt,
+    last_error: null,
+    finished_at: null,
+  });
+  return { ...jobRow, state: "running", attempts, locked_at: lockedAt, last_error: null };
+}
+
+async function markJobDone(env: Env, jobId: string): Promise<void> {
+  await sbPatch(env, "media_sync_jobs", jobId, {
+    state: "done",
+    last_error: null,
+    locked_at: null,
+    finished_at: new Date().toISOString(),
+  });
+}
+
+async function markJobFailed(
+  env: Env,
+  jobRow: MediaSyncJobRow | null,
+  error: string,
+  permanent: boolean,
+): Promise<void> {
+  if (!jobRow) return;
+  const next = jobStateAfterSyncError({
+    permanent,
+    attempts: jobRow.attempts ?? 0,
+  });
+  await sbPatch(env, "media_sync_jobs", jobRow.id, {
+    state: next,
+    last_error: error.slice(0, 500),
+    locked_at: null,
+    ...(next === "dead" ? { finished_at: new Date().toISOString() } : {}),
+  });
+}
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
@@ -209,6 +280,27 @@ async function syncGalleryFull(env: Env, job: ArchiveJob): Promise<void> {
   }>(env, `gallery_items?id=eq.${job.refId}&select=*`);
 
   if (!item) return; // deleted — noop
+
+  let jobRow = await findMediaSyncJob(env, job);
+
+  // Idempotent reconcile: item verified + job not done → fix job only (no SP upload).
+  if (
+    jobRow &&
+    shouldReconcileJobWithoutUpload({
+      itemSpStatus: item.sp_status,
+      itemHasSpDriveItem: Boolean(item.sp_drive_item_id),
+      jobState: jobRow.state,
+    })
+  ) {
+    await markJobDone(env, jobRow.id);
+    return;
+  }
+
+  // Redelivery of already-done job → no upload.
+  if (jobRow?.state === "done") {
+    return;
+  }
+
   const gate = shouldProcessArchiveJob({
     spStatus: item.sp_status,
     spDriveItemId: item.sp_drive_item_id,
@@ -217,10 +309,18 @@ async function syncGalleryFull(env: Env, job: ArchiveJob): Promise<void> {
     rowOpId: item.sync_operation_id,
   });
   if (!gate.process) {
+    if (gate.reason === "already_verified") {
+      if (jobRow) await markJobDone(env, jobRow.id);
+      return;
+    }
     if (gate.reason === "not_r2_ready") throw new Error("Item not r2_ready");
     return;
   }
   if (!item.r2_key_full) throw new Error("Item not r2_ready");
+
+  if (jobRow) {
+    jobRow = await markJobRunning(env, jobRow);
+  }
 
   await sbPatch(env, "gallery_items", item.id, {
     sp_status: "copying",
@@ -248,6 +348,9 @@ async function syncGalleryFull(env: Env, job: ArchiveJob): Promise<void> {
       sp_status: "none",
       sync_last_error: "gallery deleted",
     });
+    if (jobRow) {
+      await markJobFailed(env, jobRow, "gallery deleted", true);
+    }
     return;
   }
 
@@ -265,6 +368,9 @@ async function syncGalleryFull(env: Env, job: ArchiveJob): Promise<void> {
       sync_last_error: "Brak aktywnego magazynu SharePoint",
       retention_hold: true,
     });
+    if (jobRow) {
+      await markJobFailed(env, jobRow, "No active storage", true);
+    }
     throw new Error("No active storage");
   }
 
@@ -299,6 +405,7 @@ async function syncGalleryFull(env: Env, job: ArchiveJob): Promise<void> {
   const days = retentionDays(env, "gallery");
   const deleteAfter = new Date(Date.now() + days * 86400_000).toISOString();
 
+  // Preferred order: item verified first, then job done (safe if job patch fails).
   await sbPatch(env, "gallery_items", item.id, {
     sp_status: "verified",
     sp_drive_item_id: uploaded.id,
@@ -308,6 +415,10 @@ async function syncGalleryFull(env: Env, job: ArchiveJob): Promise<void> {
     r2_delete_after: deleteAfter,
     sync_last_error: null,
   });
+
+  if (jobRow) {
+    await markJobDone(env, jobRow.id);
+  }
 }
 
 async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
@@ -401,7 +512,11 @@ async function syncAttachment(env: Env, job: ArchiveJob): Promise<void> {
 }
 
 async function handleJob(env: Env, job: ArchiveJob): Promise<void> {
+  let jobRow: MediaSyncJobRow | null = null;
   try {
+    if (job.kind !== "cleanup_r2") {
+      jobRow = await findMediaSyncJob(env, job);
+    }
     if (job.kind === "gallery_full") await syncGalleryFull(env, job);
     else if (job.kind === "attachment") await syncAttachment(env, job);
     else if (job.kind === "cleanup_r2") await cleanupDueR2(env);
@@ -412,14 +527,40 @@ async function handleJob(env: Env, job: ArchiveJob): Promise<void> {
       console.error("[media-sync] cleanup failed", msg);
       return;
     }
+
+    // If item was verified before job mark failed → reconcile to done (no R2 delete).
+    if (job.kind === "gallery_full") {
+      const item = await sbGet<{ sp_status: string; sp_drive_item_id: string | null }>(
+        env,
+        `gallery_items?id=eq.${job.refId}&select=sp_status,sp_drive_item_id`,
+      ).catch(() => null);
+      if (
+        item &&
+        jobRow &&
+        shouldReconcileJobWithoutUpload({
+          itemSpStatus: item.sp_status,
+          itemHasSpDriveItem: Boolean(item.sp_drive_item_id),
+          jobState: jobRow.state,
+        })
+      ) {
+        await markJobDone(env, jobRow.id).catch(() => undefined);
+        return;
+      }
+    }
+
     const table = job.kind === "attachment" ? "message_attachments" : "gallery_items";
-    const permanent = status === 401 || status === 403 || /Brak magazynu|No active storage/i.test(msg);
+    const permanent =
+      status === 401 || status === 403 || /Brak magazynu|No active storage/i.test(msg);
+    // Refresh job row for attempt count after possible markJobRunning.
+    jobRow = (await findMediaSyncJob(env, job).catch(() => null)) ?? jobRow;
+    await markJobFailed(env, jobRow, msg, permanent).catch(() => undefined);
     await sbPatch(env, table, job.refId, {
       sp_status: permanent ? "permanent_failure" : "failed",
       sync_last_error: msg.slice(0, 500),
       retention_hold: true,
       sync_next_at: new Date(Date.now() + 30 * 60_000).toISOString(),
     }).catch(() => undefined);
+    // Permanent failure never deletes R2 (retention_hold + no cleanup without verified+due).
     if (!permanent) throw e; // Queue retry
   }
 }
@@ -548,9 +689,38 @@ export default {
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
-    // 1) Re-enqueue gallery sync backlog
+    // 0) Reconcile: item verified but job stuck pending/running/failed → mark done (no upload).
+    const stuckRes = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/media_sync_jobs?state=in.(pending,running,failed)&kind=eq.gallery_full&select=id,ref_id,state&limit=30`,
+      { headers: sbHeaders(env) },
+    );
+    if (stuckRes.ok) {
+      const stuck = (await stuckRes.json()) as Array<{
+        id: string;
+        ref_id: string;
+        state: string;
+      }>;
+      for (const j of stuck) {
+        const item = await sbGet<{ sp_status: string; sp_drive_item_id: string | null }>(
+          env,
+          `gallery_items?id=eq.${j.ref_id}&select=sp_status,sp_drive_item_id`,
+        );
+        if (
+          item &&
+          shouldReconcileJobWithoutUpload({
+            itemSpStatus: item.sp_status,
+            itemHasSpDriveItem: Boolean(item.sp_drive_item_id),
+            jobState: j.state,
+          })
+        ) {
+          await markJobDone(env, j.id).catch(() => undefined);
+        }
+      }
+    }
+
+    // 1) Re-enqueue gallery sync backlog (never verified items)
     const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/gallery_items?sp_status=in.(queued,failed,retry_scheduled)&r2_status=eq.ready&select=id,gallery_id,sync_operation_id&limit=20`,
+      `${env.SUPABASE_URL}/rest/v1/gallery_items?sp_status=in.(queued,failed,retry_scheduled)&r2_status=eq.ready&select=id,gallery_id,sync_operation_id,sp_status&limit=20`,
       { headers: sbHeaders(env) },
     );
     if (res.ok) {
@@ -558,8 +728,10 @@ export default {
         id: string;
         gallery_id: string;
         sync_operation_id: string | null;
+        sp_status: string;
       }>;
       for (const r of rows) {
+        if (!shouldCronEnqueueGalleryItem(r.sp_status)) continue;
         await env.MEDIA_ARCHIVE_QUEUE.send({
           kind: "gallery_full",
           refId: r.id,
