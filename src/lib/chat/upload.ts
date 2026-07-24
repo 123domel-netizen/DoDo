@@ -11,6 +11,8 @@ import {
 } from "@/lib/media/pipelinePolicy";
 
 export type AttachSendMode = "photo" | "file";
+/** Office: kopia w czacie vs plik publiczny do edycji na SharePoint. */
+export type OfficeAttachMode = "attachment" | "editable";
 
 /**
  * CHAT attachments: R2 when client build allows R2 (org legacy_sp = rollback).
@@ -289,6 +291,8 @@ export async function uploadAttachmentsForMessage(
     orgMediaPipeline?: string | null;
     /** photo = compress ≤2560 + thumb ~480; file = original bytes */
     attachMode?: AttachSendMode;
+    /** Word/Excel: attachment (R2) vs editable (SP + public link) */
+    officeMode?: OfficeAttachMode;
     /** voice / forward / move */
     forceLegacy?: boolean;
   } = {},
@@ -298,13 +302,37 @@ export async function uploadAttachmentsForMessage(
   if (!supabase) return { attachments, errors: ["Brak chmury."] };
 
   const mode: AttachSendMode = options.attachMode ?? "file";
+  const officeMode: OfficeAttachMode = options.officeMode ?? "attachment";
   const useR2 =
     preferredAttachmentPipeline(options.orgMediaPipeline, options.forceLegacy) ===
       "r2_sp" && Boolean(options.orgId);
 
+  const { isOfficeEditableFile } = await import("@/lib/chat/fileKinds");
+
   for (const file of files) {
     if (file.size > MAX_CHAT_FILE_BYTES) {
       errors.push(`${file.name}: plik przekracza 25 MB.`);
+      continue;
+    }
+
+    if (
+      officeMode === "editable" &&
+      options.orgId &&
+      isOfficeEditableFile(file.type, file.name)
+    ) {
+      try {
+        const att = await uploadOneEditableViaSharePoint(
+          conversationId,
+          messageId,
+          options.orgId,
+          file,
+        );
+        attachments.push(att);
+      } catch (e) {
+        errors.push(
+          `${file.name}: ${e instanceof Error ? e.message : "Upload do edycji nie powiódł się."}`,
+        );
+      }
       continue;
     }
 
@@ -403,6 +431,36 @@ export async function uploadAttachmentsForMessage(
   }
 
   return { attachments, errors };
+}
+
+/**
+ * Upload Office → SharePoint przez Edge (multipart) — bez CORS w przeglądarce.
+ * Serwer: folder + upload Graph + publiczny link edycji + wiersz DB.
+ */
+async function uploadOneEditableViaSharePoint(
+  conversationId: string,
+  messageId: string,
+  orgId: string,
+  file: File,
+): Promise<ChatAttachment> {
+  const { uploadEditableAttachment } = await import("@/lib/chat/galleryApi");
+  const attId = uid();
+  const fileName = sanitizeFileName(file.name);
+  const mimeType = file.type || "application/octet-stream";
+
+  const res = await uploadEditableAttachment({
+    conversationId,
+    messageId,
+    orgId,
+    attachmentId: attId,
+    file,
+    fileName,
+    mimeType,
+  });
+  if (res.error || !res.data?.attachment) {
+    throw new Error(res.error || "Nie udało się dodać pliku do edycji.");
+  }
+  return res.data.attachment;
 }
 
 async function uploadOneAttachmentViaR2(

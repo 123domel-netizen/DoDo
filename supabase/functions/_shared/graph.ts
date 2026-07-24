@@ -241,3 +241,101 @@ export async function deleteItem(driveId: string, itemId: string): Promise<void>
     throw e;
   }
 }
+
+/**
+ * Sesja uploadu Graph — klient PUTuje bajty na zwrócony uploadUrl
+ * (URL jest pre-auth, bez Bearer po stronie przeglądarki).
+ */
+export async function createUploadSession(
+  driveId: string,
+  folderItemId: string,
+  fileName: string,
+): Promise<{ uploadUrl: string; expirationDateTime?: string }> {
+  const data = await graphFetch<{
+    uploadUrl?: string;
+    expirationDateTime?: string;
+  }>(
+    `/drives/${driveId}/items/${folderItemId}:/${encodePathSegment(fileName)}:/createUploadSession`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        item: {
+          "@microsoft.graph.conflictBehavior": "rename",
+          name: fileName,
+        },
+      }),
+    },
+  );
+  if (!data?.uploadUrl) {
+    throw new GraphError("Graph nie zwrócił uploadUrl sesji.", 502);
+  }
+  return { uploadUrl: data.uploadUrl, expirationDateTime: data.expirationDateTime };
+}
+
+/**
+ * Link edycji: najpierw publiczny (anyone), potem organizacja.
+ * Wiele witryn SharePoint ma wyłączone „Anyone” — wtedy organization nadal działa.
+ */
+export async function createEditShareLink(
+  driveId: string,
+  itemId: string,
+): Promise<{ shareUrl: string; webUrl?: string; scope: "anonymous" | "organization" }> {
+  let webUrl: string | undefined;
+  try {
+    const item = await graphFetch<GraphDriveItem>(
+      `/drives/${driveId}/items/${itemId}?$select=id,webUrl`,
+    );
+    webUrl = item.webUrl;
+  } catch {
+    // optional
+  }
+
+  const tryScope = async (
+    scope: "anonymous" | "organization",
+  ): Promise<string | null> => {
+    try {
+      const data = await graphFetch<{
+        link?: { webUrl?: string; type?: string; scope?: string };
+      }>(`/drives/${driveId}/items/${itemId}/createLink`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "edit", scope }),
+      });
+      return data?.link?.webUrl ?? null;
+    } catch (e) {
+      if (scope === "anonymous") return null;
+      throw e;
+    }
+  };
+
+  const anon = await tryScope("anonymous");
+  if (anon) return { shareUrl: anon, webUrl, scope: "anonymous" };
+
+  try {
+    const org = await tryScope("organization");
+    if (org) return { shareUrl: org, webUrl, scope: "organization" };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new GraphError(
+      `Nie udało się utworzyć linku edycji (${msg}). ` +
+        `W SharePoint włącz udostępnianie linków (co najmniej „osoby w organizacji”) ` +
+        `dla tej witryny magazynu plików.`,
+      502,
+    );
+  }
+
+  throw new GraphError(
+    "Nie udało się utworzyć linku edycji. Sprawdź ustawienia udostępniania witryny SharePoint.",
+    502,
+  );
+}
+
+/** @deprecated Użyj createEditShareLink — najpierw anonymous, potem organization. */
+export async function createAnonymousEditLink(
+  driveId: string,
+  itemId: string,
+): Promise<{ shareUrl: string; webUrl?: string }> {
+  const link = await createEditShareLink(driveId, itemId);
+  return { shareUrl: link.shareUrl, webUrl: link.webUrl };
+}

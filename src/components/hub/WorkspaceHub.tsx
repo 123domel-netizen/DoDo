@@ -39,6 +39,7 @@ import {
   openConversation,
   openMediaInPanel,
   openRegistryInPanel,
+  startDm,
 } from "@/lib/chat/init";
 import {
   fetchAttachmentsForConversations,
@@ -80,7 +81,13 @@ import {
   type HubListFilterState,
 } from "@/lib/chat/hubListFilters";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { ContactDiscoverSection } from "@/components/chat/ContactDiscoverSection";
 import { dmPeerMember } from "@/lib/avatar";
+import {
+  contactsWithoutDm,
+  loadChatEligiblePeople,
+  type ChatEligiblePerson,
+} from "@/lib/contacts";
 import {
   RAIL,
   RAIL_TREE,
@@ -352,6 +359,7 @@ export function WorkspaceHub() {
   const items = useStore((s) => s.items);
   const groups = useStore((s) => s.groups);
   const tags = useStore((s) => s.tags);
+  const myOrgs = useStore((s) => s.myOrgs);
 
   const [showNew, setShowNew] = useState(false);
   const [showVisibility, setShowVisibility] = useState(false);
@@ -362,6 +370,8 @@ export function WorkspaceHub() {
   const [globalResults, setGlobalResults] = useState<ChatSearchResult[] | null>(null);
   const [globalSearching, setGlobalSearching] = useState(false);
   const [publicChannels, setPublicChannels] = useState<PublicChannelInfo[]>([]);
+  const [eligiblePeople, setEligiblePeople] = useState<ChatEligiblePerson[]>([]);
+  const [startingDmUserId, setStartingDmUserId] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<ChatDecision[] | null>(null);
   const [notes, setNotes] = useState<ChatNote[] | null>(null);
   const [media, setMedia] = useState<(ConversationAttachment & { conversationId: string })[] | null>(
@@ -408,6 +418,10 @@ export function WorkspaceHub() {
   );
   const people = sorted.filter((c) => c.kind === "dm");
   const channels = sorted.filter((c) => c.kind === "channel");
+  const idleContacts = useMemo(
+    () => contactsWithoutDm(eligiblePeople, overview, myUserId),
+    [eligiblePeople, overview, myUserId],
+  );
   const convIds = useMemo(() => activeOverview.map((c) => c.id), [activeOverview]);
   const convIdsKey = convIds.join(",");
   /** Decyzje/notatki: wszystkie rozmowy — filtr grupy działa po etykiecie wpisu. */
@@ -447,6 +461,20 @@ export function WorkspaceHub() {
   useEffect(() => {
     if (cloudEnabled) void fetchPublicChannels().then(setPublicChannels);
   }, []);
+
+  useEffect(() => {
+    if (!cloudEnabled || !myUserId || myOrgs.length === 0) {
+      setEligiblePeople([]);
+      return;
+    }
+    let cancelled = false;
+    void loadChatEligiblePeople({ myOrgs, myUserId }).then((list) => {
+      if (!cancelled) setEligiblePeople(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [myUserId, myOrgs]);
 
   // Ranking „Ulubione”: wolumen wiadomości z ostatniego miesiąca.
   useEffect(() => {
@@ -571,6 +599,15 @@ export function WorkspaceHub() {
     }
     void openConversation(channelId);
     setRouteHash({ view: "conversation", conversationId: channelId });
+  };
+
+  const handleStartContactDm = async (userId: string) => {
+    setStartingDmUserId(userId);
+    const id = await startDm([userId]);
+    setStartingDmUserId(null);
+    if (!id) return;
+    void openConversation(id);
+    setRouteHash({ view: "conversation", conversationId: id });
   };
 
   const renderConvRow = (
@@ -1018,6 +1055,13 @@ export function WorkspaceHub() {
                     .filter((e) => !folderIdsInUse.has(e.id))
                     .map((e) => renderConvRow(e))
                 )}
+                {!hubMatchGroup && (
+                  <ContactDiscoverSection
+                    contacts={idleContacts}
+                    onStart={(uid) => void handleStartContactDm(uid)}
+                    busyUserId={startingDmUserId}
+                  />
+                )}
               </div>
               {/* Kanały — prawa kolumna */}
               <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1083,7 +1127,7 @@ export function WorkspaceHub() {
           )}
 
           {chatBrowse === "people" && (
-            people.length === 0 ? (
+            people.length === 0 && idleContacts.length === 0 ? (
               <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
                 Brak rozmów prywatnych.
                 <br />
@@ -1097,11 +1141,18 @@ export function WorkspaceHub() {
                   </div>
                   {people.filter((e) => !e.myPinnedAt).length === 0 ? (
                     <div className="px-4 py-6 text-center text-[11px] text-ink-faint">
-                      Wszystkie osoby są przypięte.
+                      {people.length === 0
+                        ? "Brak rozmów prywatnych."
+                        : "Wszystkie osoby są przypięte."}
                     </div>
                   ) : (
                     people.filter((e) => !e.myPinnedAt).map((e) => renderConvRow(e))
                   )}
+                  <ContactDiscoverSection
+                    contacts={idleContacts}
+                    onStart={(uid) => void handleStartContactDm(uid)}
+                    busyUserId={startingDmUserId}
+                  />
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
                   <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">

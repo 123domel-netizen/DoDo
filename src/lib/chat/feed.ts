@@ -1,9 +1,42 @@
-import type { ChatLastMessage, ChatMessage, ChatOverviewEntry, FocusFeed } from "@/lib/chat/types";
+import type {
+  ChatAttachment,
+  ChatLastMessage,
+  ChatMessage,
+  ChatOverviewEntry,
+  FocusFeed,
+} from "@/lib/chat/types";
 
 /** Klucz porządku feedu: czas serwera, remis rozstrzyga id. */
 function isAfter(a: ChatMessage, b: ChatMessage): boolean {
   if (a.createdAt !== b.createdAt) return a.createdAt > b.createdAt;
   return a.id > b.id;
+}
+
+/**
+ * Nie nadpisuj znanych załączników pustą tablicą (np. race outbox / realtime
+ * bez zagnieżdżeń). Niepusty `next` zawsze wygrywa.
+ */
+export function mergeAttachments(
+  prev: ChatAttachment[] | undefined,
+  next: ChatAttachment[] | undefined,
+): ChatAttachment[] | undefined {
+  if (next === undefined) return prev;
+  if (next.length > 0) return next;
+  if (prev && prev.length > 0) return prev;
+  return next;
+}
+
+/**
+ * Realtime / rowToMessage nie mają klucza `sendState` → zachowaj lokalne
+ * pending/failed (upload pliku trwa po INSERT). Jawne `sendState: undefined`
+ * (Object.hasOwn) czyści stan po sukcesie / outbox flush.
+ */
+export function mergeSendState(
+  prev: ChatMessage["sendState"],
+  msg: ChatMessage,
+): ChatMessage["sendState"] {
+  if (Object.prototype.hasOwnProperty.call(msg, "sendState")) return msg.sendState;
+  return prev;
 }
 
 /**
@@ -14,12 +47,18 @@ export function upsertMessageInList(list: ChatMessage[], msg: ChatMessage): Chat
   const idx = list.findIndex((m) => m.id === msg.id);
   if (idx >= 0) {
     const prev = list[idx];
+    const attachments =
+      msg.sendState === "failed" &&
+      Array.isArray(msg.attachments) &&
+      msg.attachments.length === 0
+        ? []
+        : mergeAttachments(prev.attachments, msg.attachments);
     const merged: ChatMessage = {
       ...prev,
       ...msg,
       links: msg.links ?? prev.links,
-      attachments: msg.attachments ?? prev.attachments,
-      sendState: msg.sendState,
+      attachments,
+      sendState: mergeSendState(prev.sendState, msg),
     };
     const next = [...list];
     next[idx] = merged;
@@ -46,14 +85,20 @@ export function trimList(list: ChatMessage[], max: number): ChatMessage[] {
 
 /** Merge z zachowaniem zagnieżdżeń, których event realtime nie niesie. */
 export function mergeKnownNested(prev: ChatMessage, msg: ChatMessage): ChatMessage {
+  const attachments =
+    msg.sendState === "failed" &&
+    Array.isArray(msg.attachments) &&
+    msg.attachments.length === 0
+      ? []
+      : mergeAttachments(prev.attachments, msg.attachments);
   return {
     ...prev,
     ...msg,
     links: msg.links ?? prev.links,
-    attachments: msg.attachments ?? prev.attachments,
+    attachments,
     reactions: msg.reactions ?? prev.reactions,
     votes: msg.votes ?? prev.votes,
-    sendState: msg.sendState,
+    sendState: mergeSendState(prev.sendState, msg),
   };
 }
 

@@ -17,7 +17,7 @@ import {
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { isMuted, overviewTitle } from "@/lib/chat/feed";
-import { jumpToMessage, openConversation } from "@/lib/chat/init";
+import { jumpToMessage, openConversation, startDm } from "@/lib/chat/init";
 import { fetchMyMentions, joinChannel, searchAll } from "@/lib/chat/api";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
 import { ConversationKindMark } from "@/components/chat/PresenceDot";
@@ -34,6 +34,12 @@ import type {
 import { formatConversationLastPreview } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { ContactDiscoverSection } from "@/components/chat/ContactDiscoverSection";
+import {
+  contactsWithoutDm,
+  loadChatEligiblePeople,
+  type ChatEligiblePerson,
+} from "@/lib/contacts";
 import { conversationRowAvatarLayout } from "@/lib/chat/conversationRowVisual";
 import { dmPeerMember } from "@/lib/avatar";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
@@ -56,6 +62,7 @@ import {
   type MobileHubMode,
 } from "@/components/hub/hubRail";
 import { useHubRegistryLists } from "@/hooks/useHubRegistryLists";
+import { cloudEnabled } from "@/lib/supabase";
 
 type RegistryFocus = NonNullable<ReturnType<typeof useChatStore.getState>["registryFocus"]>;
 
@@ -240,6 +247,7 @@ export function MobileChatHub() {
   const myUserId = useChatStore((s) => s.userId)!;
   const profiles = useChatStore((s) => s.profiles);
   const items = useStore((s) => s.items);
+  const myOrgs = useStore((s) => s.myOrgs);
 
   const [mode, setMode] = useState<MobileHubMode>({ kind: "browse", id: "all" });
   const [showNew, setShowNew] = useState(false);
@@ -254,6 +262,8 @@ export function MobileChatHub() {
   const [mediaConvId, setMediaConvId] = useState<string | null>(null);
   const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
   const [listFilters, setListFilters] = useState<HubListFilterState>(EMPTY_HUB_LIST_FILTERS);
+  const [eligiblePeople, setEligiblePeople] = useState<ChatEligiblePerson[]>([]);
+  const [startingDmUserId, setStartingDmUserId] = useState<string | null>(null);
 
   const hubTab = mode.kind === "tab" ? mode.id : "chat";
   const {
@@ -276,6 +286,25 @@ export function MobileChatHub() {
   useEffect(() => {
     setListFilters(EMPTY_HUB_LIST_FILTERS);
   }, [hubTab]);
+
+  useEffect(() => {
+    if (!cloudEnabled || !myUserId || myOrgs.length === 0) {
+      setEligiblePeople([]);
+      return;
+    }
+    let cancelled = false;
+    void loadChatEligiblePeople({ myOrgs, myUserId }).then((list) => {
+      if (!cancelled) setEligiblePeople(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [myUserId, myOrgs]);
+
+  const idleContacts = useMemo(
+    () => contactsWithoutDm(eligiblePeople, overview, myUserId),
+    [eligiblePeople, overview, myUserId],
+  );
 
   const filterConversations = useMemo(
     () =>
@@ -303,6 +332,15 @@ export function MobileChatHub() {
     }
     void openConversation(channelId);
     setRouteHash({ view: "conversation", conversationId: channelId });
+  };
+
+  const handleStartContactDm = async (userId: string) => {
+    setStartingDmUserId(userId);
+    const id = await startDm([userId]);
+    setStartingDmUserId(null);
+    if (!id) return;
+    void openConversation(id);
+    setRouteHash({ view: "conversation", conversationId: id });
   };
 
   const openMention = (msg: ChatMessage) => {
@@ -436,11 +474,18 @@ export function MobileChatHub() {
 
     if (mode.id === "people" && list.length === 0) {
       return (
-        <div className="px-6 py-10 text-center text-xs leading-relaxed text-ink-faint">
-          Brak rozmów prywatnych.
-          <br />
-          Dodaj osobę przez <span className="text-ink-light">+</span>.
-        </div>
+        <>
+          <div className="px-6 py-6 text-center text-xs leading-relaxed text-ink-faint">
+            Brak rozmów prywatnych.
+            <br />
+            Dodaj osobę przez <span className="text-ink-light">+</span>.
+          </div>
+          <ContactDiscoverSection
+            contacts={idleContacts}
+            onStart={(uid) => void handleStartContactDm(uid)}
+            busyUserId={startingDmUserId}
+          />
+        </>
       );
     }
 
@@ -501,6 +546,11 @@ export function MobileChatHub() {
             dms,
             "Brak rozmów prywatnych. Dodaj osobę przez +.",
           )}
+          <ContactDiscoverSection
+            contacts={idleContacts}
+            onStart={(uid) => void handleStartContactDm(uid)}
+            busyUserId={startingDmUserId}
+          />
           {sectionBlock("Kanały", chans, "Brak kanałów.")}
           {discoverable.length > 0 && (
             <>
@@ -549,6 +599,13 @@ export function MobileChatHub() {
           </>
         )}
         {unpinned.map(renderMobileRow)}
+        {mode.id === "people" && (
+          <ContactDiscoverSection
+            contacts={idleContacts}
+            onStart={(uid) => void handleStartContactDm(uid)}
+            busyUserId={startingDmUserId}
+          />
+        )}
       </>
     );
   };

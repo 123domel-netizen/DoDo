@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BarChart3,
+  Clock,
   CornerUpLeft,
   Film,
   Images,
@@ -14,6 +15,9 @@ import {
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { MAX_CHAT_FILE_BYTES, formatFileSize } from "@/lib/chat/upload";
+import { isOfficeEditableFile } from "@/lib/chat/fileKinds";
+import { fetchStorageStatus } from "@/lib/chat/galleryApi";
+import { useStore } from "@/state/store";
 import {
   applyMention,
   collectMentions,
@@ -43,7 +47,10 @@ interface MessageComposerProps {
     body: string,
     files: File[],
     mentions: string[],
-    opts?: { attachMode?: "photo" | "file" },
+    opts?: {
+      attachMode?: "photo" | "file";
+      officeMode?: "attachment" | "editable";
+    },
   ) => void | Promise<void>;
   placeholder?: string;
   /** Tryb edycji istniejącej wiadomości. */
@@ -56,6 +63,8 @@ interface MessageComposerProps {
   /** Członkowie rozmowy (autouzupełnianie wzmianek @). */
   members?: MentionableMember[];
   myUserId?: string | null;
+  /** Org — do sprawdzenia SharePoint przy „plik do edycji”. */
+  orgId?: string | null;
   onSendVoice?: (file: File, durationSec: number) => void | Promise<void>;
   onSendPoll?: (question: string, options: string[]) => void;
   onSendGif?: (url: string) => void;
@@ -77,6 +86,7 @@ export function MessageComposer({
   onCancelReply,
   members = [],
   myUserId = null,
+  orgId = null,
   onSendVoice,
   onSendPoll,
   onSendGif,
@@ -89,7 +99,12 @@ export function MessageComposer({
   const [body, setBody] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [attachMode, setAttachMode] = useState<"photo" | "file">("file");
+  const [officeMode, setOfficeMode] = useState<"attachment" | "editable">("attachment");
   const [imageModePrompt, setImageModePrompt] = useState<File[] | null>(null);
+  const [officeModePrompt, setOfficeModePrompt] = useState<{
+    files: File[];
+    sharePointReady: boolean;
+  } | null>(null);
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<MentionQuery | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
@@ -185,13 +200,15 @@ export function MessageComposer({
       setBody("");
       return;
     }
+    if (sending) return;
     if (!trimmed && files.length === 0) return;
     setSending(true);
     try {
-      await onSend(trimmed, files, mentions, { attachMode });
+      await onSend(trimmed, files, mentions, { attachMode, officeMode });
       setBody("");
       setFiles([]);
       setAttachMode("file");
+      setOfficeMode("attachment");
       setMention(null);
       if (taRef.current) taRef.current.style.height = "auto";
     } finally {
@@ -214,15 +231,39 @@ export function MessageComposer({
       setImageModePrompt(incoming);
       return;
     }
+    const officeFiles = incoming.filter((f) => isOfficeEditableFile(f.type, f.name));
+    if (officeFiles.length > 0) {
+      void (async () => {
+        const resolvedOrgId = orgId ?? useStore.getState().activeOrgId;
+        let sharePointReady = false;
+        if (resolvedOrgId) {
+          const st = await fetchStorageStatus(resolvedOrgId);
+          sharePointReady = Boolean(st.data?.connected);
+        }
+        setOfficeModePrompt({ files: incoming, sharePointReady });
+      })();
+      return;
+    }
     setAttachMode("file");
+    setOfficeMode("attachment");
     setFiles((prev) => [...prev, ...incoming].slice(0, 6));
   };
 
   const confirmImageMode = (mode: "photo" | "file") => {
     if (!imageModePrompt) return;
     setAttachMode(mode);
+    setOfficeMode("attachment");
     setFiles((prev) => [...prev, ...imageModePrompt].slice(0, 6));
     setImageModePrompt(null);
+  };
+
+  const confirmOfficeMode = (mode: "attachment" | "editable") => {
+    if (!officeModePrompt) return;
+    if (mode === "editable" && !officeModePrompt.sharePointReady) return;
+    setAttachMode("file");
+    setOfficeMode(mode);
+    setFiles((prev) => [...prev, ...officeModePrompt.files].slice(0, 6));
+    setOfficeModePrompt(null);
   };
 
   const startRecording = async () => {
@@ -259,6 +300,20 @@ export function MessageComposer({
 
   return (
     <div className="relative border-t border-line bg-surface px-2 py-2">
+      {sending && (
+        <div
+          className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs text-ink"
+          role="status"
+          aria-live="polite"
+        >
+          <Clock size={14} className="shrink-0 animate-pulse text-accent" />
+          <span>
+            {files.length > 0 || officeMode === "editable"
+              ? "Wysyłanie pliku… Nie zamykaj okna i nie klikaj ponownie."
+              : "Wysyłanie…"}
+          </span>
+        </div>
+      )}
       {imageModePrompt && (
         <div className="absolute inset-x-2 bottom-full z-50 mb-2 rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
           <p className="mb-2 text-sm font-medium text-ink">Jak wysłać zdjęcie?</p>
@@ -286,6 +341,50 @@ export function MessageComposer({
             <button
               type="button"
               onClick={() => setImageModePrompt(null)}
+              className="py-1.5 text-center text-xs text-ink-faint"
+            >
+              Anuluj
+            </button>
+          </div>
+        </div>
+      )}
+      {officeModePrompt && (
+        <div className="absolute inset-x-2 bottom-full z-50 mb-2 rounded-xl border border-line bg-surface-overlay p-3 shadow-pop">
+          <p className="mb-2 text-sm font-medium text-ink">Jak dodać plik Office?</p>
+          <div className="flex flex-col gap-1.5">
+            <button
+              type="button"
+              onClick={() => confirmOfficeMode("attachment")}
+              className="rounded-lg border border-line bg-surface-raised px-3 py-2.5 text-left text-sm text-ink"
+            >
+              Dodaj jako załącznik
+              <span className="mt-0.5 block text-[11px] text-ink-faint">
+                Kopia w czacie — pobieranie bez edycji online
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={!officeModePrompt.sharePointReady}
+              onClick={() => confirmOfficeMode("editable")}
+              className="rounded-lg bg-accent px-3 py-2.5 text-left text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Dodaj jako plik do edycji
+              <span className="mt-0.5 block text-[11px] font-normal opacity-90">
+                Otwiera się w Word / Excel Online
+              </span>
+              <span className="mt-1.5 block rounded-md bg-black/20 px-2 py-1.5 text-[11px] font-normal leading-snug">
+                Preferowany jest link publiczny (każdy z linkiem). Jeśli witryna
+                SharePoint tego nie pozwala, użyjemy linku dla osób w organizacji.
+              </span>
+            </button>
+            {!officeModePrompt.sharePointReady && (
+              <p className="px-1 text-[11px] text-ink-faint">
+                Edycja online wymaga podłączonego magazynu SharePoint w ustawieniach zespołu.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => setOfficeModePrompt(null)}
               className="py-1.5 text-center text-xs text-ink-faint"
             >
               Anuluj
@@ -414,9 +513,15 @@ export function MessageComposer({
           <textarea
             ref={taRef}
             value={body}
-            disabled={disabled}
+            disabled={disabled || sending}
             rows={1}
-            placeholder={disabled ? "Rozmowa zarchiwizowana" : placeholder}
+            placeholder={
+              sending
+                ? "Wysyłanie pliku…"
+                : disabled
+                  ? "Rozmowa zarchiwizowana"
+                  : placeholder
+            }
             onChange={(e) => {
               setBody(e.target.value);
               autoGrow();
@@ -442,7 +547,7 @@ export function MessageComposer({
               }
               if (!isMobile && e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                void submit();
+                if (!sending) void submit();
               }
             }}
             className="min-h-[40px] max-h-[132px] flex-1 resize-none rounded-[1.25rem] border border-line bg-surface-raised px-3.5 py-2.5 text-sm leading-snug text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/40 disabled:opacity-50"
@@ -525,7 +630,7 @@ export function MessageComposer({
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                disabled={disabled}
+                disabled={disabled || sending}
                 className="shrink-0 self-center rounded-full p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
                 aria-label="Dodaj załącznik"
               >

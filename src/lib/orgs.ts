@@ -239,6 +239,20 @@ export async function setOrgMemberDisplayName(
   return {};
 }
 
+/** Admin zespołu przekazuje rolę admina innemu członkowi (dokładnie 1 admin). */
+export async function transferOrgAdmin(
+  orgId: string,
+  newAdminUserId: string,
+): Promise<{ error?: string }> {
+  if (!cloudEnabled || !supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("org_transfer_admin", {
+    p_org_id: orgId,
+    p_new_admin_user_id: newAdminUserId,
+  });
+  if (error) return { error: mapOrgRpcError(error.message) };
+  return {};
+}
+
 export async function appListOrgs(): Promise<OrgListRow[]> {
   if (!cloudEnabled || !supabase) return [];
   const { data, error } = await supabase.rpc("app_list_orgs");

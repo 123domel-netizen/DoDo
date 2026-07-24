@@ -1,7 +1,7 @@
 import type { Item } from "@/types";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { addDecision, addNote, createItemLink, deleteDecision, upsertRegistryLabels } from "@/lib/chat/api";
+import { addDecision, addNote, createItemLink, deleteDecision, deleteNote, upsertRegistryLabels } from "@/lib/chat/api";
 import { sendChatMessage } from "@/lib/chat/init";
 import { draftFromMessage, type ConvertTarget } from "@/lib/chat/convertDraft";
 import { groupIdForNewItem } from "@/lib/groups";
@@ -117,8 +117,7 @@ export async function saveTextAsDecision(
 }
 
 /**
- * Cofnij decyzję: usuń z rejestru + chmurka systemowa w czacie
- * („Cofnięto decyzję: …”), lustrzanie do zapisu.
+ * Cofnij decyzję: usuń z rejestru + chmurka systemowa w czacie.
  */
 export async function revokeDecision(input: {
   id: string;
@@ -133,9 +132,39 @@ export async function revokeDecision(input: {
 
   useChatStore.getState().bumpRegistryEpoch();
 
+  const preview = (body || "…").slice(0, 140);
   sendChatMessage({
     conversationId: input.conversationId,
-    body: `📌 Cofnięto decyzję: ${(body || "…").slice(0, 140)}`,
+    body: `📌 Decyzja została cofnięta: ${preview}`,
+    kind: "system",
+  });
+  return {};
+}
+
+/**
+ * Cofnij notatkę: usuń z rejestru + chmurka systemowa w czacie.
+ */
+export async function revokeNote(input: {
+  id: string;
+  conversationId: string;
+  title?: string;
+  body: string;
+}): Promise<{ error?: string }> {
+  const userId = useChatStore.getState().userId;
+  if (!userId) return { error: "Brak zalogowanego użytkownika." };
+  const preview = (
+    input.title?.trim() ||
+    input.body.trim() ||
+    "…"
+  ).slice(0, 140);
+  const { error } = await deleteNote(input.id);
+  if (error) return { error };
+
+  useChatStore.getState().bumpRegistryEpoch();
+
+  sendChatMessage({
+    conversationId: input.conversationId,
+    body: `📝 Notatka została cofnięta: ${preview}`,
     kind: "system",
   });
   return {};

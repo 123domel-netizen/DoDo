@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Pencil, Plus, Shield, Trash2, X } from "lucide-react";
 import {
   cancelOrgInvite,
   fetchMyOrgs,
@@ -8,6 +8,7 @@ import {
   removeOrgMember,
   renameOrg,
   setOrgMemberDisplayName,
+  transferOrgAdmin,
   type OrgDetail,
 } from "@/lib/orgs";
 import {
@@ -144,6 +145,23 @@ export function OrgSettings() {
     patchLocalDisplayName(userId, name);
     setEditingMemberId(null);
     setMemberNameDraft("");
+    await refresh();
+  };
+
+  const makeAdmin = async (userId: string, label: string) => {
+    if (!orgId || !isAdmin) return;
+    const ok = window.confirm(
+      `Ustawić „${label}” jako administratora zespołu?\n\nStracisz uprawnienia admina — w zespole może być tylko jeden administrator.`,
+    );
+    if (!ok) return;
+    setError(null);
+    setInfo(null);
+    const res = await transferOrgAdmin(orgId, userId);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    setInfo("Rola administratora została przekazana.");
     await refresh();
   };
 
@@ -322,6 +340,21 @@ export function OrgSettings() {
                           <Pencil size={14} />
                         </button>
                       ))}
+                    {isAdmin && m.role !== "admin" && !editing && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void makeAdmin(
+                            m.userId,
+                            m.displayName || m.email || "tego użytkownika",
+                          )
+                        }
+                        className="shrink-0 rounded-lg p-1.5 text-ink-faint transition hover:bg-accent/10 hover:text-accent"
+                        title="Ustaw jako admina zespołu"
+                      >
+                        <Shield size={14} />
+                      </button>
+                    )}
                     {isAdmin && m.role !== "admin" && m.userId !== authUserId && !editing && (
                       <button
                         type="button"

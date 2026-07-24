@@ -81,6 +81,13 @@ export interface ChatAttachment {
   r2Status?: string | null;
   spStatus?: string | null;
   spDriveItemId?: string | null;
+  /** attachment = kopia; editable = SP + publiczny link edycji */
+  attachIntent?: "attachment" | "editable";
+  /** Publiczny link Office Online (anyone with the link). */
+  spShareUrl?: string | null;
+  spWebUrl?: string | null;
+  /** Zakres linku edycji z Graph createLink. */
+  spShareScope?: "anonymous" | "organization" | null;
 }
 
 export interface ChatReaction {
@@ -231,6 +238,8 @@ export interface ChatMessage {
   votes?: PollVote[];
   /** Tylko lokalnie (outbox). */
   sendState?: MessageSendState;
+  /** Lokalny komunikat błędu wysyłki (nie w DB). */
+  sendError?: string;
 }
 
 export interface OutboxEntry {

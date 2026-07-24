@@ -28,7 +28,7 @@ const MESSAGE_SELECT =
 
 type Row = Record<string, unknown>;
 
-function rowToAttachment(row: Row): ChatAttachment {
+export function rowToAttachment(row: Row): ChatAttachment {
   const pipeline =
     row.pipeline === "r2_sp" ? "r2_sp" : "legacy_supabase";
   const r2Key = (row.r2_key as string | null) ?? null;
@@ -62,6 +62,16 @@ function rowToAttachment(row: Row): ChatAttachment {
     r2Status,
     spStatus: (row.sp_status as string | null) ?? null,
     spDriveItemId,
+    attachIntent:
+      row.attach_intent === "editable" ? "editable" : "attachment",
+    spShareUrl: (row.sp_share_url as string | null) ?? null,
+    spWebUrl: (row.sp_web_url as string | null) ?? null,
+    spShareScope:
+      row.sp_share_scope === "organization"
+        ? "organization"
+        : row.sp_share_scope === "anonymous"
+          ? "anonymous"
+          : null,
   };
 }
 

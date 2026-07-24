@@ -22,6 +22,13 @@ import type {
 } from "@/lib/chat/types";
 import { messagePreviewLabel } from "@/lib/chat/types";
 import { formatFileSize, signedUrlFor } from "@/lib/chat/upload";
+import {
+  classifyFile,
+  fileExtension,
+  fileKindIcon,
+  fileKindTone,
+  isPdfAttachment,
+} from "@/lib/chat/fileKinds";
 import { parseMarkdownLite } from "@/lib/chat/markdown";
 import { mentionsUser } from "@/lib/chat/mentions";
 import { aggregatePoll, groupReactions, QUICK_REACTIONS } from "@/lib/chat/polls";
@@ -32,6 +39,7 @@ import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { GalleryCard } from "@/components/chat/GalleryCard";
+import { PdfThumb } from "@/components/chat/PdfThumb";
 
 const INLINE_REACTIONS = QUICK_REACTIONS.slice(0, 3);
 
@@ -125,6 +133,12 @@ function MessageContentPreview({
           ))}
         </div>
       )}
+
+      {msg.kind === "text" &&
+        !msg.body &&
+        (msg.attachments?.length ?? 0) === 0 && (
+          <span className="text-xs text-ink-faint">Plik</span>
+        )}
 
       {msg.kind === "text" && <LinkPreviewCard msg={msg} />}
     </>
@@ -326,9 +340,26 @@ function VoiceAttachment({ att, durationSec }: { att: ChatAttachment; durationSe
 
 function AttachmentTile({ att }: { att: ChatAttachment }) {
   const isImage = att.mimeType.startsWith("image/");
-  const thumbUrl = useSignedUrl(isImage ? (att.thumbPath ?? att.bucketPath) : null);
+  const isPdf = !isImage && isPdfAttachment(att.mimeType, att.fileName);
+  const isUploading =
+    att.bucketPath === "pending:" || att.bucketPath.startsWith("pending:");
+  const isEditable =
+    !isUploading && att.attachIntent === "editable" && Boolean(att.spShareUrl);
+  const kind = classifyFile(att.mimeType, att.fileName);
+  const Icon = fileKindIcon(kind);
+  const tone = fileKindTone(kind);
+  const ext = fileExtension(att.fileName) || kind.toUpperCase();
+  const thumbUrl = useSignedUrl(
+    !isUploading && isImage ? (att.thumbPath ?? att.bucketPath) : null,
+  );
+  const fileUrl = useSignedUrl(!isUploading && isPdf ? att.bucketPath : null);
 
   const openFull = async () => {
+    if (isUploading) return;
+    if (isEditable && att.spShareUrl) {
+      window.open(att.spShareUrl, "_blank", "noopener");
+      return;
+    }
     const url = await signedUrlFor(att.bucketPath);
     if (url) window.open(url, "_blank", "noopener");
   };
@@ -357,17 +388,86 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
     );
   }
 
+  if (isPdf) {
+    return (
+      <button
+        type="button"
+        onClick={() => void openFull()}
+        className="flex w-[11.5rem] flex-col overflow-hidden rounded-xl border border-line bg-surface-raised text-left transition hover:border-line-strong"
+        aria-label={`Otwórz ${att.fileName}`}
+      >
+        <PdfThumb
+          url={fileUrl}
+          fileName={att.fileName}
+          className="h-36 w-full"
+        />
+        <div className="flex min-w-0 items-center gap-2 border-t border-line px-2.5 py-2">
+          <span
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.bg} ${tone.fg}`}
+          >
+            <Icon size={16} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xs font-medium text-ink">{att.fileName}</div>
+            <div className="text-[10px] text-ink-faint">
+              PDF · {formatFileSize(att.sizeBytes)}
+            </div>
+          </div>
+          <Download size={14} className="shrink-0 text-ink-faint" />
+        </div>
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={() => void openFull()}
-      className="flex w-full items-center gap-2 rounded-xl border border-line bg-surface-raised px-2.5 py-2 text-left transition hover:border-line-strong"
+      disabled={isUploading}
+      className={`flex min-w-[14rem] max-w-full items-center gap-2.5 rounded-xl border border-line bg-surface-raised px-2.5 py-2.5 text-left transition ${
+        isUploading
+          ? "cursor-wait opacity-70"
+          : "hover:border-line-strong"
+      }`}
+      aria-label={
+        isUploading
+          ? `Wysyłanie ${att.fileName}`
+          : isEditable
+            ? `Otwórz do edycji ${att.fileName}`
+            : `Otwórz ${att.fileName}`
+      }
     >
-      <Download size={14} className="shrink-0 text-ink-faint" />
-      <span className="min-w-0 flex-1 truncate text-xs text-ink">{att.fileName}</span>
-      <span className="shrink-0 text-[10px] text-ink-faint">
-        {formatFileSize(att.sizeBytes)}
+      <span className="relative flex h-11 w-11 shrink-0 items-center justify-center">
+        <span
+          className={`flex h-11 w-11 items-center justify-center rounded-xl ${tone.bg} ${tone.fg}`}
+        >
+          <Icon size={20} />
+        </span>
+        <span
+          className={`absolute -bottom-0.5 -right-0.5 max-w-[2.6rem] truncate rounded px-1 py-px text-[8px] font-bold leading-none ${tone.badge}`}
+        >
+          {ext.slice(0, 4) || "FILE"}
+        </span>
       </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-medium text-ink">
+          {att.fileName || "Plik"}
+        </span>
+        <span className="block text-[10px] text-ink-faint">
+          {isUploading
+            ? "Wysyłanie…"
+            : isEditable
+              ? att.spShareScope === "organization"
+                ? `Do edycji (org) · ${formatFileSize(att.sizeBytes)}`
+                : `Do edycji · ${formatFileSize(att.sizeBytes)}`
+              : formatFileSize(att.sizeBytes)}
+        </span>
+      </span>
+      {isUploading ? (
+        <Clock size={14} className="shrink-0 animate-pulse text-ink-faint" />
+      ) : (
+        <Download size={14} className="shrink-0 text-ink-faint" />
+      )}
     </button>
   );
 }
@@ -868,7 +968,22 @@ export function MessageBubble({
                     </span>
                   )
                 ) : (
-                  msg.body && <MessageBody body={msg.body} mentionNames={mentionNames} />
+                  <>
+                    {msg.body && (
+                      <MessageBody body={msg.body} mentionNames={mentionNames} />
+                    )}
+                    {!msg.body &&
+                      (msg.attachments?.length ?? 0) === 0 &&
+                      msg.kind === "text" && (
+                        <span className="text-xs text-ink-faint">
+                          {pending
+                            ? "Wysyłanie pliku…"
+                            : failed
+                              ? "Nie udało się dołączyć pliku"
+                              : "Plik"}
+                        </span>
+                      )}
+                  </>
                 )}
 
                 {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
@@ -980,14 +1095,23 @@ export function MessageBubble({
           </button>
         )}
 
-        {failed && onRetry && (
-          <button
-            type="button"
-            onClick={() => onRetry(msg.id)}
-            className="mt-1 flex items-center gap-1.5 px-1 text-[11px] text-red-400 transition hover:text-red-300"
-          >
-            <RotateCw size={11} /> Nie wysłano — ponów
-          </button>
+        {failed && (
+          <div className="mt-1 space-y-0.5 px-1">
+            {msg.sendError && (
+              <p className="max-w-[18rem] text-[11px] leading-snug text-red-400/90">
+                {msg.sendError}
+              </p>
+            )}
+            {onRetry && (
+              <button
+                type="button"
+                onClick={() => onRetry(msg.id)}
+                className="flex items-center gap-1.5 text-[11px] text-red-400 transition hover:text-red-300"
+              >
+                <RotateCw size={11} /> Nie wysłano — ponów
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -88,7 +88,43 @@ describe("upsertMessageInList", () => {
     expect(list).toHaveLength(1);
     expect(list[0].body).toBe("po edycji");
     expect(list[0].links).toEqual([{ itemId: "i1", kind: "created_from" }]);
+    // Realtime bez własnego sendState — lokalne pending zostaje (upload w toku).
+    expect(list[0].sendState).toBe("pending");
+  });
+
+  it("jawne sendState: undefined czyści pending po sukcesie", () => {
+    const original = msg({
+      id: "a",
+      sendState: "pending",
+    });
+    const cleared: ChatMessage = { ...msg({ id: "a", body: "ok" }), sendState: undefined };
+    expect(Object.prototype.hasOwnProperty.call(cleared, "sendState")).toBe(true);
+    const list = upsertMessageInList([original], cleared);
     expect(list[0].sendState).toBeUndefined();
+  });
+
+  it("upsert zachowuje załączniki gdy event przychodzi z pustą tablicą", () => {
+    const original = msg({
+      id: "a",
+      body: "",
+      attachments: [
+        {
+          id: "att1",
+          messageId: "a",
+          bucketPath: "hot/teams/x",
+          thumbPath: null,
+          fileName: "raport.xlsx",
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          sizeBytes: 1200,
+          width: null,
+          height: null,
+        },
+      ],
+    });
+    const fromOutboxRace = msg({ id: "a", body: "", attachments: [] });
+    const list = upsertMessageInList([original], fromOutboxRace);
+    expect(list[0].attachments).toHaveLength(1);
+    expect(list[0].attachments![0].fileName).toBe("raport.xlsx");
   });
 
   it("mergeMessages jest idempotentne", () => {

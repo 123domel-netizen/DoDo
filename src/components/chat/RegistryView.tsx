@@ -8,12 +8,10 @@ import {
   ListChecks,
   MoreHorizontal,
   StickyNote,
-  Trash2,
   Undo2,
   X,
 } from "lucide-react";
 import {
-  deleteNote,
   fetchDecisions,
   fetchNotes,
 } from "@/lib/chat/api";
@@ -22,6 +20,7 @@ import {
   decisionToNote,
   noteToDecision,
   revokeDecision,
+  revokeNote,
   type ConvertTarget,
 } from "@/lib/chat/convert";
 import type { ChatProfile } from "@/lib/chat/types";
@@ -62,14 +61,14 @@ const COPY: Record<
     icon: Gavel,
     empty: "Brak zapisanych decyzji.",
     hint: "„Zapisz jako decyzję”",
-    deleteConfirm: "Cofnąć decyzję? Zniknie z rejestru i pojawi się wpis w czacie.",
+    deleteConfirm: "Cofnąć decyzję? Zniknie z rejestru i w czacie pojawi się powiadomienie.",
   },
   notes: {
     title: "Notatki",
     icon: StickyNote,
     empty: "Brak zapisanych notatek.",
     hint: "„Zapisz jako notatkę”",
-    deleteConfirm: "Usunąć notatkę?",
+    deleteConfirm: "Cofnąć notatkę? Zniknie z rejestru i w czacie pojawi się powiadomienie.",
   },
 };
 
@@ -142,7 +141,12 @@ export function RegistryView({
             conversationId: entry.conversationId,
             body: entry.body,
           })
-        : await deleteNote(entry.id);
+        : await revokeNote({
+            id: entry.id,
+            conversationId: entry.conversationId,
+            title: entry.title,
+            body: entry.body,
+          });
     if (error) {
       alert(error);
       return;
@@ -343,7 +347,7 @@ export function RegistryView({
                             </>
                           ) : (
                             <>
-                              <Trash2 size={13} /> Usuń
+                              <Undo2 size={13} /> Cofnij notatkę
                             </>
                           )}
                         </button>

@@ -18,7 +18,9 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { corsPreflight, json } from "../_shared/cors.ts";
 import { AuthError, createServiceClient, createUserClient } from "../_shared/supabase.ts";
 import {
+  createEditShareLink,
   createFolder,
+  createUploadSession,
   deleteItem,
   getDownloadUrl,
   graphFetch,
@@ -2210,6 +2212,343 @@ async function actionAttachmentSpDownload(
   return { url };
 }
 
+/**
+ * Office „do edycji”: przygotuj folder SP + sesję uploadu (klient PUTuje plik).
+ */
+async function actionAttachmentSpEditableBegin(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+  const conversationId = requireString(body, "conversationId");
+  const messageId = requireString(body, "messageId");
+  const orgId = requireString(body, "orgId");
+  const attachmentId = requireString(body, "attachmentId");
+  const fileName = requireString(body, "fileName", 200);
+
+  if (!(await isConversationMember(admin, conversationId, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+  if (!(await isOrgMember(admin, orgId, callerId))) {
+    throw new ActionError("Nie należysz do tej organizacji.", 403);
+  }
+
+  const { data: msg } = await admin
+    .from("messages")
+    .select("id, author_user_id, conversation_id")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (!msg || msg.conversation_id !== conversationId) {
+    throw new ActionError("Wiadomość nie istnieje.", 404);
+  }
+  if (msg.author_user_id !== callerId) {
+    throw new ActionError("Tylko autor może dodać załącznik.", 403);
+  }
+
+  const storage = await requireActiveStorage(admin, orgId);
+  if (!storage.driveId || !storage.baseFolderId) {
+    throw new ActionError("Organizacja nie ma aktywnego magazynu SharePoint.", 200);
+  }
+
+  const zal = await createFolder(storage.driveId, storage.baseFolderId, "Zalaczniki");
+  const edycja = await createFolder(storage.driveId, zal.id, "Edycja");
+  const convFolder = await createFolder(storage.driveId, edycja.id, conversationId);
+  const msgFolder = await createFolder(storage.driveId, convFolder.id, messageId);
+
+  const session = await createUploadSession(storage.driveId, msgFolder.id, fileName);
+
+  return {
+    attachmentId,
+    uploadUrl: session.uploadUrl,
+    folderItemId: msgFolder.id,
+    driveId: storage.driveId,
+    expiresAt: session.expirationDateTime ?? null,
+  };
+}
+
+async function ensureEditableMessageAuthor(
+  admin: SupabaseClient,
+  callerId: string,
+  conversationId: string,
+  messageId: string,
+  orgId: string,
+) {
+  if (!(await isConversationMember(admin, conversationId, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+  if (!(await isOrgMember(admin, orgId, callerId))) {
+    throw new ActionError("Nie należysz do tej organizacji.", 403);
+  }
+  const { data: msg } = await admin
+    .from("messages")
+    .select("id, author_user_id, conversation_id")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (!msg || msg.conversation_id !== conversationId) {
+    throw new ActionError("Wiadomość nie istnieje.", 404);
+  }
+  if (msg.author_user_id !== callerId) {
+    throw new ActionError("Tylko autor może dodać załącznik.", 403);
+  }
+}
+
+async function ensureEditableFolders(
+  driveId: string,
+  baseFolderId: string,
+  conversationId: string,
+  messageId: string,
+) {
+  const zal = await createFolder(driveId, baseFolderId, "Zalaczniki");
+  const edycja = await createFolder(driveId, zal.id, "Edycja");
+  const convFolder = await createFolder(driveId, edycja.id, conversationId);
+  return await createFolder(driveId, convFolder.id, messageId);
+}
+
+async function finalizeEditableAttachmentRow(
+  admin: SupabaseClient,
+  opts: {
+    attachmentId: string;
+    messageId: string;
+    orgId: string;
+    driveId: string;
+    driveItemId: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+  },
+) {
+  let shareUrl: string;
+  let webUrl: string | undefined;
+  let shareScope: "anonymous" | "organization" = "anonymous";
+  try {
+    const link = await createEditShareLink(opts.driveId, opts.driveItemId);
+    shareUrl = link.shareUrl;
+    webUrl = link.webUrl;
+    shareScope = link.scope;
+  } catch (e) {
+    // Plik już na SP — spróbuj posprzątać, żeby nie zostawiać osieroconych.
+    try {
+      await deleteItem(opts.driveId, opts.driveItemId);
+    } catch {
+      // ignore cleanup failure
+    }
+    const msgText = e instanceof Error ? e.message : String(e);
+    throw new ActionError(
+      msgText.includes("linku edycji") || msgText.includes("SharePoint")
+        ? msgText
+        : `Nie udało się utworzyć linku edycji: ${msgText}`,
+      200,
+    );
+  }
+
+  const rowPayload = {
+    id: opts.attachmentId,
+    message_id: opts.messageId,
+    bucket_path: `sp:${opts.driveItemId}`,
+    thumb_path: null,
+    file_name: opts.fileName,
+    mime_type: opts.mimeType,
+    size_bytes: opts.sizeBytes,
+    width: null,
+    height: null,
+    pipeline: "r2_sp",
+    org_id: opts.orgId,
+    r2_key: null,
+    r2_key_thumb: null,
+    r2_status: "none",
+    sp_status: "verified",
+    sp_drive_item_id: opts.driveItemId,
+    attach_intent: "editable",
+    sp_web_url: webUrl ?? shareUrl,
+    sp_share_url: shareUrl,
+    sp_share_scope: shareScope,
+    // Editable SoT na SP — nie kasuj z R2 (i tak brak R2); hold chroni archiwum.
+    retention_hold: true,
+    retention_days: ATTACHMENT_RETENTION_DAYS,
+  };
+
+  const { data: existing } = await admin
+    .from("message_attachments")
+    .select("id")
+    .eq("id", opts.attachmentId)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await admin
+      .from("message_attachments")
+      .update(rowPayload)
+      .eq("id", opts.attachmentId);
+    if (error) throw new ActionError(`Confirm failed: ${error.message}`, 500);
+  } else {
+    const { error } = await admin.from("message_attachments").insert(rowPayload);
+    if (error) throw new ActionError(`Confirm failed: ${error.message}`, 500);
+  }
+
+  return {
+    attachment: {
+      id: opts.attachmentId,
+      messageId: opts.messageId,
+      bucketPath: `sp:${opts.driveItemId}`,
+      thumbPath: null,
+      fileName: opts.fileName,
+      mimeType: opts.mimeType,
+      sizeBytes: opts.sizeBytes,
+      width: null,
+      height: null,
+      pipeline: "r2_sp",
+      r2Key: null,
+      r2KeyThumb: null,
+      r2Status: "none",
+      spStatus: "verified",
+      spDriveItemId: opts.driveItemId,
+      attachIntent: "editable",
+      spWebUrl: webUrl ?? shareUrl,
+      spShareUrl: shareUrl,
+      spShareScope: shareScope,
+    },
+  };
+}
+
+/**
+ * Po uploadzie: publiczny link edycji (anyone) + wiersz message_attachments.
+ */
+async function actionAttachmentSpEditableConfirm(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+  const conversationId = requireString(body, "conversationId");
+  const messageId = requireString(body, "messageId");
+  const orgId = requireString(body, "orgId");
+  const attachmentId = requireString(body, "attachmentId");
+  const driveItemId = requireString(body, "driveItemId", 200);
+  const fileName = requireString(body, "fileName", 200);
+  const mimeType =
+    typeof body.mimeType === "string" && body.mimeType.trim()
+      ? body.mimeType.trim().slice(0, 120)
+      : "application/octet-stream";
+  const sizeBytes = Math.max(0, Number(body.sizeBytes ?? 0));
+
+  await ensureEditableMessageAuthor(admin, callerId, conversationId, messageId, orgId);
+
+  const storage = await requireActiveStorage(admin, orgId);
+  if (!storage.driveId) {
+    throw new ActionError("Organizacja nie ma aktywnego magazynu SharePoint.", 200);
+  }
+
+  try {
+    await graphFetch(`/drives/${storage.driveId}/items/${driveItemId}?$select=id,name,size`);
+  } catch (e) {
+    if (e instanceof GraphError && e.status === 404) {
+      throw new ActionError("Plik nie znaleziony na SharePoint — dokończ upload.", 200);
+    }
+    throw e;
+  }
+
+  return finalizeEditableAttachmentRow(admin, {
+    attachmentId,
+    messageId,
+    orgId,
+    driveId: storage.driveId,
+    driveItemId,
+    fileName,
+    mimeType,
+    sizeBytes,
+  });
+}
+
+/** Limit bajtów dla uploadu „do edycji” przez Edge (multipart). */
+const EDITABLE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+const GRAPH_SIMPLE_UPLOAD_MAX = 3.8 * 1024 * 1024;
+
+/**
+ * Jednostrzałowy upload Office → SP + publiczny link (multipart z klienta).
+ */
+async function actionAttachmentSpEditableUpload(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+  const conversationId = requireString(body, "conversationId");
+  const messageId = requireString(body, "messageId");
+  const orgId = requireString(body, "orgId");
+  const attachmentId = requireString(body, "attachmentId");
+  const fileName = requireString(body, "fileName", 200);
+  const mimeType =
+    typeof body.mimeType === "string" && body.mimeType.trim()
+      ? body.mimeType.trim().slice(0, 120)
+      : "application/octet-stream";
+
+  const bytes = body.contentBytes;
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) {
+    throw new ActionError("Brak zawartości pliku.", 200);
+  }
+  if (bytes.byteLength > EDITABLE_UPLOAD_MAX_BYTES) {
+    throw new ActionError("Plik przekracza 25 MB.", 200);
+  }
+
+  await ensureEditableMessageAuthor(admin, callerId, conversationId, messageId, orgId);
+
+  const storage = await requireActiveStorage(admin, orgId);
+  if (!storage.driveId || !storage.baseFolderId) {
+    throw new ActionError("Organizacja nie ma aktywnego magazynu SharePoint.", 200);
+  }
+
+  const msgFolder = await ensureEditableFolders(
+    storage.driveId,
+    storage.baseFolderId,
+    conversationId,
+    messageId,
+  );
+
+  let driveItemId: string;
+  if (bytes.byteLength <= GRAPH_SIMPLE_UPLOAD_MAX) {
+    const item = await uploadSmallFile(
+      storage.driveId,
+      msgFolder.id,
+      fileName,
+      bytes,
+      mimeType,
+    );
+    driveItemId = item.id;
+  } else {
+    const session = await createUploadSession(storage.driveId, msgFolder.id, fileName);
+    const putRes = await fetch(session.uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Range": `bytes 0-${bytes.byteLength - 1}/${bytes.byteLength}`,
+      },
+      body: bytes,
+    });
+    if (!putRes.ok) {
+      const text = await putRes.text().catch(() => "");
+      throw new ActionError(
+        `Upload do SharePoint nie powiódł się (${putRes.status}). ${text.slice(0, 160)}`,
+        200,
+      );
+    }
+    const driveItem = (await putRes.json().catch(() => null)) as { id?: string } | null;
+    if (!driveItem?.id) {
+      throw new ActionError("SharePoint nie zwrócił ID pliku po uploadzie.", 200);
+    }
+    driveItemId = driveItem.id;
+  }
+
+  return finalizeEditableAttachmentRow(admin, {
+    attachmentId,
+    messageId,
+    orgId,
+    driveId: storage.driveId,
+    driveItemId,
+    fileName,
+    mimeType,
+    sizeBytes: bytes.byteLength,
+  });
+}
+
 const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Row) => Promise<unknown>> = {
   storage_status: actionStorageStatus,
   storage_save: actionStorageSave,
@@ -2230,6 +2569,9 @@ const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Ro
   r2_presign_attachment: actionR2PresignAttachment,
   r2_confirm_attachment: actionR2ConfirmAttachment,
   attachment_sp_download: actionAttachmentSpDownload,
+  attachment_sp_editable_begin: actionAttachmentSpEditableBegin,
+  attachment_sp_editable_confirm: actionAttachmentSpEditableConfirm,
+  attachment_sp_editable_upload: actionAttachmentSpEditableUpload,
   media_cleanup_r2: actionMediaCleanupR2,
   media_pipeline_info: actionMediaPipelineInfo,
   media_enqueue_gallery_item: actionMediaEnqueueGalleryItem,

@@ -61,7 +61,7 @@ export function ItemDiscussion({ itemId }: { itemId: string }) {
     body: string,
     files: File[],
     _mentions?: string[],
-    opts?: { attachMode?: "photo" | "file" },
+    opts?: { attachMode?: "photo" | "file"; officeMode?: "attachment" | "editable" },
   ) => {
     const { id, error } = await ensureItemConversation(itemId);
     if (error || !id) {
@@ -83,6 +83,7 @@ export function ItemDiscussion({ itemId }: { itemId: string }) {
         body,
         files,
         attachMode: opts?.attachMode ?? "file",
+        officeMode: opts?.officeMode ?? "attachment",
         orgId,
         orgMediaPipeline,
       });

@@ -105,3 +105,29 @@ export async function loadChatEligiblePeople(opts: {
     a.displayName.localeCompare(b.displayName, "pl"),
   );
 }
+
+export type ChatEligiblePerson = {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+};
+
+/**
+ * Kontakty zespołu bez istniejącego DM (1:1 lub grupowy) — jak „Do odkrycia”
+ * dla kanałów, których jeszcze nie dołączyłeś.
+ */
+export function contactsWithoutDm(
+  people: ChatEligiblePerson[],
+  overview: { kind: string; members: { userId: string }[] }[],
+  myUserId: string | null,
+): ChatEligiblePerson[] {
+  if (!myUserId) return people;
+  const inDm = new Set<string>();
+  for (const e of overview) {
+    if (e.kind !== "dm") continue;
+    for (const m of e.members) {
+      if (m.userId !== myUserId) inDm.add(m.userId);
+    }
+  }
+  return people.filter((p) => !inDm.has(p.userId));
+}

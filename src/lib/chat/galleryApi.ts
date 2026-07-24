@@ -249,6 +249,88 @@ export async function fetchStorageStatus(orgId: string): Promise<ApiResult<Stora
   };
 }
 
+/** Sesja uploadu Graph — klient PUTuje bajty na uploadUrl. */
+export async function beginEditableAttachment(input: {
+  conversationId: string;
+  messageId: string;
+  orgId: string;
+  attachmentId: string;
+  fileName: string;
+}): Promise<
+  ApiResult<{
+    attachmentId: string;
+    uploadUrl: string;
+    folderItemId: string;
+    driveId: string;
+    expiresAt: string | null;
+  }>
+> {
+  return callGalleryApi("attachment_sp_editable_begin", input);
+}
+
+/** Po PUT: publiczny link edycji + wiersz message_attachments. */
+export async function confirmEditableAttachment(input: {
+  conversationId: string;
+  messageId: string;
+  orgId: string;
+  attachmentId: string;
+  driveItemId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+}): Promise<ApiResult<{ attachment: import("@/lib/chat/types").ChatAttachment }>> {
+  return callGalleryApi("attachment_sp_editable_confirm", input);
+}
+
+/**
+ * Pełny upload „do edycji” przez Edge (multipart) — SharePoint + publiczny link.
+ * Unika CORS przy PUT sesji Graph z przeglądarki.
+ */
+export async function uploadEditableAttachment(input: {
+  conversationId: string;
+  messageId: string;
+  orgId: string;
+  attachmentId: string;
+  file: Blob;
+  fileName: string;
+  mimeType: string;
+}): Promise<ApiResult<{ attachment: import("@/lib/chat/types").ChatAttachment }>> {
+  if (!cloudEnabled || !supabase || !supabaseUrl || !supabaseAnonKey) {
+    return { error: "Brak chmury." };
+  }
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return { error: "Brak sesji — zaloguj się ponownie." };
+
+    const form = new FormData();
+    form.append("action", "attachment_sp_editable_upload");
+    form.append("conversationId", input.conversationId);
+    form.append("messageId", input.messageId);
+    form.append("orgId", input.orgId);
+    form.append("attachmentId", input.attachmentId);
+    form.append("fileName", input.fileName);
+    form.append("mimeType", input.mimeType);
+    form.append("file", input.file, input.fileName);
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/gallery-api`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: supabaseAnonKey,
+      },
+      body: form,
+    });
+    if (!res.ok) return { error: await extractFetchError(res) };
+    const row = (await res.json()) as Record<string, unknown>;
+    if (typeof row.error === "string") return { error: row.error };
+    return { data: row as { attachment: import("@/lib/chat/types").ChatAttachment } };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Błąd komunikacji z serwerem." };
+  }
+}
+
 /** Czy serwer ma sekrety Graph — tylko przy edycji formularza. */
 export async function fetchGraphConfigured(orgId: string): Promise<boolean> {
   const edge = await callGalleryApi<StorageStatus>("storage_status", { orgId });

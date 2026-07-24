@@ -174,7 +174,7 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     ? Object.fromEntries(
         Object.entries(state.items).map(([id, it]) => {
           let next = { ...it, hasDueDate: it.hasDueDate ?? true };
-          if (next.type === "task" && next.done && next.groupId !== archive.id) {
+          if (next.done && next.groupId !== archive.id) {
             next = {
               ...next,
               preArchiveGroupId: next.groupId,

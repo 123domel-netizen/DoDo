@@ -9,11 +9,9 @@ import {
   MessageSquare,
   StickyNote,
   Undo2,
-  Trash2,
   X,
 } from "lucide-react";
 import {
-  deleteNote,
   fetchRegistryLabels,
   updateDecision,
   updateNote,
@@ -24,6 +22,7 @@ import {
   decisionToNote,
   noteToDecision,
   revokeDecision,
+  revokeNote,
   type ConvertTarget,
 } from "@/lib/chat/convert";
 import {
@@ -213,8 +212,8 @@ function RegistryDetailBody({
     if (
       !confirm(
         isDecision
-          ? "Cofnąć decyzję? Zniknie z rejestru i pojawi się wpis w czacie."
-          : "Usunąć notatkę?",
+          ? "Cofnąć decyzję? Zniknie z rejestru i w czacie pojawi się powiadomienie."
+          : "Cofnąć notatkę? Zniknie z rejestru i w czacie pojawi się powiadomienie.",
       )
     )
       return;
@@ -225,7 +224,12 @@ function RegistryDetailBody({
           conversationId: focus.conversationId,
           body: focus.body,
         })
-      : await deleteNote(focus.id);
+      : await revokeNote({
+          id: focus.id,
+          conversationId: focus.conversationId,
+          title: focus.title,
+          body: focus.body,
+        });
     setBusy(false);
     if (error) {
       alert(error);
@@ -563,7 +567,7 @@ function RegistryDetailBody({
               </>
             ) : (
               <>
-                <Trash2 size={14} /> Usuń
+                <Undo2 size={14} /> Cofnij notatkę
               </>
             )}
           </button>

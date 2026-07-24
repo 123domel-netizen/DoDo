@@ -351,6 +351,7 @@ export function ConversationView({
   pane = false,
 }: ConversationViewProps) {
   const myUserId = useChatStore((s) => s.userId);
+  const activeOrgId = useStore((s) => s.activeOrgId);
   const overview = useChatStore((s) => s.overview);
   const profiles = useChatStore((s) => s.profiles);
   const messages = useChatStore((s) => s.messagesByConv[conversationId]);
@@ -613,7 +614,7 @@ export function ConversationView({
       body: string,
       files: File[],
       mentions: string[],
-      opts?: { attachMode?: "photo" | "file" },
+      opts?: { attachMode?: "photo" | "file"; officeMode?: "attachment" | "editable" },
     ) => {
       const reply = replyTo;
       setReplyTo(null);
@@ -636,6 +637,7 @@ export function ConversationView({
           threadRootId: threadRootId ?? null,
           replyToMessageId: reply?.id ?? null,
           attachMode: opts?.attachMode ?? "file",
+          officeMode: opts?.officeMode ?? "attachment",
           orgId,
           orgMediaPipeline,
         });
@@ -771,6 +773,7 @@ export function ConversationView({
   const composerShared = {
     members,
     myUserId,
+    orgId: activeOrgId,
     editing,
     onSaveEdit: handleSaveEdit,
     onCancelEdit: () => setEditing(null),

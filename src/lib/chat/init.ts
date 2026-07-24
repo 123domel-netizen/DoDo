@@ -509,6 +509,7 @@ export async function sendChatMessageWithFiles(
   opts: SendOptions & {
     files: File[];
     attachMode?: "photo" | "file";
+    officeMode?: "attachment" | "editable";
     forceLegacy?: boolean;
     orgId?: string | null;
     orgMediaPipeline?: string | null;
@@ -522,7 +523,22 @@ export async function sendChatMessageWithFiles(
   const msg = buildOutgoingMessage(opts, st.userId);
   if (!msg.body && !opts.files.length) return {};
 
-  st.enqueueOutbox({ message: msg, attempts: 0 });
+  const officeMode = opts.officeMode ?? "attachment";
+  // Placeholdery od razu — użytkownik widzi kafle plików + „Wysyłanie…”.
+  msg.attachments = opts.files.map((f) => ({
+    id: `pending-${uid()}`,
+    messageId: msg.id,
+    bucketPath: "pending:",
+    thumbPath: null,
+    fileName: f.name,
+    mimeType: f.type || "application/octet-stream",
+    sizeBytes: f.size,
+    width: null,
+    height: null,
+    attachIntent: officeMode === "editable" ? "editable" : "attachment",
+  }));
+
+  // Bez outboxu: flushOutbox mógłby potem nadpisać wiadomość bez załączników.
   st.applyIncomingMessage(msg, true);
 
   const { error } = await api.insertMessage(msg);
@@ -539,12 +555,29 @@ export async function sendChatMessageWithFiles(
       orgId: opts.orgId,
       orgMediaPipeline: opts.orgMediaPipeline,
       attachMode: opts.attachMode ?? "file",
+      officeMode,
       forceLegacy: opts.forceLegacy === true || opts.kind === "voice",
     },
   );
-  const after = useChatStore.getState();
-  after.removeFromOutbox(msg.id);
-  after.markMessageState({ ...msg, attachments, sendState: undefined });
+
+  if (attachments.length === 0 && errors.length > 0) {
+    const errText = errors.join("\n");
+    const failed: ChatMessage = {
+      ...msg,
+      attachments: [],
+      sendState: "failed",
+      sendError: errText,
+    };
+    useChatStore.getState().markMessageState(failed);
+    return { error: errText };
+  }
+
+  useChatStore.getState().markMessageState({
+    ...msg,
+    attachments,
+    sendState: undefined,
+    sendError: undefined,
+  });
   void enrichLinkPreview({ ...msg, attachments });
   return errors.length ? { error: errors.join("\n") } : {};
 }
@@ -1184,18 +1217,8 @@ async function setupRealtime(userId: string) {
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "message_attachments" },
       (payload) => {
-        const row = payload.new as Record<string, unknown>;
-        useChatStore.getState().attachToMessage({
-          id: row.id as string,
-          messageId: row.message_id as string,
-          bucketPath: row.bucket_path as string,
-          thumbPath: (row.thumb_path as string | null) ?? null,
-          fileName: (row.file_name as string) ?? "",
-          mimeType: (row.mime_type as string) ?? "application/octet-stream",
-          sizeBytes: (row.size_bytes as number) ?? 0,
-          width: (row.width as number | null) ?? null,
-          height: (row.height as number | null) ?? null,
-        });
+        const att = api.rowToAttachment(payload.new as Record<string, unknown>);
+        useChatStore.getState().attachToMessage(att);
       },
     )
     .on(
