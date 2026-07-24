@@ -242,6 +242,55 @@ export async function deleteItem(driveId: string, itemId: string): Promise<void>
   }
 }
 
+export interface GraphDriveItemMeta extends GraphDriveItem {
+  parentReference?: { id?: string; name?: string; path?: string };
+}
+
+/** Odczyt itemu (nazwa + parent) — do idempotencji kosza. */
+export async function getDriveItem(
+  driveId: string,
+  itemId: string,
+): Promise<GraphDriveItemMeta> {
+  return graphFetch<GraphDriveItemMeta>(
+    `/drives/${driveId}/items/${itemId}?$select=id,name,webUrl,size,parentReference`,
+  );
+}
+
+/** Zmiana nazwy elementu na dysku. */
+export async function renameItem(
+  driveId: string,
+  itemId: string,
+  name: string,
+): Promise<GraphDriveItemMeta> {
+  return graphFetch<GraphDriveItemMeta>(`/drives/${driveId}/items/${itemId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+/**
+ * Przenosi element pod newParentId; opcjonalnie zmienia nazwę.
+ * conflictBehavior=rename przy kolizji nazwy w katalogu docelowym.
+ */
+export async function moveItem(
+  driveId: string,
+  itemId: string,
+  newParentId: string,
+  newName?: string,
+): Promise<GraphDriveItemMeta> {
+  const body: Record<string, unknown> = {
+    parentReference: { id: newParentId },
+    "@microsoft.graph.conflictBehavior": "rename",
+  };
+  if (newName) body.name = newName;
+  return graphFetch<GraphDriveItemMeta>(`/drives/${driveId}/items/${itemId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 /**
  * Sesja uploadu Graph — klient PUTuje bajty na zwrócony uploadUrl
  * (URL jest pre-auth, bez Bearer po stronie przeglądarki).

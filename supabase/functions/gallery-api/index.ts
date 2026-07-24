@@ -23,9 +23,11 @@ import {
   createUploadSession,
   deleteItem,
   getDownloadUrl,
+  getDriveItem,
   graphFetch,
   GraphError,
   graphConfigured,
+  moveItem,
   SHAREPOINT_NOT_CONFIGURED,
   uploadSmallFile,
 } from "../_shared/graph.ts";
@@ -363,6 +365,20 @@ async function loadGallery(admin: SupabaseClient, galleryId: string): Promise<Ro
     .select("*")
     .eq("id", galleryId)
     .is("deleted_at", null)
+    .maybeSingle();
+  if (!data) throw new ActionError("Galeria nie istnieje.", 404);
+  return data as Row;
+}
+
+/** Jak loadGallery, ale uwzględnia soft-deleted (do mark trash po delete). */
+async function loadGalleryIncludingDeleted(
+  admin: SupabaseClient,
+  galleryId: string,
+): Promise<Row> {
+  const { data } = await admin
+    .from("galleries")
+    .select("*")
+    .eq("id", galleryId)
     .maybeSingle();
   if (!data) throw new ActionError("Galeria nie istnieje.", 404);
   return data as Row;
@@ -1390,6 +1406,19 @@ async function actionGallerySoftDelete(admin: SupabaseClient, callerId: string, 
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", galleryId);
   if (error) throw new ActionError(`Nie udało się usunąć galerii: ${error.message}`, 500);
+
+  // Best-effort: przenieś folder SP do kosza (nie blokuj soft-delete).
+  try {
+    const now = new Date();
+    const purgeGal = new Date(
+      now.getTime() + GALLERY_FULL_RETENTION_DAYS * 86400_000,
+    ).toISOString();
+    const acc = { marked: [] as string[], skipped: [] as string[], errors: [] as string[] };
+    await markGalleryFolderTrashed(admin, callerId, galleryId, purgeGal, now.toISOString(), acc);
+  } catch (e) {
+    console.warn("[gallery_soft_delete] sp mark failed", e);
+  }
+
   return { ok: true };
 }
 
@@ -2316,6 +2345,7 @@ async function finalizeEditableAttachmentRow(
     fileName: string;
     mimeType: string;
     sizeBytes: number;
+    spFolderId?: string | null;
   },
 ) {
   let shareUrl: string;
@@ -2359,6 +2389,7 @@ async function finalizeEditableAttachmentRow(
     r2_status: "none",
     sp_status: "verified",
     sp_drive_item_id: opts.driveItemId,
+    sp_folder_id: opts.spFolderId ?? null,
     attach_intent: "editable",
     sp_web_url: webUrl ?? shareUrl,
     sp_share_url: shareUrl,
@@ -2447,6 +2478,14 @@ async function actionAttachmentSpEditableConfirm(
     throw e;
   }
 
+  let spFolderId: string | null = null;
+  try {
+    const meta = await getDriveItem(storage.driveId, driveItemId);
+    if (meta.parentReference?.id) spFolderId = meta.parentReference.id;
+  } catch {
+    // optional
+  }
+
   return finalizeEditableAttachmentRow(admin, {
     attachmentId,
     messageId,
@@ -2456,6 +2495,7 @@ async function actionAttachmentSpEditableConfirm(
     fileName,
     mimeType,
     sizeBytes,
+    spFolderId,
   });
 }
 
@@ -2546,7 +2586,279 @@ async function actionAttachmentSpEditableUpload(
     fileName,
     mimeType,
     sizeBytes: bytes.byteLength,
+    spFolderId: msgFolder.id,
   });
+}
+
+const SP_TRASH_DIR = "_Usuniete";
+
+function spTrashName(stableId: string): string {
+  const d = new Date();
+  const ymd =
+    `${d.getUTCFullYear()}` +
+    `${String(d.getUTCMonth() + 1).padStart(2, "0")}` +
+    `${String(d.getUTCDate()).padStart(2, "0")}`;
+  const short = stableId.replace(/-/g, "").slice(0, 32);
+  return `Usuniete__${ymd}__${short}`;
+}
+
+function isAlreadyTrashedName(name: string | undefined | null): boolean {
+  return Boolean(name && /^Usuniete__/i.test(name));
+}
+
+async function moveToSpTrash(
+  driveId: string,
+  baseFolderId: string,
+  trashRootName: "Zalaczniki" | "Galerie",
+  itemId: string,
+  trashLeafName: string,
+): Promise<{ id: string }> {
+  const root = await createFolder(driveId, baseFolderId, trashRootName);
+  const trash = await createFolder(driveId, root.id, SP_TRASH_DIR);
+
+  try {
+    const meta = await getDriveItem(driveId, itemId);
+    if (
+      isAlreadyTrashedName(meta.name) ||
+      meta.parentReference?.name === SP_TRASH_DIR
+    ) {
+      return { id: itemId };
+    }
+  } catch (e) {
+    if (e instanceof GraphError && e.status === 404) {
+      return { id: itemId };
+    }
+    throw e;
+  }
+
+  const moved = await moveItem(driveId, itemId, trash.id, trashLeafName);
+  return { id: moved.id };
+}
+
+/**
+ * Soft-delete → przenieś foldery SP do _Usuniete/Usuniete__YYYYMMDD__{id}.
+ * Wejście: messageId i/lub galleryId.
+ */
+async function actionMediaSpMarkDeleted(
+  admin: SupabaseClient,
+  callerId: string,
+  body: Row,
+) {
+  if (!graphConfigured()) throw new ActionError(SHAREPOINT_NOT_CONFIGURED, 200);
+
+  const messageId =
+    typeof body.messageId === "string" && body.messageId.trim()
+      ? body.messageId.trim()
+      : null;
+  const galleryId =
+    typeof body.galleryId === "string" && body.galleryId.trim()
+      ? body.galleryId.trim()
+      : null;
+  if (!messageId && !galleryId) {
+    throw new ActionError("Podaj messageId lub galleryId.", 400);
+  }
+
+  const marked: string[] = [];
+  const skipped: string[] = [];
+  const errors: string[] = [];
+
+  const now = new Date();
+  const purgeAtt = new Date(
+    now.getTime() + ATTACHMENT_RETENTION_DAYS * 86400_000,
+  ).toISOString();
+  const purgeGal = new Date(
+    now.getTime() + GALLERY_FULL_RETENTION_DAYS * 86400_000,
+  ).toISOString();
+  const nowIso = now.toISOString();
+
+  if (messageId) {
+    const { data: msg } = await admin
+      .from("messages")
+      .select("id, author_user_id, conversation_id, kind, payload, deleted_at")
+      .eq("id", messageId)
+      .maybeSingle();
+    if (!msg) throw new ActionError("Wiadomość nie istnieje.", 404);
+    if (!(await isConversationMember(admin, msg.conversation_id as string, callerId))) {
+      throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+    }
+
+    // Galeria powiązana z wiadomością
+    const payload = (msg.payload ?? {}) as { gallery?: { galleryId?: string } };
+    const linkedGalleryId =
+      galleryId ??
+      (typeof payload.gallery?.galleryId === "string" ? payload.gallery.galleryId : null);
+
+    const { data: atts } = await admin
+      .from("message_attachments")
+      .select(
+        "id, org_id, sp_folder_id, sp_drive_item_id, sp_trash_marked_at, attach_intent",
+      )
+      .eq("message_id", messageId);
+
+    const orgIds = new Set<string>();
+    for (const a of (atts as Row[] | null) ?? []) {
+      if (typeof a.org_id === "string" && a.org_id) orgIds.add(a.org_id);
+    }
+
+    // Deduplicate move targets: folder id → trash leaf based on messageId
+    const movedFolders = new Set<string>();
+
+    for (const att of (atts as Row[] | null) ?? []) {
+      if (att.sp_trash_marked_at) {
+        skipped.push(att.id as string);
+        continue;
+      }
+      const orgId = att.org_id as string | null;
+      if (!orgId) {
+        skipped.push(att.id as string);
+        continue;
+      }
+      try {
+        const storage = await getActiveStorage(admin, orgId);
+        if (!storage?.driveId || !storage.baseFolderId) {
+          skipped.push(att.id as string);
+          continue;
+        }
+
+        let itemToMove: string | null =
+          typeof att.sp_folder_id === "string" && att.sp_folder_id
+            ? (att.sp_folder_id as string)
+            : null;
+
+        if (!itemToMove && typeof att.sp_drive_item_id === "string" && att.sp_drive_item_id) {
+          try {
+            const meta = await getDriveItem(
+              storage.driveId,
+              att.sp_drive_item_id as string,
+            );
+            // Prefer folder wiadomości (parent nazwany messageId)
+            if (meta.parentReference?.id && meta.parentReference?.name === messageId) {
+              itemToMove = meta.parentReference.id;
+            } else {
+              itemToMove = att.sp_drive_item_id as string;
+            }
+          } catch {
+            itemToMove = att.sp_drive_item_id as string;
+          }
+        }
+
+        if (!itemToMove) {
+          skipped.push(att.id as string);
+          continue;
+        }
+
+        if (!movedFolders.has(itemToMove)) {
+          await moveToSpTrash(
+            storage.driveId,
+            storage.baseFolderId,
+            "Zalaczniki",
+            itemToMove,
+            spTrashName(messageId),
+          );
+          movedFolders.add(itemToMove);
+        }
+
+        const { error } = await admin
+          .from("message_attachments")
+          .update({
+            sp_trash_marked_at: nowIso,
+            sp_purge_after: purgeAtt,
+            retention_hold: false,
+            sp_folder_id: itemToMove,
+          })
+          .eq("id", att.id as string);
+        if (error) {
+          errors.push(`${att.id}: ${error.message}`);
+        } else {
+          marked.push(att.id as string);
+        }
+      } catch (e) {
+        errors.push(
+          `${att.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    // Jeśli to wiadomość-galeria — oznacz też folder galerii
+    if (linkedGalleryId) {
+      try {
+        await markGalleryFolderTrashed(admin, callerId, linkedGalleryId, purgeGal, nowIso, {
+          marked,
+          skipped,
+          errors,
+        });
+      } catch (e) {
+        errors.push(
+          `gallery ${linkedGalleryId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  } else if (galleryId) {
+    await markGalleryFolderTrashed(admin, callerId, galleryId, purgeGal, nowIso, {
+      marked,
+      skipped,
+      errors,
+    });
+  }
+
+  return { ok: true, marked, skipped, errors };
+}
+
+async function markGalleryFolderTrashed(
+  admin: SupabaseClient,
+  callerId: string,
+  galleryId: string,
+  purgeAfter: string,
+  nowIso: string,
+  acc: { marked: string[]; skipped: string[]; errors: string[] },
+) {
+  const gallery = await loadGalleryIncludingDeleted(admin, galleryId);
+  if (!(await isConversationMember(admin, gallery.conversation_id as string, callerId))) {
+    throw new ActionError("Nie jesteś członkiem tej rozmowy.", 403);
+  }
+  if (gallery.sp_trash_marked_at) {
+    acc.skipped.push(galleryId);
+    return;
+  }
+  const folderId = gallery.provider_folder_id as string | null;
+  if (!folderId) {
+    await admin
+      .from("galleries")
+      .update({
+        sp_trash_marked_at: nowIso,
+        sp_purge_after: purgeAfter,
+      })
+      .eq("id", galleryId);
+    acc.skipped.push(galleryId);
+    return;
+  }
+  const storage = await getActiveStorage(admin, gallery.org_id as string);
+  if (!storage?.driveId || !storage.baseFolderId) {
+    acc.skipped.push(galleryId);
+    return;
+  }
+  try {
+    await moveToSpTrash(
+      storage.driveId,
+      storage.baseFolderId,
+      "Galerie",
+      folderId,
+      spTrashName(galleryId),
+    );
+    const { error } = await admin
+      .from("galleries")
+      .update({
+        sp_trash_marked_at: nowIso,
+        sp_purge_after: purgeAfter,
+      })
+      .eq("id", galleryId);
+    if (error) acc.errors.push(`${galleryId}: ${error.message}`);
+    else acc.marked.push(galleryId);
+  } catch (e) {
+    acc.errors.push(
+      `${galleryId}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Row) => Promise<unknown>> = {
@@ -2572,6 +2884,7 @@ const ACTIONS: Record<string, (admin: SupabaseClient, callerId: string, body: Ro
   attachment_sp_editable_begin: actionAttachmentSpEditableBegin,
   attachment_sp_editable_confirm: actionAttachmentSpEditableConfirm,
   attachment_sp_editable_upload: actionAttachmentSpEditableUpload,
+  media_sp_mark_deleted: actionMediaSpMarkDeleted,
   media_cleanup_r2: actionMediaCleanupR2,
   media_pipeline_info: actionMediaPipelineInfo,
   media_enqueue_gallery_item: actionMediaEnqueueGalleryItem,

@@ -959,7 +959,20 @@ export async function deleteChatMessage(msg: ChatMessage) {
   if (!st.userId) return;
   st.markMessageState({ ...msg, deletedAt: new Date().toISOString() });
   const { error } = await api.softDeleteMessage(msg.id, st.userId);
-  if (error) console.warn("[chat] delete failed:", error);
+  if (error) {
+    console.warn("[chat] delete failed:", error);
+    return;
+  }
+  // SharePoint: przenieś foldery do _Usuniete (późniejszy purge). Nie blokuj UI.
+  void import("@/lib/chat/galleryApi")
+    .then(({ markSpDeletedForMessage }) => markSpDeletedForMessage(msg.id))
+    .then((res) => {
+      if (res.error) console.warn("[chat] sp mark deleted:", res.error);
+      else if (res.data?.errors?.length) {
+        console.warn("[chat] sp mark deleted partial:", res.data.errors);
+      }
+    })
+    .catch((e) => console.warn("[chat] sp mark deleted:", e));
 }
 
 // ---------------------------------------------------------------------------

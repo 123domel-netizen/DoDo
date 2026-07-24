@@ -211,6 +211,35 @@ async function uploadSmallFile(
   });
 }
 
+async function deleteDriveItem(env: Env, driveId: string, itemId: string): Promise<void> {
+  try {
+    await graphFetch(env, `/drives/${driveId}/items/${itemId}`, { method: "DELETE" });
+  } catch (e) {
+    const status = (e as { status?: number })?.status;
+    if (status === 404) return;
+    throw e;
+  }
+}
+
+async function moveDriveItem(
+  env: Env,
+  driveId: string,
+  itemId: string,
+  newParentId: string,
+  newName?: string,
+): Promise<{ id: string; name?: string }> {
+  const body: Record<string, unknown> = {
+    parentReference: { id: newParentId },
+    "@microsoft.graph.conflictBehavior": "rename",
+  };
+  if (newName) body.name = newName;
+  return graphFetch(env, `/drives/${driveId}/items/${itemId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 function sbHeaders(env: Env): HeadersInit {
   return {
     apikey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -673,6 +702,199 @@ async function cleanupDueR2(env: Env): Promise<void> {
   }
 }
 
+const SP_TRASH_DIR = "_Usuniete";
+
+function spTrashLeafName(stableId: string): string {
+  const d = new Date();
+  const ymd =
+    `${d.getUTCFullYear()}` +
+    `${String(d.getUTCMonth() + 1).padStart(2, "0")}` +
+    `${String(d.getUTCDate()).padStart(2, "0")}`;
+  return `Usuniete__${ymd}__${stableId.replace(/-/g, "").slice(0, 32)}`;
+}
+
+async function ensureSpTrashParent(
+  env: Env,
+  driveId: string,
+  baseFolderId: string,
+  rootName: "Zalaczniki" | "Galerie",
+): Promise<string> {
+  const root = await createFolder(env, driveId, baseFolderId, rootName);
+  const trash = await createFolder(env, driveId, root.id, SP_TRASH_DIR);
+  return trash.id;
+}
+
+/** Fizyczne usunięcie folderów SP po sp_purge_after. */
+async function cleanupDueSp(env: Env): Promise<void> {
+  const nowIso = new Date().toISOString();
+
+  const aRes = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/message_attachments?sp_trash_marked_at=not.is.null&sp_purged_at=is.null&sp_purge_after=lt.${nowIso}&select=id,org_id,sp_folder_id,sp_drive_item_id&limit=20`,
+    { headers: sbHeaders(env) },
+  );
+  if (aRes.ok) {
+    const rows = (await aRes.json()) as Array<{
+      id: string;
+      org_id: string | null;
+      sp_folder_id: string | null;
+      sp_drive_item_id: string | null;
+    }>;
+    for (const row of rows) {
+      try {
+        const itemId = row.sp_folder_id || row.sp_drive_item_id;
+        if (itemId && row.org_id) {
+          const storage = await sbGet<{ drive_id: string }>(
+            env,
+            `org_storage_connections?org_id=eq.${row.org_id}&provider=eq.sharepoint&status=eq.active&select=drive_id`,
+          );
+          if (storage?.drive_id) {
+            await deleteDriveItem(env, storage.drive_id, itemId);
+          }
+        }
+        await sbPatch(env, "message_attachments", row.id, {
+          sp_purged_at: nowIso,
+          sp_drive_item_id: null,
+          sp_folder_id: null,
+        });
+      } catch (e) {
+        console.error("[media-sync] sp purge attachment failed", row.id, e);
+      }
+    }
+  }
+
+  const gRes = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/galleries?sp_trash_marked_at=not.is.null&sp_purged_at=is.null&sp_purge_after=lt.${nowIso}&select=id,org_id,provider_folder_id&limit=20`,
+    { headers: sbHeaders(env) },
+  );
+  if (!gRes.ok) return;
+  const galleries = (await gRes.json()) as Array<{
+    id: string;
+    org_id: string;
+    provider_folder_id: string | null;
+  }>;
+  for (const row of galleries) {
+    try {
+      if (row.provider_folder_id) {
+        const storage = await sbGet<{ drive_id: string }>(
+          env,
+          `org_storage_connections?org_id=eq.${row.org_id}&provider=eq.sharepoint&status=eq.active&select=drive_id`,
+        );
+        if (storage?.drive_id) {
+          await deleteDriveItem(env, storage.drive_id, row.provider_folder_id);
+        }
+      }
+      await sbPatch(env, "galleries", row.id, {
+        sp_purged_at: nowIso,
+        provider_folder_id: null,
+      });
+    } catch (e) {
+      console.error("[media-sync] sp purge gallery failed", row.id, e);
+    }
+  }
+}
+
+/**
+ * Reconcile: soft-deleted messages with verified SP attachments not yet in trash.
+ */
+async function reconcileSpTrashMarks(env: Env): Promise<void> {
+  const attDays = retentionDays(env, "attachment");
+  const galDays = retentionDays(env, "gallery");
+  const now = Date.now();
+  const purgeAtt = new Date(now + attDays * 86400_000).toISOString();
+  const purgeGal = new Date(now + galDays * 86400_000).toISOString();
+  const nowIso = new Date().toISOString();
+
+  const aRes = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/message_attachments?sp_status=eq.verified&sp_trash_marked_at=is.null&or=(sp_folder_id.not.is.null,sp_drive_item_id.not.is.null)&select=id,org_id,message_id,sp_folder_id,sp_drive_item_id,messages!inner(deleted_at)&messages.deleted_at=not.is.null&limit=15`,
+    { headers: sbHeaders(env) },
+  );
+  if (aRes.ok) {
+    const rows = (await aRes.json()) as Array<{
+      id: string;
+      org_id: string | null;
+      message_id: string;
+      sp_folder_id: string | null;
+      sp_drive_item_id: string | null;
+    }>;
+    const moved = new Set<string>();
+    for (const row of rows) {
+      if (!row.org_id) continue;
+      try {
+        const storage = await sbGet<{ drive_id: string; base_folder_id: string }>(
+          env,
+          `org_storage_connections?org_id=eq.${row.org_id}&provider=eq.sharepoint&status=eq.active&select=drive_id,base_folder_id`,
+        );
+        if (!storage?.drive_id || !storage.base_folder_id) continue;
+        const itemId = row.sp_folder_id || row.sp_drive_item_id;
+        if (!itemId) continue;
+        if (!moved.has(itemId)) {
+          const trashParent = await ensureSpTrashParent(
+            env,
+            storage.drive_id,
+            storage.base_folder_id,
+            "Zalaczniki",
+          );
+          await moveDriveItem(
+            env,
+            storage.drive_id,
+            itemId,
+            trashParent,
+            spTrashLeafName(row.message_id),
+          );
+          moved.add(itemId);
+        }
+        await sbPatch(env, "message_attachments", row.id, {
+          sp_trash_marked_at: nowIso,
+          sp_purge_after: purgeAtt,
+          retention_hold: false,
+          sp_folder_id: itemId,
+        });
+      } catch (e) {
+        console.error("[media-sync] reconcile att trash failed", row.id, e);
+      }
+    }
+  }
+
+  const gRes = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/galleries?deleted_at=not.is.null&sp_trash_marked_at=is.null&provider_folder_id=not.is.null&select=id,org_id,provider_folder_id&limit=10`,
+    { headers: sbHeaders(env) },
+  );
+  if (!gRes.ok) return;
+  const galleries = (await gRes.json()) as Array<{
+    id: string;
+    org_id: string;
+    provider_folder_id: string;
+  }>;
+  for (const row of galleries) {
+    try {
+      const storage = await sbGet<{ drive_id: string; base_folder_id: string }>(
+        env,
+        `org_storage_connections?org_id=eq.${row.org_id}&provider=eq.sharepoint&status=eq.active&select=drive_id,base_folder_id`,
+      );
+      if (!storage?.drive_id || !storage.base_folder_id) continue;
+      const trashParent = await ensureSpTrashParent(
+        env,
+        storage.drive_id,
+        storage.base_folder_id,
+        "Galerie",
+      );
+      await moveDriveItem(
+        env,
+        storage.drive_id,
+        row.provider_folder_id,
+        trashParent,
+        spTrashLeafName(row.id),
+      );
+      await sbPatch(env, "galleries", row.id, {
+        sp_trash_marked_at: nowIso,
+        sp_purge_after: purgeGal,
+      });
+    } catch (e) {
+      console.error("[media-sync] reconcile gallery trash failed", row.id, e);
+    }
+  }
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -794,11 +1016,19 @@ export default {
       }
     }
 
-    // 3) Retention cleanup (Stage 4)
+    // 3) Retention cleanup R2 (Stage 4)
     await env.MEDIA_ARCHIVE_QUEUE.send({
       kind: "cleanup_r2",
       refId: "00000000-0000-0000-0000-000000000000",
     });
+
+    // 3b) SharePoint trash: mark missing + purge due
+    await reconcileSpTrashMarks(env).catch((e) =>
+      console.error("[media-sync] reconcileSpTrashMarks", e),
+    );
+    await cleanupDueSp(env).catch((e) =>
+      console.error("[media-sync] cleanupDueSp", e),
+    );
 
     // 4) Stale R2 uploads without confirm (>12h)
     const staleIso = new Date(Date.now() - 12 * 3600_000).toISOString();

@@ -466,6 +466,19 @@ export async function softDeleteGallery(galleryId: string): Promise<ApiResult<{ 
   return callGalleryApi("gallery_soft_delete", { galleryId });
 }
 
+/** Po soft-delete wiadomości: przenieś foldery SP do _Usuniete (fire-and-forget OK). */
+export async function markSpDeletedForMessage(
+  messageId: string,
+): Promise<ApiResult<{ ok: true; marked?: string[]; errors?: string[] }>> {
+  return callGalleryApi("media_sp_mark_deleted", { messageId });
+}
+
+export async function markSpDeletedForGallery(
+  galleryId: string,
+): Promise<ApiResult<{ ok: true; marked?: string[]; errors?: string[] }>> {
+  return callGalleryApi("media_sp_mark_deleted", { galleryId });
+}
+
 export async function deleteGalleryStorage(
   galleryId: string,
 ): Promise<ApiResult<{ ok: true; warning?: string }>> {
