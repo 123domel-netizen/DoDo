@@ -434,11 +434,11 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
       type="button"
       onClick={() => void openFull()}
       disabled={isUploading}
-      className={`flex w-full min-w-0 max-w-full items-center gap-2.5 rounded-xl border border-line bg-surface-raised px-2.5 py-2.5 text-left transition ${
-        isUploading
-          ? "cursor-wait opacity-70"
-          : "hover:border-line-strong"
-      }`}
+      className={`flex w-full min-w-0 max-w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition ${
+        isEditable
+          ? "border border-accent/40 bg-accent/12 hover:border-accent/55 hover:bg-accent/18"
+          : "border border-line bg-surface-raised hover:border-line-strong"
+      } ${isUploading ? "cursor-wait opacity-70" : ""}`}
       aria-label={
         isUploading
           ? `Wysyłanie ${att.fileName}`
@@ -463,7 +463,11 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
         <span className="block truncate text-xs font-medium text-ink">
           {att.fileName || "Plik"}
         </span>
-        <span className="block text-[10px] text-ink-faint">
+        <span
+          className={`block text-[10px] ${
+            isEditable ? "font-medium text-accent" : "text-ink-faint"
+          }`}
+        >
           {isUploading
             ? "Wysyłanie…"
             : isEditable
@@ -475,6 +479,8 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
       </span>
       {isUploading ? (
         <Clock size={14} className="shrink-0 animate-pulse text-ink-faint" />
+      ) : isEditable ? (
+        <ExternalLink size={14} className="shrink-0 text-accent" />
       ) : (
         <Download size={14} className="shrink-0 text-ink-faint" />
       )}

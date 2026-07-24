@@ -374,13 +374,13 @@ export function MessageComposer({
               type="button"
               disabled={!officeModePrompt.sharePointReady}
               onClick={() => confirmOfficeMode("editable")}
-              className="rounded-lg bg-accent px-3 py-2.5 text-left text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-lg border border-line bg-surface-raised px-3 py-2.5 text-left text-sm text-ink disabled:cursor-not-allowed disabled:opacity-50"
             >
               Dodaj jako plik do edycji
-              <span className="mt-0.5 block text-[11px] font-normal opacity-90">
+              <span className="mt-0.5 block text-[11px] text-ink-faint">
                 Otwiera się w Word / Excel Online
               </span>
-              <span className="mt-1.5 block rounded-md bg-black/20 px-2 py-1.5 text-[11px] font-normal leading-snug">
+              <span className="mt-1.5 block rounded-md border border-line/80 bg-surface px-2 py-1.5 text-[11px] font-normal leading-snug text-ink-faint">
                 Preferowany jest link publiczny (każdy z linkiem). Jeśli witryna
                 SharePoint tego nie pozwala, użyjemy linku dla osób w organizacji.
               </span>
