@@ -134,7 +134,7 @@ export function applyFocusIncoming(
   msg: ChatMessage,
 ): FocusFeed | null {
   if (!focus || focus.conversationId !== msg.conversationId) return null;
-  if (focus.hasNewer || msg.threadRootId !== null) return null;
+  if (focus.hasNewer) return null;
   if (focus.messages.some((m) => m.id === msg.id)) return null;
   return { ...focus, messages: upsertMessageInList(focus.messages, msg) };
 }
@@ -352,6 +352,10 @@ export function defaultThreadTitle(msg: ChatMessage): string {
   if (msg.kind === "poll") {
     const q = msg.body.trim().replace(/\s+/g, " ");
     return (q || "Ankieta").slice(0, 120);
+  }
+  if (msg.kind === "checklist") {
+    const q = msg.body.trim().replace(/\s+/g, " ");
+    return (q || "Checklista").slice(0, 120);
   }
   const t = msg.body.trim().replace(/\s+/g, " ");
   return (t || "Wątek").slice(0, 120);

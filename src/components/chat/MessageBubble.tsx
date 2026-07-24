@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CalendarDays,
+  Check,
   CheckSquare,
   Clock,
   CornerUpLeft,
@@ -31,9 +32,10 @@ import {
 } from "@/lib/chat/fileKinds";
 import { parseMarkdownLite } from "@/lib/chat/markdown";
 import { mentionsUser } from "@/lib/chat/mentions";
-import { aggregatePoll, groupReactions, QUICK_REACTIONS } from "@/lib/chat/polls";
+import { aggregatePoll, groupReactions } from "@/lib/chat/polls";
 import { formatDuration } from "@/lib/chat/voice";
 import { isThreadUnread } from "@/lib/chat/recentThreads";
+import { threadDisplayTitle } from "@/lib/chat/feed";
 import { fetchMessageById } from "@/lib/chat/api";
 import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
@@ -41,7 +43,7 @@ import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { GalleryCard } from "@/components/chat/GalleryCard";
 import { PdfThumb } from "@/components/chat/PdfThumb";
 
-const INLINE_REACTIONS = QUICK_REACTIONS.slice(0, 3);
+const INLINE_REACTIONS = ["👍", "👎", "😂", "😮"];
 
 /** Odtwórz wiadomość ze snapshota przeniesienia (fallback zanim dojdzie live fetch). */
 function messageFromMovedPreview(stub: ChatMessage): ChatMessage | null {
@@ -93,6 +95,13 @@ function MessageContentPreview({
             <MessageBody body={msg.body} mentionNames={mentionNames} />
           </div>
           <PollBlock msg={msg} myUserId={null} />
+        </>
+      ) : msg.kind === "checklist" ? (
+        <>
+          <div className="font-medium">
+            <MessageBody body={msg.body} mentionNames={mentionNames} />
+          </div>
+          <ChecklistBlock msg={msg} />
         </>
       ) : msg.kind === "gif" && msg.payload.gif ? (
         <img
@@ -566,6 +575,52 @@ function PollBlock({
   );
 }
 
+function ChecklistBlock({
+  msg,
+  onToggle,
+}: {
+  msg: ChatMessage;
+  onToggle?: (msg: ChatMessage, itemId: string) => void;
+}) {
+  const items = msg.payload.checklist?.items ?? [];
+  const doneCount = items.filter((it) => it.done).length;
+  return (
+    <div className="mt-2 flex min-w-[13rem] flex-col gap-1">
+      {items.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          disabled={!onToggle || Boolean(msg.sendState) || Boolean(msg.deletedAt)}
+          onClick={() => onToggle?.(msg, it.id)}
+          className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-left text-xs transition ${
+            it.done
+              ? "border-line/60 bg-surface-overlay/30 text-ink-faint"
+              : "border-line bg-surface-overlay/40 text-ink hover:border-line-strong"
+          } disabled:opacity-60`}
+        >
+          <span
+            className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+              it.done
+                ? "border-accent bg-accent text-white"
+                : "border-line-strong bg-surface-raised"
+            }`}
+          >
+            {it.done && <Check size={11} strokeWidth={3} />}
+          </span>
+          <span className={`min-w-0 flex-1 leading-snug ${it.done ? "line-through" : ""}`}>
+            {it.text}
+          </span>
+        </button>
+      ))}
+      <div className="px-0.5 text-[10px] text-ink-faint">
+        {items.length === 0
+          ? "Brak punktów."
+          : `${doneCount}/${items.length} ukończone`}
+      </div>
+    </div>
+  );
+}
+
 function HoverToolbar({
   mine,
   onReply,
@@ -671,12 +726,15 @@ interface MessageBubbleProps {
   flash?: boolean;
   replyCount?: number;
   inThread?: boolean;
+  /** Tytuł wątku dla adnotacji w głównym feedzie. */
+  threadTitle?: string;
   onOpenThread?: (rootId: string) => void;
   onOpenActions?: (msg: ChatMessage, anchor: DOMRect) => void;
   onReply?: (msg: ChatMessage) => void;
   onRetry?: (messageId: string) => void;
   onToggleReaction?: (msg: ChatMessage, emoji: string) => void;
   onVote?: (msg: ChatMessage, optionId: string) => void;
+  onToggleChecklist?: (msg: ChatMessage, itemId: string) => void;
   onJumpTo?: (messageId: string) => void;
   onOpenRegistry?: (msg: ChatMessage) => void;
   onOpenGallery?: (galleryId: string) => void;
@@ -695,12 +753,14 @@ export function MessageBubble({
   flash = false,
   replyCount = 0,
   inThread = false,
+  threadTitle: threadTitleProp,
   onOpenThread,
   onOpenActions,
   onReply,
   onRetry,
   onToggleReaction,
   onVote,
+  onToggleChecklist,
   onJumpTo,
   onOpenRegistry,
   onOpenGallery,
@@ -709,6 +769,17 @@ export function MessageBubble({
   const items = useStore((s) => s.items);
   const threadLastReply = useChatStore((s) => s.threadLastReply[msg.id]);
   const threadSeenAt = useChatStore((s) => s.threadSeenAt[msg.id]);
+  const resolvedThreadTitle = useChatStore((s) => {
+    if (!msg.threadRootId || inThread) return null;
+    if (threadTitleProp) return threadTitleProp;
+    const rootId = msg.threadRootId;
+    const root =
+      s.messagesByConv[msg.conversationId]?.find((m) => m.id === rootId) ??
+      s.threadByRoot[rootId]?.find((m) => m.id === rootId) ??
+      s.pinnedByConv[msg.conversationId]?.find((m) => m.id === rootId) ??
+      s.focusFeed?.messages.find((m) => m.id === rootId);
+    return threadDisplayTitle(root);
+  });
   const hasThread = !inThread && replyCount > 0;
   const threadUnread = isThreadUnread({
     replyCount,
@@ -716,6 +787,47 @@ export function MessageBubble({
     lastReply: threadLastReply,
     seenAt: threadSeenAt,
   });
+
+  // Odpowiedź w wątku w głównym czacie → kompaktowa adnotacja (klik = otwórz wątek).
+  if (msg.threadRootId && !inThread) {
+    const preview = msg.deletedAt
+      ? "Wiadomość usunięta"
+      : messagePreviewLabel(msg.kind, msg.body).trim() ||
+        (msg.attachments?.length ? "(załącznik)" : "…");
+    const timeLabel = showTime
+      ? format(new Date(msg.createdAt), isToday(new Date(msg.createdAt)) ? "HH:mm" : "d MMM HH:mm", {
+          locale: pl,
+        })
+      : null;
+    return (
+      <button
+        type="button"
+        data-message-id={msg.id}
+        onClick={() => onOpenThread?.(msg.threadRootId!)}
+        title="Otwórz wątek"
+        className={`mx-3 my-0.5 flex w-[calc(100%-1.5rem)] max-w-full flex-col gap-0.5 rounded-lg border-l-[3px] border-thread bg-thread/12 px-2.5 py-1.5 text-left transition hover:bg-thread/20 ${
+          flash ? "ring-2 ring-thread/50 ring-offset-1 ring-offset-surface" : ""
+        } ${mine ? "ml-auto mr-3" : ""}`}
+      >
+        <div className="flex min-w-0 items-center gap-1.5 text-[10px] leading-none text-thread">
+          <MessageSquare size={10} className="shrink-0" />
+          <span className="min-w-0 truncate font-semibold">
+            {resolvedThreadTitle || "Wątek"}
+          </span>
+          {timeLabel && (
+            <span className="ml-auto shrink-0 tabular-nums text-ink-faint">{timeLabel}</span>
+          )}
+        </div>
+        <div className="line-clamp-2 min-w-0 text-[12px] leading-snug text-ink-light">
+          <span className="font-medium text-ink">{authorName}</span>
+          <span className="text-ink-faint">: </span>
+          <span className={msg.deletedAt ? "italic text-ink-faint" : "text-ink"}>
+            {preview}
+          </span>
+        </div>
+      </button>
+    );
+  }
 
   if (msg.kind === "system") {
     if (msg.payload?.movedStub) {
@@ -925,7 +1037,9 @@ export function MessageBubble({
                                 ? "GIF"
                                 : quoted.msg.kind === "gallery"
                                   ? `🖼 Galeria: ${quoted.msg.body || "…"}`
-                                  : quoted.msg.body || "(załącznik)"
+                                  : quoted.msg.kind === "checklist"
+                                    ? `✅ ${quoted.msg.body || "Checklista"}`
+                                    : quoted.msg.body || "(załącznik)"
                           : "…"}
                       </span>
                     </span>
@@ -938,6 +1052,13 @@ export function MessageBubble({
                       <MessageBody body={msg.body} mentionNames={mentionNames} />
                     </div>
                     <PollBlock msg={msg} myUserId={myUserId} onVote={onVote} />
+                  </>
+                ) : msg.kind === "checklist" ? (
+                  <>
+                    <div className="font-medium">
+                      <MessageBody body={msg.body} mentionNames={mentionNames} />
+                    </div>
+                    <ChecklistBlock msg={msg} onToggle={onToggleChecklist} />
                   </>
                 ) : msg.kind === "gif" && msg.payload.gif ? (
                   <img

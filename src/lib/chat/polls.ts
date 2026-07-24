@@ -75,4 +75,5 @@ export function groupReactions(
   return order.map((e) => map.get(e)!);
 }
 
-export const QUICK_REACTIONS = ["👍", "👎", "😂", "❤️", "👀", "✅"];
+/** Szybkie reakcje: serce, płacz, prośba, progress, $, szef (styl WhatsApp). */
+export const QUICK_REACTIONS = ["❤️", "😢", "🙏", "📈", "💲", "😎"];

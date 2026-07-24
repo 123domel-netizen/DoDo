@@ -419,15 +419,17 @@ describe("applyFocusIncoming (CHAT6: okno kontekstowe)", () => {
     ).toBeNull();
   });
 
-  it("ignoruje inne rozmowy, wątki i duplikaty", () => {
+  it("ignoruje inne rozmowy i duplikaty; dopisuje odpowiedzi w wątku", () => {
     expect(
       applyFocusIncoming(focusBase, msg({ id: "n", conversationId: "c2" })),
     ).toBeNull();
-    expect(
-      applyFocusIncoming(focusBase, msg({ id: "n", threadRootId: "anchor" })),
-    ).toBeNull();
     expect(applyFocusIncoming(focusBase, msg({ id: "anchor" }))).toBeNull();
     expect(applyFocusIncoming(null, msg({ id: "n" }))).toBeNull();
+    const reply = applyFocusIncoming(
+      focusBase,
+      msg({ id: "n", threadRootId: "anchor" }),
+    );
+    expect(reply?.messages.map((m) => m.id)).toEqual(["anchor", "n"]);
   });
 });
 

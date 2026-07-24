@@ -55,6 +55,50 @@ describe("draftFromMessage", () => {
     const draft = draftFromMessage({ body: "mleko\nchleb" }, "checklist", "Ola");
     expect(draft.checklist?.map((c) => c.text)).toEqual(["mleko", "chleb"]);
   });
+
+  it("mini checklista: payload → punkty z done przy konwersji na zadanie", () => {
+    const draft = draftFromMessage(
+      {
+        body: "Zakupy",
+        kind: "checklist",
+        payload: {
+          checklist: {
+            items: [
+              { id: "a", text: "mleko", done: true },
+              { id: "b", text: "chleb", done: false },
+            ],
+          },
+        },
+      },
+      "task",
+      "Ola",
+    );
+    expect(draft.type).toBe("task");
+    expect(draft.title).toBe("Zakupy");
+    expect(draft.checklist?.map((c) => ({ text: c.text, done: c.done }))).toEqual([
+      { text: "mleko", done: true },
+      { text: "chleb", done: false },
+    ]);
+  });
+
+  it("mini checklista → wydarzenie z checklistą", () => {
+    const now = new Date("2026-07-17T10:22:33.000Z");
+    const draft = draftFromMessage(
+      {
+        body: "Pakowanie",
+        kind: "checklist",
+        payload: {
+          checklist: { items: [{ id: "1", text: "klucze", done: false }] },
+        },
+      },
+      "event",
+      "Jan",
+      now,
+    );
+    expect(draft.type).toBe("event");
+    expect(draft.checklist?.map((c) => c.text)).toEqual(["klucze"]);
+    expect(draft.start).toBe("2026-07-17T11:00:00.000Z");
+  });
 });
 
 describe("checklistLinesFromBody", () => {

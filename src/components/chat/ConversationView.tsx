@@ -53,7 +53,9 @@ import {
   sendChatMessageWithFiles,
   sendGifMessage,
   sendPollMessage,
+  sendChecklistMessage,
   sendVoiceMessage,
+  toggleChecklistItem,
   toggleReaction,
   unmuteConversation,
   votePoll,
@@ -281,8 +283,11 @@ function MessageFeed({
       )}
       {messages.map((m, i) => {
         const prev = messages[i - 1];
+        const isThreadAnno = Boolean(m.threadRootId) && !inThread;
         const prevSameAuthor =
+          !isThreadAnno &&
           Boolean(prev) &&
+          !prev!.threadRootId &&
           prev!.kind !== "system" &&
           m.kind !== "system" &&
           prev!.authorUserId === m.authorUserId;
@@ -292,6 +297,14 @@ function MessageFeed({
           : Number.POSITIVE_INFINITY;
         const showTime = gapMs > 5 * 60_000;
         const quotedMsg = m.replyToMessageId ? quotedLookup(m.replyToMessageId) : null;
+        const threadTitle = isThreadAnno
+          ? (() => {
+              const root =
+                messages.find((x) => x.id === m.threadRootId) ??
+                quotedLookup(m.threadRootId!);
+              return threadDisplayTitle(root);
+            })()
+          : undefined;
         return (
           <MessageBubble
             key={m.id}
@@ -316,12 +329,14 @@ function MessageFeed({
             flash={m.id === flashMessageId}
             replyCount={replyCounts[m.id] ?? 0}
             inThread={inThread}
+            threadTitle={threadTitle}
             onOpenThread={onOpenThread}
             onOpenActions={onOpenActions}
             onReply={onReply}
             onRetry={retryFailedMessage}
             onToggleReaction={(msg, emoji) => void toggleReaction(msg, emoji)}
             onVote={(msg, optionId) => void votePoll(msg, optionId)}
+            onToggleChecklist={(msg, itemId) => void toggleChecklistItem(msg, itemId)}
             onJumpTo={onJumpTo}
             onOpenRegistry={onOpenRegistry}
             onOpenGallery={onOpenGallery}
@@ -398,7 +413,8 @@ export function ConversationView({
   const entry = overview.find((c) => c.id === conversationId);
   const focus =
     !embedded && focusFeedRaw?.conversationId === conversationId ? focusFeedRaw : null;
-  const feed = useMemo(() => (messages ?? []).filter((m) => !m.threadRootId), [messages]);
+  // Główny feed: rooty + kompaktowe adnotacje odpowiedzi z wątków (chronologicznie).
+  const feed = messages ?? [];
   const displayedFeed = focus ? focus.messages : feed;
 
   const title = entry
@@ -1266,6 +1282,9 @@ export function ConversationView({
         onSend={handleSend}
         autoFocus={!embedded}
         onSendPoll={(q, opts) => void sendPollMessage(conversationId, q, opts)}
+        onSendChecklist={(title, items) =>
+          void sendChecklistMessage(conversationId, title, items)
+        }
         onSendGif={(url) => {
           returnToLatest(conversationId);
           void sendGifMessage(conversationId, url);

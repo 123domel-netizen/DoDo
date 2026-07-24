@@ -28,6 +28,7 @@ import type {
   MessageKind,
   MessagePayload,
   PollOption,
+  ChatChecklistItem,
 } from "@/lib/chat/types";
 
 /**
@@ -165,7 +166,8 @@ export function markRead(conversationId: string) {
 export async function loadConversationMessages(conversationId: string) {
   const { messages, hasMore } = await api.fetchMessagesPage(conversationId);
   useChatStore.getState().upsertConvMessages(conversationId, messages, hasMore);
-  const counts = await api.fetchReplyCounts(messages.map((m) => m.id));
+  const rootIds = messages.filter((m) => !m.threadRootId).map((m) => m.id);
+  const counts = await api.fetchReplyCounts(rootIds);
   if (Object.keys(counts).length) useChatStore.getState().setReplyCounts(counts);
 }
 
@@ -342,7 +344,8 @@ export async function loadOlderMessages(conversationId: string) {
     createdAt: oldest.createdAt,
   });
   useChatStore.getState().upsertConvMessages(conversationId, messages, hasMore);
-  const counts = await api.fetchReplyCounts(messages.map((m) => m.id));
+  const rootIds = messages.filter((m) => !m.threadRootId).map((m) => m.id);
+  const counts = await api.fetchReplyCounts(rootIds);
   if (Object.keys(counts).length) useChatStore.getState().setReplyCounts(counts);
 }
 
@@ -464,6 +467,28 @@ export function sendPollMessage(
     body: question,
     kind: "poll",
     payload: { poll: { options } },
+    threadRootId,
+  });
+}
+
+/** Mini checklista: tytuł w body, punkty w payload.checklist.items. */
+export function sendChecklistMessage(
+  conversationId: string,
+  title: string,
+  itemLabels: string[],
+  threadRootId: string | null = null,
+): ChatMessage | null {
+  const items: ChatChecklistItem[] = itemLabels
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .slice(0, 12)
+    .map((text) => ({ id: uid(), text: text.slice(0, 120), done: false }));
+  if (!title.trim() || items.length < 1) return null;
+  return sendChatMessage({
+    conversationId,
+    body: title.trim().slice(0, 200),
+    kind: "checklist",
+    payload: { checklist: { items } },
     threadRootId,
   });
 }
@@ -757,6 +782,36 @@ export async function votePoll(msg: ChatMessage, optionId: string) {
   }
 }
 
+/** Odhacz / odznacz punkt mini-checklisty (wspólny stan w payloadzie). */
+export async function toggleChecklistItem(msg: ChatMessage, itemId: string) {
+  const st = useChatStore.getState();
+  if (!st.userId || msg.sendState || msg.kind !== "checklist") return;
+  const prevItems = msg.payload.checklist?.items ?? [];
+  const optimistic = prevItems.map((it) =>
+    it.id === itemId ? { ...it, done: !it.done } : it,
+  );
+  st.markMessageState({
+    ...msg,
+    payload: { ...msg.payload, checklist: { items: optimistic } },
+  });
+  const { items, error } = await api.toggleChecklistItem(msg.id, itemId);
+  if (error) {
+    console.warn("[chat] checklist toggle failed:", error);
+    st.markMessageState(msg);
+    return;
+  }
+  if (items) {
+    const latest =
+      useChatStore.getState().messagesByConv[msg.conversationId]?.find((m) => m.id === msg.id) ??
+      useChatStore.getState().threadByRoot[msg.threadRootId ?? ""]?.find((m) => m.id === msg.id) ??
+      msg;
+    st.markMessageState({
+      ...latest,
+      payload: { ...latest.payload, checklist: { items } },
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Prefs rozmowy: ulubione / wyciszenie / oznacz nieprzeczytane
 // ---------------------------------------------------------------------------
@@ -884,7 +939,7 @@ export async function jumpToMessage(conversationId: string, messageId: string) {
 
   const tail = st.messagesByConv[conversationId] ?? [];
   const inTail = tail.find((m) => m.id === messageId);
-  if (inTail && !inTail.threadRootId) {
+  if (inTail) {
     st.setFocusFeed(null);
     st.setFlashMessage(messageId);
     return;
@@ -900,9 +955,9 @@ export async function jumpToMessage(conversationId: string, messageId: string) {
     hasOlder: ctx.hasOlder,
     hasNewer: ctx.hasNewer,
   });
-  // Kotwica w wątku → flashuje jej root (kontekst głównego feedu).
   after.setFlashMessage(ctx.pivotId);
-  const counts = await api.fetchReplyCounts(ctx.messages.map((m) => m.id));
+  const rootIds = ctx.messages.filter((m) => !m.threadRootId).map((m) => m.id);
+  const counts = await api.fetchReplyCounts(rootIds);
   if (Object.keys(counts).length) useChatStore.getState().setReplyCounts(counts);
 }
 
@@ -1158,7 +1213,9 @@ function maybePlayIncomingAlert(msg: ChatMessage, visible: boolean) {
           ? "Wiadomość głosowa"
           : msg.kind === "poll"
             ? "Ankieta"
-            : (msg.body || "Nowa wiadomość").replace(/\s+/g, " ").trim().slice(0, 100);
+            : msg.kind === "checklist"
+              ? `Checklista: ${msg.body || "…"}`
+              : (msg.body || "Nowa wiadomość").replace(/\s+/g, " ").trim().slice(0, 100);
     const line =
       entry?.kind === "dm" ? bodyPreview : `${author}: ${bodyPreview}`;
     const digest = pushChatNotifyDigest(msg.conversationId, title, line);

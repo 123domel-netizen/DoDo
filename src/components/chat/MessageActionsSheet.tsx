@@ -163,7 +163,8 @@ export function MessageActionsSheet({
     onClose();
   };
 
-  const isTextual = msg.kind === "text" || msg.kind === "poll";
+  const isTextual =
+    msg.kind === "text" || msg.kind === "poll" || msg.kind === "checklist";
   const preview =
     msg.body.slice(0, 72) ||
     (msg.kind === "voice"
@@ -257,16 +258,20 @@ export function MessageActionsSheet({
                 label="Utwórz wydarzenie"
                 onClick={() => act("createEvent")}
               />
-              <ActionRow
-                icon={<Gavel size={14} />}
-                label="Zapisz jako decyzję"
-                onClick={() => act("saveDecision")}
-              />
-              <ActionRow
-                icon={<StickyNote size={14} />}
-                label="Zapisz jako notatkę"
-                onClick={() => act("saveNote")}
-              />
+              {msg.kind !== "checklist" && (
+                <ActionRow
+                  icon={<Gavel size={14} />}
+                  label="Zapisz jako decyzję"
+                  onClick={() => act("saveDecision")}
+                />
+              )}
+              {msg.kind !== "checklist" && (
+                <ActionRow
+                  icon={<StickyNote size={14} />}
+                  label="Zapisz jako notatkę"
+                  onClick={() => act("saveNote")}
+                />
+              )}
               <ActionRow
                 icon={<Copy size={14} />}
                 label="Kopiuj treść"

@@ -249,11 +249,11 @@ export async function fetchMessagesPage(
   before?: { createdAt: string },
 ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
   if (!supabase) return { messages: [], hasMore: false };
+  // Rooty + odpowiedzizi w wątkach — w głównym feedzie odpowiedzi to kompaktowe adnotacje.
   let query = supabase
     .from("messages")
     .select(MESSAGE_SELECT)
     .eq("conversation_id", conversationId)
-    .is("thread_root_id", null)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(MESSAGES_PAGE_SIZE);
@@ -280,7 +280,6 @@ export async function fetchNewerMessages(
     .from("messages")
     .select(MESSAGE_SELECT)
     .eq("conversation_id", conversationId)
-    .is("thread_root_id", null)
     .gt("created_at", after.createdAt)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true })
@@ -321,18 +320,14 @@ export async function fetchMessagesAround(
   if (!anchorRow) return null;
   const anchor = rowToMessage(anchorRow as unknown as Row, true);
 
-  // Kotwica w wątku → kontekstem jest jej root w głównym feedzie.
-  const pivot = anchor.threadRootId
-    ? await fetchMessageById(anchor.threadRootId)
-    : anchor;
-  if (!pivot) return null;
+  // Kotwica = sama wiadomość (odpowiedź w wątku też jest w głównym feedzie jako adnotacja).
+  const pivot = anchor;
 
   const [olderRes, newerRes] = await Promise.all([
     supabase
       .from("messages")
       .select(MESSAGE_SELECT)
       .eq("conversation_id", conversationId)
-      .is("thread_root_id", null)
       .lt("created_at", pivot.createdAt)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
@@ -341,7 +336,6 @@ export async function fetchMessagesAround(
       .from("messages")
       .select(MESSAGE_SELECT)
       .eq("conversation_id", conversationId)
-      .is("thread_root_id", null)
       .gt("created_at", pivot.createdAt)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
@@ -537,6 +531,22 @@ export async function deletePollVote(
     .eq("message_id", messageId)
     .eq("user_id", userId);
   return error ? { error: error.message } : {};
+}
+
+/** Wspólne odhaczenie punktu mini-checklisty w payloadzie wiadomości. */
+export async function toggleChecklistItem(
+  messageId: string,
+  itemId: string,
+): Promise<{ items?: { id: string; text: string; done: boolean }[]; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { data, error } = await supabase.rpc("toggle_message_checklist_item", {
+    p_message_id: messageId,
+    p_item_id: itemId,
+  });
+  if (error) return { error: error.message };
+  const items = (data as { items?: { id: string; text: string; done: boolean }[] } | null)
+    ?.items;
+  return { items };
 }
 
 // ---------------------------------------------------------------------------

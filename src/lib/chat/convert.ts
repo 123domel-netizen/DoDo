@@ -5,7 +5,7 @@ import { addDecision, addNote, createItemLink, deleteDecision, deleteNote, upser
 import { sendChatMessage } from "@/lib/chat/init";
 import { draftFromMessage, type ConvertTarget } from "@/lib/chat/convertDraft";
 import { groupIdForNewItem } from "@/lib/groups";
-import type { ChatDecision, ChatMessage, ChatNote } from "@/lib/chat/types";
+import type { ChatDecision, ChatMessage, ChatNote, MessageKind, MessagePayload } from "@/lib/chat/types";
 
 /**
  * CHAT2-LINK / CHAT6: wymienność obiektów — wiadomość / notatka / decyzja
@@ -23,6 +23,8 @@ export interface ConvertSource {
   /** Wiadomość źródłowa (link zwrotny); null np. dla notatki bez wiadomości. */
   messageId: string | null;
   authorName: string;
+  kind?: MessageKind;
+  payload?: MessagePayload;
 }
 
 interface PendingConversion {
@@ -229,7 +231,13 @@ export async function decisionToNote(decision: ChatDecision): Promise<{ error?: 
  */
 export function beginConvertToItem(source: ConvertSource, target: ConvertTarget) {
   const store = useStore.getState();
-  store.startDraft(draftFromMessage({ body: source.body }, target, source.authorName));
+  store.startDraft(
+    draftFromMessage(
+      { body: source.body, kind: source.kind, payload: source.payload },
+      target,
+      source.authorName,
+    ),
+  );
   const draft = useStore.getState().draft;
   if (!draft) return;
 
@@ -267,6 +275,8 @@ export function beginConvertMessageToItem(msg: ChatMessage, target: ConvertTarge
       conversationId: msg.conversationId,
       messageId: msg.id,
       authorName: author,
+      kind: msg.kind,
+      payload: msg.payload,
     },
     target,
   );

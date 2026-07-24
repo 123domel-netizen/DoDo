@@ -1,6 +1,13 @@
 export type ConversationKind = "channel" | "dm" | "item";
 
-export type MessageKind = "text" | "system" | "poll" | "gif" | "voice" | "gallery";
+export type MessageKind =
+  | "text"
+  | "system"
+  | "poll"
+  | "gif"
+  | "voice"
+  | "gallery"
+  | "checklist";
 
 export interface ChatProfile {
   userId: string;
@@ -101,6 +108,12 @@ export interface PollOption {
   label: string;
 }
 
+export interface ChatChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
 export interface PollVote {
   messageId: string;
   userId: string;
@@ -151,6 +164,7 @@ export interface MessageMovedMeta {
 /** Dane zależne od kindu wiadomości (kolumna messages.payload). */
 export interface MessagePayload {
   poll?: { options: PollOption[] };
+  checklist?: { items: ChatChecklistItem[] };
   gif?: { url: string; width?: number; height?: number };
   voice?: { durationSec: number };
   linkPreview?: LinkPreview;
@@ -325,6 +339,8 @@ export function messagePreviewLabel(kind: MessageKind, body: string): string {
   switch (kind) {
     case "poll":
       return `📊 Ankieta: ${body}`;
+    case "checklist":
+      return `✅ Checklista: ${body || "…"}`;
     case "gif":
       return "GIF";
     case "voice":

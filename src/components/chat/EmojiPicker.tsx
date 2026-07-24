@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Search, X } from "lucide-react";
 
 /** Popularne emotki do wstawiania w composerze (bez zewnętrznej zależności). */
@@ -71,6 +72,9 @@ export function EmojiPicker({ open, onClose, onPick }: EmojiPickerProps) {
       setQuery("");
       return;
     }
+    // Na telefonie nie focusuj wyszukiwarki — klawiatura zasłania panel.
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    if (coarse) return;
     const t = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => window.clearTimeout(t);
   }, [open]);
@@ -92,27 +96,27 @@ export function EmojiPicker({ open, onClose, onPick }: EmojiPickerProps) {
     : EMOJI_GROUPS;
   const groups = visible.length ? visible : EMOJI_GROUPS;
 
-  return (
-    <>
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
       <button
         type="button"
-        className="fixed inset-0 z-40 cursor-default"
+        className="absolute inset-0 bg-black/50"
         aria-label="Zamknij emotikony"
         onClick={onClose}
       />
       <div
-        className="absolute bottom-full right-0 z-50 mb-1 flex h-72 w-[min(20rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-line bg-surface-overlay shadow-pop"
+        className="relative flex h-[min(24rem,70vh)] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-line bg-surface-overlay shadow-pop sm:h-80 sm:rounded-2xl"
         role="dialog"
         aria-label="Emotikony"
       >
-        <div className="flex items-center gap-1.5 border-b border-line px-2 py-1.5">
-          <Search size={13} className="shrink-0 text-ink-faint" />
+        <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-2">
+          <Search size={14} className="shrink-0 text-ink-faint" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Szukaj kategorii…"
-            className="min-w-0 flex-1 bg-transparent text-xs text-ink outline-none placeholder:text-ink-faint"
+            className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
           />
           <button
             type="button"
@@ -120,7 +124,7 @@ export function EmojiPicker({ open, onClose, onPick }: EmojiPickerProps) {
             className="rounded p-1 text-ink-faint transition hover:text-ink"
             aria-label="Zamknij"
           >
-            <X size={14} />
+            <X size={16} />
           </button>
         </div>
         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
@@ -136,7 +140,7 @@ export function EmojiPicker({ open, onClose, onPick }: EmojiPickerProps) {
                     type="button"
                     title={emoji}
                     onClick={() => onPick(emoji)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-lg transition hover:bg-surface-raised"
+                    className="flex h-9 w-full items-center justify-center rounded-lg text-xl transition hover:bg-surface-raised active:bg-surface-raised"
                   >
                     {emoji}
                   </button>
@@ -146,6 +150,7 @@ export function EmojiPicker({ open, onClose, onPick }: EmojiPickerProps) {
           ))}
         </div>
       </div>
-    </>
+    </div>,
+    document.body,
   );
 }

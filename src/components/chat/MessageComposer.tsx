@@ -5,6 +5,7 @@ import {
   CornerUpLeft,
   Film,
   Images,
+  ListChecks,
   Mic,
   Paperclip,
   Plus,
@@ -33,6 +34,7 @@ import {
   type ActiveRecorder,
 } from "@/lib/chat/voice";
 import { PollCreateDialog } from "@/components/chat/PollCreateDialog";
+import { MiniChecklistCreateDialog } from "@/components/chat/MiniChecklistCreateDialog";
 import { GifPicker } from "@/components/chat/GifPicker";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 
@@ -67,6 +69,7 @@ interface MessageComposerProps {
   orgId?: string | null;
   onSendVoice?: (file: File, durationSec: number) => void | Promise<void>;
   onSendPoll?: (question: string, options: string[]) => void;
+  onSendChecklist?: (title: string, items: string[]) => void;
   onSendGif?: (url: string) => void;
   onOpenGallery?: () => void;
   /** Sygnał „piszę" (throttling po stronie odbiorcy hooka). */
@@ -89,6 +92,7 @@ export function MessageComposer({
   orgId = null,
   onSendVoice,
   onSendPoll,
+  onSendChecklist,
   onSendGif,
   onOpenGallery,
   onTyping,
@@ -109,6 +113,7 @@ export function MessageComposer({
   const [mention, setMention] = useState<MentionQuery | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [pollOpen, setPollOpen] = useState(false);
+  const [checklistOpen, setChecklistOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -553,7 +558,7 @@ export function MessageComposer({
             className="min-h-[40px] max-h-[132px] flex-1 resize-none rounded-[1.25rem] border border-line bg-surface-raised px-3.5 py-2.5 text-sm leading-snug text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/40 disabled:opacity-50"
           />
 
-          {(onSendPoll || onSendGif || onOpenGallery) && !editing && (
+          {(onSendPoll || onSendChecklist || onSendGif || onOpenGallery) && !editing && (
             <div className="relative shrink-0 self-center">
               <button
                 type="button"
@@ -572,7 +577,7 @@ export function MessageComposer({
                     aria-label="Zamknij menu"
                     onClick={() => setPlusOpen(false)}
                   />
-                  <div className="absolute bottom-full right-0 z-50 mb-1 w-40 rounded-xl border border-line bg-surface-overlay p-1 shadow-pop">
+                  <div className="absolute bottom-full right-0 z-50 mb-1 w-44 rounded-xl border border-line bg-surface-overlay p-1 shadow-pop">
                     {onSendPoll && (
                       <button
                         type="button"
@@ -583,6 +588,18 @@ export function MessageComposer({
                         className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
                       >
                         <BarChart3 size={14} className="text-ink-faint" /> Ankieta
+                      </button>
+                    )}
+                    {onSendChecklist && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlusOpen(false);
+                          setChecklistOpen(true);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                      >
+                        <ListChecks size={14} className="text-ink-faint" /> Mini checklista
                       </button>
                     )}
                     {onSendGif && (
@@ -667,6 +684,11 @@ export function MessageComposer({
         open={pollOpen}
         onClose={() => setPollOpen(false)}
         onCreate={(q, opts) => onSendPoll?.(q, opts)}
+      />
+      <MiniChecklistCreateDialog
+        open={checklistOpen}
+        onClose={() => setChecklistOpen(false)}
+        onCreate={(title, items) => onSendChecklist?.(title, items)}
       />
       <GifPicker
         open={gifOpen}

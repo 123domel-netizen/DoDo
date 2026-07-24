@@ -251,7 +251,7 @@ function reconcilePinned(
 function patchEverywhere(s: CacheSlices, msg: ChatMessage): Partial<CacheSlices> {
   const out: Partial<CacheSlices> = {};
   const feed = s.messagesByConv[msg.conversationId];
-  if (feed && msg.threadRootId === null) {
+  if (feed) {
     out.messagesByConv = {
       ...s.messagesByConv,
       [msg.conversationId]: upsertMessageInList(feed, msg),
@@ -275,7 +275,6 @@ function patchEverywhere(s: CacheSlices, msg: ChatMessage): Partial<CacheSlices>
   if (
     s.focusFeed &&
     s.focusFeed.conversationId === msg.conversationId &&
-    msg.threadRootId === null &&
     s.focusFeed.messages.some((m) => m.id === msg.id)
   ) {
     out.focusFeed = {
@@ -464,16 +463,14 @@ export const useChatStore = create<ChatState>()(
       enqueueOutbox: (entry) =>
         set((s) => {
           const patches = patchEverywhere(s, entry.message);
-          const feedPatch =
-            entry.message.threadRootId === null &&
-            !s.messagesByConv[entry.message.conversationId]
-              ? {
-                  messagesByConv: {
-                    ...s.messagesByConv,
-                    [entry.message.conversationId]: [entry.message],
-                  },
-                }
-              : {};
+          const feedPatch = !s.messagesByConv[entry.message.conversationId]
+            ? {
+                messagesByConv: {
+                  ...s.messagesByConv,
+                  [entry.message.conversationId]: [entry.message],
+                },
+              }
+            : {};
           return {
             outbox: [...s.outbox.filter((e) => e.message.id !== entry.message.id), entry],
             ...patches,
