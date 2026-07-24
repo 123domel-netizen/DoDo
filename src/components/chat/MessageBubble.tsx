@@ -980,7 +980,7 @@ export function MessageBubble({
   return (
     <div
       data-message-id={msg.id}
-      className={`group relative flex gap-2 px-3 ${
+      className={`group relative z-0 flex gap-2 px-3 hover:z-30 focus-within:z-30 ${
         showAuthor ? "mt-3" : "mt-0.5"
       } ${mine ? "flex-row-reverse" : "flex-row"}`}
     >
@@ -1001,7 +1001,7 @@ export function MessageBubble({
       )}
 
       <div
-        className={`relative flex min-w-0 w-full flex-col overflow-hidden ${
+        className={`relative flex min-w-0 w-full flex-col ${
           mine ? "items-end" : "items-start"
         } ${
           msg.kind === "gallery" && !deleted
