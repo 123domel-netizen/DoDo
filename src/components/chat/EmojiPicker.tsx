@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X } from "lucide-react";
+import { Film, Search, X } from "lucide-react";
 
 /** Popularne emotki do wstawiania w composerze (bez zewnętrznej zależności). */
 const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
@@ -61,9 +61,11 @@ interface EmojiPickerProps {
   open: boolean;
   onClose: () => void;
   onPick: (emoji: string) => void;
+  /** Otwórz wyszukiwarkę GIF (zamyka panel emotek). */
+  onOpenGifs?: () => void;
 }
 
-export function EmojiPicker({ open, onClose, onPick }: EmojiPickerProps) {
+export function EmojiPicker({ open, onClose, onPick, onOpenGifs }: EmojiPickerProps) {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -110,6 +112,19 @@ export function EmojiPicker({ open, onClose, onPick }: EmojiPickerProps) {
         aria-label="Emotikony"
       >
         <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-2">
+          {onOpenGifs && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenGifs();
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-accent/40 bg-accent/20 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:border-accent/60 hover:bg-accent/30"
+            >
+              <Film size={13} />
+              GIFy
+            </button>
+          )}
           <Search size={14} className="shrink-0 text-ink-faint" />
           <input
             ref={inputRef}

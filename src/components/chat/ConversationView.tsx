@@ -69,6 +69,7 @@ import {
 } from "@/lib/chat/api";
 import {
   beginConvertMessageToItem,
+  beginEventFromConversation,
   saveMessageAsDecision,
   saveMessageAsNote,
 } from "@/lib/chat/convert";
@@ -1285,6 +1286,7 @@ export function ConversationView({
         onSendChecklist={(title, items) =>
           void sendChecklistMessage(conversationId, title, items)
         }
+        onCreateEvent={() => beginEventFromConversation(conversationId)}
         onSendGif={(url) => {
           returnToLatest(conversationId);
           void sendGifMessage(conversationId, url);

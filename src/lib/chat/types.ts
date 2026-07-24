@@ -174,6 +174,11 @@ export interface MessagePayload {
     kind: "decision" | "note";
     id: string;
   };
+  /** System: utworzono item z czatu — klik otwiera edytor. */
+  createdItem?: {
+    itemId: string;
+    type: "task" | "event" | "checklist";
+  };
   /** Przekazanie — baner „Przesłano dalej”. */
   forward?: MessageForwardMeta;
   /** Stub w źródle po przeniesieniu. */

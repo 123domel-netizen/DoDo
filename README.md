@@ -217,17 +217,36 @@ integracja synchronizacji z Google Calendar/Tasks została **usunięta**
    ```
 
 3. Włącz rozszerzenia `pg_cron` i `pg_net`, a następnie uruchom
-   `supabase/migrations/0002_cron.sql` (po podmianie `<PROJECT_REF>` i
-   `<SERVICE_ROLE_KEY>`). Cron co minutę wywołuje funkcję, która rozsyła
-   przypomnienia na wszystkie urządzenia.
+   `supabase/migrations/0002_cron.sql` (po podmianie `<PROJECT_REF>`).
+   Cron co minutę woła
+   `https://<PROJECT_REF>.supabase.co/functions/v1/send-reminders`
+   (`verify_jwt=false` — bez service role w SQL).
 
 4. W aplikacji kliknij ikonę dzwonka, aby zezwolić na powiadomienia i
    zarejestrować urządzenie.
 
-> Gdy aplikacja jest otwarta i urządzenie **nie ma** aktywnej subskrypcji push,
-> przypomnienia pokazują się lokalnie (bez backendu). Push z serwera działa
-> również gdy aplikacja jest zamknięta; urządzenie z aktywnym pushem nie duperuje
-> powiadomień lokalnie.
+**Diagnostyka przypomnień / deadlineów:**
+
+```sql
+select jobid, jobname, schedule, command from cron.job;
+select status, return_message, start_time
+  from cron.job_run_details order by start_time desc limit 10;
+select * from reminder_log order by fire_at desc limit 20;
+```
+
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/send-reminders" \
+  -H "Content-Type: application/json" -d '{}'
+# → {"ok":true,"sent":N}
+```
+
+Smoke test: wydarzenie za ~6–8 min (z godziną, bez ręcznego reminderu) →
+push „Za 5 minut zaczyna się wydarzenie: …” + wpis w `reminder_log`
+(`reminder_id = default-5m`).
+
+> Push z serwera działa przy zamkniętej aplikacji. Gdy PWA jest **widoczna**,
+> lokalny scheduler też odpala przypomnienia (bezpiecznik gdy cron milczy);
+> w tle polegamy na serwerze, żeby nie dublować.
 
 ### Push czatu (notify-message)
 

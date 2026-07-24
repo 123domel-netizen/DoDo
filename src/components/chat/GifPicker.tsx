@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link2, Search, X } from "lucide-react";
+import { Link2, Search, Smile, X } from "lucide-react";
 import { isGifUrl } from "@/lib/chat/markdown";
 
 /**
@@ -99,9 +99,11 @@ interface GifPickerProps {
   open: boolean;
   onClose: () => void;
   onPick: (url: string) => void;
+  /** Wróć do panelu emotikon (zamyka GIFy). */
+  onBackToEmojis?: () => void;
 }
 
-export function GifPicker({ open, onClose, onPick }: GifPickerProps) {
+export function GifPicker({ open, onClose, onPick, onBackToEmojis }: GifPickerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GifResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -163,17 +165,32 @@ export function GifPicker({ open, onClose, onPick }: GifPickerProps) {
         onClick={onClose}
       />
       <div className="relative flex h-[70vh] w-full max-w-md flex-col rounded-t-2xl border border-line bg-surface-overlay p-3 shadow-pop sm:h-[75vh] sm:rounded-2xl">
-        <div className="mb-2 flex items-center justify-between px-1">
-          <h3 className="text-sm font-semibold text-ink">
-            GIF{" "}
-            <span className="text-[10px] font-normal text-ink-faint">
-              {TENOR_KEY ? "Tenor" : "GIPHY"}
-            </span>
-          </h3>
+        <div className="mb-2 flex items-center justify-between gap-2 px-1">
+          <div className="flex min-w-0 items-center gap-2">
+            {onBackToEmojis && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onBackToEmojis();
+                }}
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-accent/40 bg-accent/20 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:border-accent/60 hover:bg-accent/30"
+              >
+                <Smile size={13} />
+                Emotikony
+              </button>
+            )}
+            <h3 className="truncate text-sm font-semibold text-ink">
+              GIF{" "}
+              <span className="text-[10px] font-normal text-ink-faint">
+                {TENOR_KEY ? "Tenor" : "GIPHY"}
+              </span>
+            </h3>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-ink-faint transition hover:text-ink"
+            className="shrink-0 rounded p-1 text-ink-faint transition hover:text-ink"
             aria-label="Zamknij"
           >
             <X size={16} />

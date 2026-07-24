@@ -63,7 +63,14 @@ describe("collectDueNotifications — przypomnienia względne", () => {
       end: "2026-07-12T10:30:00.000Z",
       reminders: [{ id: "r1", offsetMinutes: 10 }], // fireAt 09:20, NOW 09:50
     });
-    expect(collectDueNotifications([item], NOW, never)).toHaveLength(1);
+    const due = collectDueNotifications([item], NOW, never);
+    // Jawne 10 min + syntetyczne T-5 (09:25) — oba w LATE_WINDOW.
+    expect(due.map((n) => n.key)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("r1"),
+        expect.stringContaining("default-5m"),
+      ]),
+    );
   });
 
   it("pomija przypomnienie starsze niż okno", () => {
@@ -157,6 +164,63 @@ describe("collectDueNotifications — wydarzenia cykliczne", () => {
     // Poniedziałek 13 lipca 09:50 — jest.
     const mondayNow = new Date("2026-07-13T09:50:00.000Z").getTime();
     expect(collectDueNotifications([weekly], mondayNow, never)).toHaveLength(1);
+  });
+});
+
+describe("collectDueNotifications — default T-5 wydarzenia", () => {
+  it("odpala default-5m bez żadnego reminders[]", () => {
+    const item = makeItem({
+      title: "Standup",
+      reminders: [],
+      start: "2026-07-12T09:55:00.000Z",
+      end: "2026-07-12T10:25:00.000Z",
+    });
+    const due = collectDueNotifications([item], NOW, never);
+    expect(due).toHaveLength(1);
+    expect(due[0].key).toContain("default-5m");
+    expect(due[0].body).toBe("Za 5 minut zaczyna się wydarzenie: Standup");
+    expect(due[0].markFiredReminderId).toBeUndefined();
+  });
+
+  it("nie dubluje gdy jest jawne przypomnienie 5 min", () => {
+    const item = makeItem({
+      title: "Standup",
+      reminders: [{ id: "r5", offsetMinutes: 5 }],
+      start: "2026-07-12T09:55:00.000Z",
+      end: "2026-07-12T10:25:00.000Z",
+    });
+    const due = collectDueNotifications([item], NOW, never);
+    expect(due).toHaveLength(1);
+    expect(due[0].markFiredReminderId).toBe("r5");
+    expect(due.every((n) => !n.key.includes("default-5m"))).toBe(true);
+  });
+
+  it("łączy jawne 1h z default T-5", () => {
+    const item = makeItem({
+      title: "Demo",
+      reminders: [{ id: "r60", offsetMinutes: 60 }],
+      start: "2026-07-12T09:55:00.000Z",
+      end: "2026-07-12T10:55:00.000Z",
+    });
+    // NOW 09:50 → T-5 due (fire 09:50); 1h fire był 08:55 — poza LATE_WINDOW jeśli...
+    // LATE_WINDOW = 60 min, 08:55 is 55 min ago → still in window!
+    const due = collectDueNotifications([item], NOW, never);
+    expect(due.map((n) => n.key).some((k) => k.includes("default-5m"))).toBe(true);
+    expect(due.map((n) => n.key).some((k) => k.includes("r60"))).toBe(true);
+  });
+
+  it("pomija zadania i all-day", () => {
+    const task = makeItem({
+      type: "task",
+      reminders: [],
+      start: "2026-07-12T09:55:00.000Z",
+    });
+    const allDay = makeItem({
+      allDay: true,
+      reminders: [],
+      start: "2026-07-12T09:55:00.000Z",
+    });
+    expect(collectDueNotifications([task, allDay], NOW, never)).toHaveLength(0);
   });
 });
 

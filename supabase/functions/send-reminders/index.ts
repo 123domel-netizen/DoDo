@@ -6,8 +6,10 @@
 // Obsługuje:
 //  - przypomnienia względne (offset od startu) i absolutne (remindAt),
 //  - wydarzenia CYKLICZNE — rozwija RRULE i liczy czas per wystąpienie,
+//  - domyślne T-5 dla wydarzeń z godziną (nawet bez reminders[]): „Za 5 minut…”,
 //  - deadline (payload.deadlineAt): powiadomienie 24 h przed i w chwili terminu,
 //  - przypomnienia osobiste uczestników SHARE (item_participants.personal_reminders).
+// Deep link: /#/wpis/{itemId}, tag reminder-{itemId}-{fireAt}.
 //
 // Wdrożenie:
 //   supabase functions deploy send-reminders --no-verify-jwt
@@ -211,8 +213,18 @@ function makeSender(admin: SupabaseClient) {
     return subs;
   }
 
-  async function send(userId: string, title: string, body: string): Promise<void> {
-    const payload = JSON.stringify({ title, body, url: "/" });
+  async function send(
+    userId: string,
+    title: string,
+    body: string,
+    opts?: { itemId?: string; fireAt?: number },
+  ): Promise<void> {
+    const itemId = opts?.itemId;
+    const fireAt = opts?.fireAt;
+    const url = itemId ? `/#/wpis/${itemId}` : "/";
+    const tag =
+      itemId && fireAt != null ? `reminder-${itemId}-${fireAt}` : undefined;
+    const payload = JSON.stringify({ title, body, url, ...(tag ? { tag } : {}) });
     for (const sub of await subsFor(userId)) {
       try {
         await webpush.sendNotification(
@@ -255,6 +267,28 @@ function itemTitle(item: ItemRow): string {
   return item.title || (item.type === "task" ? "Zadanie" : "Wydarzenie");
 }
 
+/** Syntetyczne T-5 — jak src/lib/defaultEventReminder.ts (trzymać w sync). */
+const DEFAULT_EVENT_REMINDER_ID = "default-5m";
+const DEFAULT_EVENT_REMINDER_OFFSET_MINUTES = 5;
+
+function shouldApplyDefaultEventReminder(item: ItemRow): boolean {
+  if (item.type !== "event") return false;
+  if (item.all_day) return false;
+  if (item.payload?.hasDueDate === false) return false;
+  return true;
+}
+
+function hasExplicitFiveMinuteReminder(reminders: Reminder[]): boolean {
+  return reminders.some(
+    (r) => !r.remindAt && (r.offsetMinutes || 0) === DEFAULT_EVENT_REMINDER_OFFSET_MINUTES,
+  );
+}
+
+function defaultEventReminderBody(title: string): string {
+  const name = (title || "").trim() || "Wydarzenie";
+  return `Za 5 minut zaczyna się wydarzenie: ${name}`;
+}
+
 // --- Główna pętla --------------------------------------------------------------
 
 Deno.serve(async () => {
@@ -273,6 +307,8 @@ Deno.serve(async () => {
     const reminders = item.payload?.reminders ?? [];
     const relative = reminders.filter((r) => !r.remindAt);
     const absolute = reminders.filter((r) => Boolean(r.remindAt));
+    const needDefault =
+      shouldApplyDefaultEventReminder(item) && !hasExplicitFiveMinuteReminder(reminders);
 
     for (const r of absolute) {
       const fireAt = new Date(r.remindAt!).getTime();
@@ -282,11 +318,16 @@ Deno.serve(async () => {
         item.user_id,
         itemTitle(item),
         `Przypomnienie o ${fmtPL(new Date(r.remindAt!))}`,
+        { itemId: item.id, fireAt },
       );
     }
 
-    if (relative.length && item.payload?.hasDueDate !== false) {
-      const maxOffMs = maxOffsetMinutes(relative) * 60_000;
+    if ((relative.length || needDefault) && item.payload?.hasDueDate !== false) {
+      const maxOff = Math.max(
+        maxOffsetMinutes(relative),
+        needDefault ? DEFAULT_EVENT_REMINDER_OFFSET_MINUTES : 0,
+      );
+      const maxOffMs = maxOff * 60_000;
       const from = new Date(now - WINDOW_MS);
       const to = new Date(now + maxOffMs + WINDOW_MS);
       const starts = occurrenceStarts(item, from, to);
@@ -300,7 +341,33 @@ Deno.serve(async () => {
             r.offsetMinutes > 0
               ? `Zaczyna się ${fmtPL(occStart)}`
               : `Zaczyna się teraz (${fmtPL(occStart)})`;
-          await sender.send(item.user_id, itemTitle(item), label);
+          await sender.send(item.user_id, itemTitle(item), label, {
+            itemId: item.id,
+            fireAt,
+          });
+        }
+
+        if (needDefault) {
+          const fireAt =
+            occStart.getTime() - DEFAULT_EVENT_REMINDER_OFFSET_MINUTES * 60_000;
+          if (!isDue(fireAt, now)) continue;
+          if (
+            !(await claim(
+              admin,
+              item.user_id,
+              item.id,
+              DEFAULT_EVENT_REMINDER_ID,
+              fireAt,
+            ))
+          ) {
+            continue;
+          }
+          await sender.send(
+            item.user_id,
+            itemTitle(item),
+            defaultEventReminderBody(item.title),
+            { itemId: item.id, fireAt },
+          );
         }
       }
     }
@@ -317,7 +384,10 @@ Deno.serve(async () => {
         for (const slot of slots) {
           if (!isDue(slot.fireAt, now)) continue;
           if (!(await claim(admin, item.user_id, item.id, slot.id, slot.fireAt))) continue;
-          await sender.send(item.user_id, `Deadline: ${itemTitle(item)}`, slot.body);
+          await sender.send(item.user_id, `Deadline: ${itemTitle(item)}`, slot.body, {
+            itemId: item.id,
+            fireAt: slot.fireAt,
+          });
         }
       }
     }
@@ -394,7 +464,10 @@ Deno.serve(async () => {
       const fireAt = new Date(r.remindAt!).getTime();
       if (!Number.isFinite(fireAt) || !isDue(fireAt, now)) continue;
       if (!(await claim(admin, userId, item.id, r.id, fireAt))) continue;
-      await sender.send(userId, itemTitle(item), `Przypomnienie o ${fmtPL(new Date(r.remindAt!))}`);
+      await sender.send(userId, itemTitle(item), `Przypomnienie o ${fmtPL(new Date(r.remindAt!))}`, {
+        itemId: item.id,
+        fireAt,
+      });
     }
 
     if (relative.length && item.payload?.hasDueDate !== false) {
@@ -409,7 +482,10 @@ Deno.serve(async () => {
           const fireAt = occStart.getTime() - (r.offsetMinutes || 0) * 60_000;
           if (!isDue(fireAt, now)) continue;
           if (!(await claim(admin, userId, item.id, r.id, fireAt))) continue;
-          await sender.send(userId, itemTitle(item), `Zaczyna się ${fmtPL(occStart)}`);
+          await sender.send(userId, itemTitle(item), `Zaczyna się ${fmtPL(occStart)}`, {
+            itemId: item.id,
+            fireAt,
+          });
         }
       }
     }

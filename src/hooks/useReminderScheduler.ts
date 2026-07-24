@@ -12,9 +12,10 @@ import {
  * Local reminder scheduler. While the app (tab or installed PWA) is running it
  * checks reminders every 30s and fires a local notification when due.
  *
- * Gdy urządzenie ma aktywną subskrypcję Web Push, lokalne odpalanie jest
- * pomijane — powiadomienie dosyła serwer (send-reminders) i uniknie się
- * duplikatów. Scheduler lokalny zostaje jako fallback bez pusha.
+ * Gdy urządzenie ma aktywną subskrypcję Web Push i aplikacja jest w tle,
+ * lokalne odpalanie jest pomijane — powiadomienie dosyła serwer (send-reminders).
+ * Gdy PWA jest widoczna, lokalny tick działa mimo pusha (bezpiecznik gdy cron
+ * milczy); dedupe po lokalnym firedLog ogranicza duble.
  */
 export function useReminderScheduler() {
   const patchItem = useStore((s) => s.patchItem);
@@ -26,8 +27,11 @@ export function useReminderScheduler() {
     const firedLog = firedLogRef.current;
 
     const tick = async () => {
-      // Push aktywny → serwer wysyła na to urządzenie; nie dublujemy lokalnie.
-      if (await hasActivePushSubscription()) return;
+      const pushOn = await hasActivePushSubscription();
+      const visible =
+        typeof document === "undefined" || document.visibilityState === "visible";
+      // Push + tło → serwer; push + widoczna app → lokalnie jako fallback.
+      if (pushOn && !visible) return;
 
       const now = Date.now();
       const items = Object.values(useStore.getState().items);
@@ -35,7 +39,10 @@ export function useReminderScheduler() {
       if (!due.length) return;
 
       for (const n of due) {
-        showLocalNotification(n.title, n.body);
+        showLocalNotification(n.title, n.body, {
+          tag: `reminder-${n.itemId}-${n.fireAt}`,
+          url: `/#/wpis/${n.itemId}`,
+        });
         firedLog.set(n.key, now);
 
         if (!n.markFiredReminderId) continue;

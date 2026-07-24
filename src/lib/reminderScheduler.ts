@@ -4,6 +4,13 @@ import { expandItemOccurrences, hasRecurrence } from "@/lib/recurrence";
 import { isItemDeleted } from "@/lib/items";
 import { isSharedItem } from "@/lib/share";
 import { fmt, fmtTime } from "@/lib/format";
+import {
+  DEFAULT_EVENT_REMINDER_ID,
+  DEFAULT_EVENT_REMINDER_OFFSET_MINUTES,
+  defaultEventReminderBody,
+  hasExplicitFiveMinuteReminder,
+  shouldApplyDefaultEventReminder,
+} from "@/lib/defaultEventReminder";
 
 /**
  * Czysta logika lokalnego schedulera powiadomień (testowalna bez DOM).
@@ -38,6 +45,12 @@ function maxRelativeOffsetMinutes(item: Item): number {
   let max = 0;
   for (const r of effectiveReminders(item)) {
     if (!isAbsoluteReminder(r)) max = Math.max(max, r.offsetMinutes);
+  }
+  if (
+    shouldApplyDefaultEventReminder(item) &&
+    !hasExplicitFiveMinuteReminder(effectiveReminders(item))
+  ) {
+    max = Math.max(max, DEFAULT_EVENT_REMINDER_OFFSET_MINUTES);
   }
   return Math.min(max, MAX_OFFSET_CAP_MINUTES);
 }
@@ -75,7 +88,11 @@ export function collectDueNotifications(
     const recurring = hasRecurrence(item);
     const reminders = effectiveReminders(item);
 
-    if (reminders.length) {
+    const needDefault =
+      shouldApplyDefaultEventReminder(item) &&
+      !hasExplicitFiveMinuteReminder(reminders);
+
+    if (reminders.length || needDefault) {
       const occStarts = recurring
         ? occurrenceStartsAround(item, now)
         : item.hasDueDate
@@ -119,6 +136,26 @@ export function collectDueNotifications(
             fireAt,
             kind: "reminder",
             markFiredReminderId: recurring ? undefined : r.id,
+            shared,
+          });
+        }
+      }
+
+      // Syntetyczne T-5 dla wydarzeń z godziną (nawet przy reminders: []).
+      if (needDefault) {
+        for (const occStart of occStarts) {
+          const fireAt =
+            occStart.getTime() - DEFAULT_EVENT_REMINDER_OFFSET_MINUTES * 60_000;
+          if (!isDue(fireAt, now)) continue;
+          const key = `${item.id}:${DEFAULT_EVENT_REMINDER_ID}:${new Date(fireAt).toISOString()}`;
+          if (alreadyFired(key)) continue;
+          out.push({
+            key,
+            itemId: item.id,
+            title: reminderTitle(item),
+            body: defaultEventReminderBody(item.title),
+            fireAt,
+            kind: "reminder",
             shared,
           });
         }

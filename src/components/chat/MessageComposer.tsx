@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BarChart3,
+  CalendarPlus,
   Clock,
   CornerUpLeft,
-  Film,
   Images,
   ListChecks,
   Mic,
@@ -72,6 +72,8 @@ interface MessageComposerProps {
   onSendChecklist?: (title: string, items: string[]) => void;
   onSendGif?: (url: string) => void;
   onOpenGallery?: () => void;
+  /** Draft wydarzenia z uczestnikami rozmowy. */
+  onCreateEvent?: () => void;
   /** Sygnał „piszę" (throttling po stronie odbiorcy hooka). */
   onTyping?: () => void;
   disabled?: boolean;
@@ -95,6 +97,7 @@ export function MessageComposer({
   onSendChecklist,
   onSendGif,
   onOpenGallery,
+  onCreateEvent,
   onTyping,
   disabled = false,
   allowFiles = true,
@@ -512,6 +515,7 @@ export function MessageComposer({
               open={emojiOpen}
               onClose={() => setEmojiOpen(false)}
               onPick={insertEmoji}
+              onOpenGifs={onSendGif ? () => setGifOpen(true) : undefined}
             />
           </div>
 
@@ -558,12 +562,29 @@ export function MessageComposer({
             className="min-h-[40px] max-h-[132px] flex-1 resize-none rounded-[1.25rem] border border-line bg-surface-raised px-3.5 py-2.5 text-sm leading-snug text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/40 disabled:opacity-50"
           />
 
-          {(onSendPoll || onSendChecklist || onSendGif || onOpenGallery) && !editing && (
+          {(onSendPoll ||
+            onSendChecklist ||
+            onOpenGallery ||
+            onCreateEvent ||
+            allowFiles) &&
+            !editing && (
             <div className="relative shrink-0 self-center">
+              {allowFiles && (
+                <input
+                  ref={fileRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              )}
               <button
                 type="button"
                 onClick={() => setPlusOpen((v) => !v)}
-                disabled={disabled}
+                disabled={disabled || sending}
                 className="rounded-full p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
                 aria-label="Więcej opcji"
               >
@@ -599,19 +620,19 @@ export function MessageComposer({
                         }}
                         className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
                       >
-                        <ListChecks size={14} className="text-ink-faint" /> Mini checklista
+                        <ListChecks size={14} className="text-ink-faint" /> Checklista
                       </button>
                     )}
-                    {onSendGif && (
+                    {onCreateEvent && (
                       <button
                         type="button"
                         onClick={() => {
                           setPlusOpen(false);
-                          setGifOpen(true);
+                          onCreateEvent();
                         }}
                         className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
                       >
-                        <Film size={14} className="text-ink-faint" /> GIF
+                        <CalendarPlus size={14} className="text-ink-faint" /> Wydarzenie
                       </button>
                     )}
                     {onOpenGallery && (
@@ -626,34 +647,22 @@ export function MessageComposer({
                         <Images size={14} className="text-ink-faint" /> Galeria
                       </button>
                     )}
+                    {allowFiles && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlusOpen(false);
+                          fileRef.current?.click();
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                      >
+                        <Paperclip size={14} className="text-ink-faint" /> Załączniki
+                      </button>
+                    )}
                   </div>
                 </>
               )}
             </div>
-          )}
-
-          {allowFiles && !editing && (
-            <>
-              <input
-                ref={fileRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  addFiles(e.target.files);
-                  e.target.value = "";
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                disabled={disabled || sending}
-                className="shrink-0 self-center rounded-full p-2 text-ink-faint transition hover:bg-surface-overlay hover:text-ink disabled:opacity-40"
-                aria-label="Dodaj załącznik"
-              >
-                <Paperclip size={20} strokeWidth={1.75} />
-              </button>
-            </>
           )}
 
           {showMic ? (
@@ -694,6 +703,7 @@ export function MessageComposer({
         open={gifOpen}
         onClose={() => setGifOpen(false)}
         onPick={(url) => onSendGif?.(url)}
+        onBackToEmojis={() => setEmojiOpen(true)}
       />
     </div>
   );

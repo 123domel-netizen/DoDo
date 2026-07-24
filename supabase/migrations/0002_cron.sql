@@ -2,9 +2,14 @@
 -- Wymaga rozszerzeń pg_cron i pg_net (Supabase: Database -> Extensions -> włącz).
 --
 -- PRZED URUCHOMIENIEM podmień:
---   <PROJECT_REF>      -> ref Twojego projektu (np. abcdxyz)
---   <SERVICE_ROLE_KEY> -> Service Role key (Settings -> API)
--- Najlepiej trzymać klucz w Vault zamiast wpisywać go na stałe.
+--   <PROJECT_REF> -> ref projektu (np. mutxxlnhxripsvjndgyr)
+-- Funkcja ma verify_jwt=false — Authorization nie jest wymagane.
+--
+-- Diagnostyka:
+--   select jobid, jobname, schedule, command from cron.job;
+--   select * from cron.job_run_details order by start_time desc limit 10;
+--   POST https://<PROJECT_REF>.supabase.co/functions/v1/send-reminders  → {"ok":true,"sent":N}
+--   select * from reminder_log order by fire_at desc limit 20;
 
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
@@ -18,10 +23,9 @@ select cron.schedule(
   '* * * * *',
   $$
   select net.http_post(
-    url     := 'https://<PROJECT_REF>.functions.supabase.co/send-reminders',
+    url     := 'https://<PROJECT_REF>.supabase.co/functions/v1/send-reminders',
     headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer <SERVICE_ROLE_KEY>'
+      'Content-Type', 'application/json'
     ),
     body    := '{}'::jsonb
   );

@@ -4,6 +4,8 @@ import { useChatStore } from "@/lib/chat/store";
 import { addDecision, addNote, createItemLink, deleteDecision, deleteNote, upsertRegistryLabels } from "@/lib/chat/api";
 import { sendChatMessage } from "@/lib/chat/init";
 import { draftFromMessage, type ConvertTarget } from "@/lib/chat/convertDraft";
+import { participantsFromConversationMembers } from "@/lib/chat/conversationParticipants";
+import { overviewTitle } from "@/lib/chat/feed";
 import { groupIdForNewItem } from "@/lib/groups";
 import type { ChatDecision, ChatMessage, ChatNote, MessageKind, MessagePayload } from "@/lib/chat/types";
 
@@ -15,6 +17,7 @@ import type { ChatDecision, ChatMessage, ChatNote, MessageKind, MessagePayload }
  */
 
 export type { ConvertTarget } from "@/lib/chat/convertDraft";
+export { participantsFromConversationMembers } from "@/lib/chat/conversationParticipants";
 
 /** Źródło konwersji: wiadomość albo wpis rejestru (notatka/decyzja). */
 export interface ConvertSource {
@@ -62,6 +65,12 @@ async function finalizeConversion(p: PendingConversion, item: Item) {
     conversationId: p.conversationId,
     body: `${label}: ${item.title || "(bez tytułu)"}`,
     kind: "system",
+    payload: {
+      createdItem: {
+        itemId: item.id,
+        type: p.target,
+      },
+    },
   });
 }
 
@@ -280,4 +289,62 @@ export function beginConvertMessageToItem(msg: ChatMessage, target: ConvertTarge
     },
     target,
   );
+}
+
+/**
+ * Menu „+” → wydarzenie: draft z uczestnikami = członkowie rozmowy (invited).
+ * Po zapisie: chmurka systemowa w tej rozmowie.
+ */
+export function beginEventFromConversation(conversationId: string) {
+  const chat = useChatStore.getState();
+  const store = useStore.getState();
+  const entry = chat.overview.find((c) => c.id === conversationId);
+  if (!entry) return;
+
+  const participants = participantsFromConversationMembers(
+    entry.members,
+    store.teamMembers,
+    chat.userId,
+  );
+
+  const start = new Date();
+  start.setMinutes(Math.round(start.getMinutes() / 30) * 30, 0, 0);
+  const title = overviewTitle(entry, chat.userId, (id) => store.items[id]?.title);
+
+  store.startDraft({
+    type: "event",
+    title: title.slice(0, 120),
+    start: start.toISOString(),
+    end: new Date(start.getTime() + 3_600_000).toISOString(),
+    groupId: groupIdForNewItem(),
+    participants,
+    showInCalendar: true,
+    showInTodo: false,
+  });
+
+  const draft = useStore.getState().draft;
+  if (!draft) return;
+
+  clearPending();
+  pending = {
+    messageId: null,
+    conversationId,
+    itemId: draft.id,
+    target: "event",
+  };
+
+  unsubscribe = useStore.subscribe((s) => {
+    if (!pending) return;
+    const committed = s.items[pending.itemId];
+    if (committed) {
+      const p = pending;
+      clearPending();
+      void finalizeConversion(p, committed);
+      return;
+    }
+    const draftGone = !s.draft || s.draft.id !== pending.itemId;
+    if (draftGone && s.editingId !== pending.itemId) {
+      clearPending();
+    }
+  });
 }

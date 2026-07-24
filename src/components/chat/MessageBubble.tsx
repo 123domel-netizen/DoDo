@@ -36,6 +36,7 @@ import { aggregatePoll, groupReactions } from "@/lib/chat/polls";
 import { formatDuration } from "@/lib/chat/voice";
 import { isThreadUnread } from "@/lib/chat/recentThreads";
 import { threadDisplayTitle } from "@/lib/chat/feed";
+import { isItemDeleted } from "@/lib/items";
 import { fetchMessageById } from "@/lib/chat/api";
 import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
@@ -136,7 +137,7 @@ function MessageContentPreview({
       )}
 
       {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <div className="mt-1.5 flex w-full min-w-0 flex-col gap-1.5">
           {msg.attachments!.map((att) => (
             <AttachmentTile key={att.id} att={att} />
           ))}
@@ -402,7 +403,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
       <button
         type="button"
         onClick={() => void openFull()}
-        className="flex w-[11.5rem] flex-col overflow-hidden rounded-xl border border-line bg-surface-raised text-left transition hover:border-line-strong"
+        className="flex w-full max-w-[11.5rem] flex-col overflow-hidden rounded-xl border border-line bg-surface-raised text-left transition hover:border-line-strong"
         aria-label={`Otwórz ${att.fileName}`}
       >
         <PdfThumb
@@ -433,7 +434,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
       type="button"
       onClick={() => void openFull()}
       disabled={isUploading}
-      className={`flex min-w-[14rem] max-w-full items-center gap-2.5 rounded-xl border border-line bg-surface-raised px-2.5 py-2.5 text-left transition ${
+      className={`flex w-full min-w-0 max-w-full items-center gap-2.5 rounded-xl border border-line bg-surface-raised px-2.5 py-2.5 text-left transition ${
         isUploading
           ? "cursor-wait opacity-70"
           : "hover:border-line-strong"
@@ -839,6 +840,22 @@ export function MessageBubble({
         />
       );
     }
+    const created = msg.payload?.createdItem;
+    const createdItem = created ? items[created.itemId] : undefined;
+    const createdGone = Boolean(
+      created && (!createdItem || isItemDeleted(createdItem)),
+    );
+    const createdLabel =
+      created?.type === "task"
+        ? "Zadanie"
+        : created?.type === "checklist"
+          ? "Checklista"
+          : "Wydarzenie";
+    const createdTitle =
+      createdItem?.title?.trim() ||
+      msg.body.replace(/^Utworzono (?:zadanie|wydarzenie|checklistę):\s*/i, "").trim() ||
+      "";
+
     const registryKind =
       msg.payload?.registry?.kind ??
       (msg.body.startsWith("📝 Zapisano notatkę")
@@ -847,7 +864,22 @@ export function MessageBubble({
           ? "decision"
           : null);
     // „Cofnięto decyzję” — chmurka jak zapis, bez otwierania rejestru.
-    const clickable = Boolean(registryKind && onOpenRegistry);
+    const openCreated = Boolean(created && !createdGone);
+    const openRegistry = Boolean(registryKind && onOpenRegistry);
+    const clickable = openCreated || openRegistry;
+    const removedLabel =
+      created?.type === "task"
+        ? "Usunięto zadanie"
+        : created?.type === "checklist"
+          ? "Usunięto checklistę"
+          : "Usunięto wydarzenie";
+    const pillText = createdGone
+      ? createdTitle
+        ? `${removedLabel}: ${createdTitle}`
+        : created?.type === "checklist"
+          ? "Checklista została usunięta"
+          : `${createdLabel} zostało usunięte`
+      : msg.body;
     const pill = (
       <div
         className={`max-w-full truncate whitespace-nowrap rounded-full border border-line bg-surface-raised/60 px-3.5 py-1.5 text-center text-[11px] leading-snug text-ink-faint ${
@@ -856,7 +888,7 @@ export function MessageBubble({
             : ""
         }`}
       >
-        {msg.body}
+        {pillText}
       </div>
     );
     return (
@@ -864,9 +896,21 @@ export function MessageBubble({
         {clickable ? (
           <button
             type="button"
-            onClick={() => onOpenRegistry?.(msg)}
+            onClick={() => {
+              if (openCreated && created) {
+                setEditing(created.itemId);
+                return;
+              }
+              onOpenRegistry?.(msg);
+            }}
             className="max-w-[85%] border-0 bg-transparent p-0"
-            title={registryKind === "note" ? "Otwórz notatkę" : "Otwórz decyzję"}
+            title={
+              openCreated
+                ? `Otwórz ${createdLabel.toLowerCase()}`
+                : registryKind === "note"
+                  ? "Otwórz notatkę"
+                  : "Otwórz decyzję"
+            }
           >
             {pill}
           </button>
@@ -951,7 +995,7 @@ export function MessageBubble({
       )}
 
       <div
-        className={`relative flex min-w-0 flex-col ${
+        className={`relative flex min-w-0 w-full flex-col overflow-hidden ${
           mine ? "items-end" : "items-start"
         } ${
           msg.kind === "gallery" && !deleted
@@ -969,7 +1013,11 @@ export function MessageBubble({
           </div>
         )}
 
-        <div className="relative">
+        <div
+          className={`relative max-w-full ${
+            !deleted && (msg.attachments?.length ?? 0) > 0 ? "w-full" : ""
+          }`}
+        >
           {canAct && (onOpenActions || onReply || onToggleReaction) && (
             <HoverToolbar
               mine={mine}
@@ -992,9 +1040,11 @@ export function MessageBubble({
                   }
                 : undefined
             }
-            className={`chat-msg-bubble relative box-border flow-root text-[14.5px] leading-[1.35] transition-colors ${bubbleClass} ${
-              pending ? "opacity-60" : ""
-            } ${failed ? "ring-1 ring-inset ring-red-500/50" : ""} ${
+            className={`chat-msg-bubble relative box-border max-w-full min-w-0 overflow-hidden flow-root text-[14.5px] leading-[1.35] transition-colors ${
+              !deleted && (msg.attachments?.length ?? 0) > 0 ? "w-full" : ""
+            } ${bubbleClass} ${pending ? "opacity-60" : ""} ${
+              failed ? "ring-1 ring-inset ring-red-500/50" : ""
+            } ${
               flash ? "ring-2 ring-accent ring-offset-1 ring-offset-surface" : ""
             }`}
           >
@@ -1108,7 +1158,7 @@ export function MessageBubble({
                 )}
 
                 {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <div className="mt-1.5 flex w-full min-w-0 flex-col gap-1.5">
                     {msg.attachments!.map((att) => (
                       <AttachmentTile key={att.id} att={att} />
                     ))}
