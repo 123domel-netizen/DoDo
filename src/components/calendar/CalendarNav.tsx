@@ -4,6 +4,7 @@ import { useStore } from "@/state/store";
 import type { CalendarViewKind } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
+import { fmt } from "@/lib/format";
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "day", label: "Dzień" },
@@ -12,11 +13,12 @@ const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "month", label: "Miesiąc" },
 ];
 
-/** Pasek nawigacji kalendarza (desktop) — nad siatką. */
+/** Pasek nawigacji kalendarza (desktop) — nad siatką / przeglądem. */
 export function CalendarNav() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const anchor = new Date(settings.anchorDate);
+  const isDashboard = settings.mainAreaMode === "dashboard";
 
   const shift = (dir: number) => {
     if (settings.view === "month") {
@@ -40,45 +42,67 @@ export function CalendarNav() {
 
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line px-2 py-1.5">
-      <button
-        type="button"
-        onClick={goToday}
-        className="rounded-md border border-line bg-surface-raised px-2 py-0.5 text-xs text-ink transition hover:border-line-strong"
-      >
-        Dziś
-      </button>
+      {!isDashboard && (
+        <>
+          <button
+            type="button"
+            onClick={goToday}
+            className="rounded-md border border-line bg-surface-raised px-2 py-0.5 text-xs text-ink transition hover:border-line-strong"
+          >
+            Dziś
+          </button>
 
-      <div className="flex items-center">
-        <button
-          type="button"
-          onClick={() => shift(-1)}
-          className="rounded-md p-0.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-          aria-label="Poprzedni"
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <button
-          type="button"
-          onClick={() => shift(1)}
-          className="rounded-md p-0.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-          aria-label="Następny"
-        >
-          <ChevronRight size={16} />
-        </button>
-      </div>
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => shift(-1)}
+              className="rounded-md p-0.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+              aria-label="Poprzedni"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => shift(1)}
+              className="rounded-md p-0.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+              aria-label="Następny"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
 
-      <div className="min-w-0 flex-1 truncate text-xs font-medium capitalize text-ink sm:min-w-[140px] sm:flex-none">
-        {getViewLabel(settings.view, anchor, settings.nineDayStartWeekday)}
-      </div>
+          <div className="min-w-0 flex-1 truncate text-xs font-medium capitalize text-ink sm:min-w-[140px] sm:flex-none">
+            {getViewLabel(settings.view, anchor, settings.nineDayStartWeekday)}
+          </div>
+        </>
+      )}
+
+      {isDashboard && (
+        <div className="min-w-0 flex-1 truncate text-xs font-medium capitalize text-ink">
+          {fmt(new Date(), "EEEE, d MMMM")}
+        </div>
+      )}
 
       <div className="ml-auto flex items-center gap-0.5 rounded-md border border-line bg-surface-raised p-0.5">
+        <button
+          type="button"
+          onClick={() => setSettings({ mainAreaMode: "dashboard" })}
+          className={`rounded px-2 py-0.5 text-xs transition ${
+            isDashboard
+              ? "bg-accent text-white shadow-glow"
+              : "text-ink-light hover:text-ink"
+          }`}
+        >
+          Przegląd
+        </button>
+        <span className="mx-0.5 h-3 w-px bg-line" aria-hidden />
         {VIEWS.map((v) => (
           <button
             key={v.key}
             type="button"
-            onClick={() => setSettings({ view: v.key })}
+            onClick={() => setSettings({ mainAreaMode: "calendar", view: v.key })}
             className={`rounded px-2 py-0.5 text-xs transition ${
-              settings.view === v.key
+              !isDashboard && settings.view === v.key
                 ? "bg-accent text-white shadow-glow"
                 : "text-ink-light hover:text-ink"
             }`}

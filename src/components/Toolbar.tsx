@@ -147,6 +147,9 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
   const profileAvatar = useChatStore((s) =>
     user?.id ? s.profiles[user.id]?.avatarUrl : undefined,
   );
+  const profileName = useChatStore((s) =>
+    user?.id ? s.profiles[user.id]?.displayName : undefined,
+  );
 
   useEffect(() => {
     if (!cloudEnabled || !supabase) return;
@@ -185,7 +188,8 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
 
   if (!user) return null;
 
-  const label = user.name ?? user.email ?? "Konto";
+  const label =
+    profileName?.trim() || user.name || user.email || "Konto";
 
   const logout = () => {
     setOpen(false);
@@ -227,7 +231,7 @@ function UserMenu({ onClosePanels }: { onClosePanels: () => void }) {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-ink">{label}</div>
-                  {user.email && user.name && (
+                  {user.email && (profileName?.trim() || user.name) && (
                     <div className="truncate text-xs text-ink-faint">{user.email}</div>
                   )}
                 </div>

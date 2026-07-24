@@ -67,6 +67,10 @@ export function mapOrgRpcError(message: string | undefined | null): string {
   }
   if (m.includes("invalid email")) return "Podaj poprawny adres e-mail.";
   if (m.includes("invalid name")) return "Podaj nazwę zespołu.";
+  if (m.includes("invalid display name")) {
+    return "Podaj imię lub nazwę (1–80 znaków).";
+  }
+  if (m.includes("member not found")) return "Nie znaleziono członka zespołu.";
   if (m.includes("invalid plan")) return "Nieprawidłowy plan.";
   if (m.includes("custom limit")) return "Dla planu Custom podaj limit miejsc (≥ 1).";
   if (m.includes("admin user not found") || m.includes("user not found")) {

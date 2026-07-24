@@ -223,6 +223,22 @@ export async function renameOrg(orgId: string, name: string): Promise<{ error?: 
   return {};
 }
 
+/** Admin zespołu ustawia display_name członka (profiles). */
+export async function setOrgMemberDisplayName(
+  orgId: string,
+  userId: string,
+  displayName: string,
+): Promise<{ error?: string }> {
+  if (!cloudEnabled || !supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("org_set_member_display_name", {
+    p_org_id: orgId,
+    p_user_id: userId,
+    p_display_name: displayName.trim(),
+  });
+  if (error) return { error: mapOrgRpcError(error.message) };
+  return {};
+}
+
 export async function appListOrgs(): Promise<OrgListRow[]> {
   if (!cloudEnabled || !supabase) return [];
   const { data, error } = await supabase.rpc("app_list_orgs");

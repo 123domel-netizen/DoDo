@@ -241,7 +241,7 @@ function DashboardMetaTags({ tags }: { tags: UserTag[] }) {
   );
 }
 
-function DashboardEventRow({
+export function DashboardEventRow({
   item,
   group,
   itemTags,
@@ -358,7 +358,7 @@ function DashboardEventRow({
   );
 }
 
-function DashboardTodoRow({
+export function DashboardTodoRow({
   item,
   group,
   itemTags,

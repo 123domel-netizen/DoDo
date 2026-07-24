@@ -15,7 +15,8 @@ function sortEventsByStart(a: Item, b: Item): number {
   return new Date(a.start).getTime() - new Date(b.start).getTime();
 }
 
-export function useTodayDashboardData() {
+export function useTodayDashboardData(opts?: { eventsTarget?: number }) {
+  const eventsTarget = opts?.eventsTarget ?? EVENTS_DISPLAY_TARGET;
   const itemsMap = useStore((s) => s.items);
   const groupsArr = useStore((s) => s.groups);
   const tagsMap = useStore((s) => s.tags);
@@ -54,8 +55,8 @@ export function useTodayDashboardData() {
   );
 
   const upcomingEvents = useMemo(() => {
-    if (todayEvents.length >= EVENTS_DISPLAY_TARGET) return [];
-    const need = EVENTS_DISPLAY_TARGET - todayEvents.length;
+    if (todayEvents.length >= eventsTarget) return [];
+    const need = eventsTarget - todayEvents.length;
     const tomorrow = addDays(today, 1);
     const horizon = addMonths(today, 6);
     const todayIds = new Set(todayEvents.map((e) => e.id));
@@ -64,7 +65,7 @@ export function useTodayDashboardData() {
       .filter((it) => new Date(it.end).getTime() > todayEnd.getTime())
       .sort(sortEventsByStart)
       .slice(0, need);
-  }, [calendarBase, today, todayEnd, todayEvents]);
+  }, [calendarBase, today, todayEnd, todayEvents, eventsTarget]);
 
   const tasks = useMemo(
     () =>

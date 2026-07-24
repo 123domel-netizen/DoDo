@@ -683,21 +683,19 @@ function EditorBottomBar({
     ? { paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }
     : { paddingBottom: "0.75rem" };
 
-  const backSecondaryClass = isMobile
+  const secondaryClass = isMobile
     ? "inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line bg-surface-overlay px-4 text-sm font-medium text-ink shadow-pop transition hover:bg-surface-raised"
     : "inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-line bg-surface-overlay px-4 text-sm font-medium text-ink transition hover:bg-surface-raised";
 
   const primaryClass = isMobile
-    ? "inline-flex min-h-12 min-w-0 flex-1 items-center justify-center rounded-full bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-    : "inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-lg bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none";
+    ? "inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-full bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+    : "inline-flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-accent-grad px-4 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none";
 
-  const markDoneActiveClass = primaryClass;
-
-  const markDoneDoneClass = isMobile
-    ? "inline-flex min-h-12 min-w-0 flex-1 items-center justify-center rounded-full border border-line bg-surface-overlay px-4 text-sm font-medium text-ink-faint opacity-60 shadow-pop transition hover:bg-surface-raised hover:opacity-80"
-    : "inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-surface-overlay px-4 text-sm font-medium text-ink-faint opacity-60 transition hover:bg-surface-raised hover:opacity-80";
-
-  const backOnly = !isDraft && !showMarkDoneBtn;
+  const markDoneClass = item.done
+    ? isMobile
+      ? "inline-flex min-h-12 shrink-0 items-center justify-center rounded-full border border-line bg-surface-overlay px-4 text-sm font-medium text-ink-faint opacity-60 shadow-pop transition hover:bg-surface-raised hover:opacity-80"
+      : "inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-overlay px-4 text-sm font-medium text-ink-faint opacity-60 transition hover:bg-surface-raised hover:opacity-80"
+    : secondaryClass;
 
   return (
     <div className={barClass} style={safeAreaStyle}>
@@ -710,7 +708,7 @@ function EditorBottomBar({
         <button
           type="button"
           onClick={onMarkDone}
-          className={item.done ? markDoneDoneClass : markDoneActiveClass}
+          className={markDoneClass}
           aria-pressed={item.done}
         >
           {item.done ? "☑ Wykonane" : "☐ Oznacz"}
@@ -719,7 +717,7 @@ function EditorBottomBar({
       <button
         type="button"
         onClick={onCancel}
-        className={`${backSecondaryClass}${backOnly ? " ml-auto" : ""}`}
+        className={isDraft ? secondaryClass : primaryClass}
         aria-label="Wróć"
       >
         <ArrowLeft size={18} aria-hidden />

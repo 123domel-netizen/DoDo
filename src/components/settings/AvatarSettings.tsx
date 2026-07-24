@@ -1,13 +1,14 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Upload } from "lucide-react";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { cloudEnabled } from "@/lib/supabase";
 import {
-  AVATAR_PRESETS,
+  type AvatarPreset,
   activeAvatarPresetId,
   avatarPresetUrl,
   resolveAvatarUrl,
+  sampleAvatarPresets,
 } from "@/lib/avatar";
 import {
   clearMyAvatar,
@@ -15,6 +16,7 @@ import {
   setMyAvatarPreset,
   uploadMyAvatar,
 } from "@/lib/avatarUpload";
+import { DISPLAY_NAME_MAX, setMyDisplayName } from "@/lib/profile";
 
 export function AvatarSettings() {
   const authUserId = useStore((s) => s.authUserId);
@@ -25,12 +27,37 @@ export function AvatarSettings() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<AvatarPreset[]>([]);
+  const [nameDraft, setNameDraft] = useState("");
+
+  useEffect(() => {
+    setNameDraft(profile?.displayName ?? "");
+  }, [profile?.displayName]);
 
   if (!cloudEnabled || !authUserId) return null;
 
   const chosen = profileHasChosenAvatar(profile?.avatarUrl);
   const src = resolveAvatarUrl(authUserId, profile?.avatarUrl);
   const activePreset = activeAvatarPresetId(profile?.avatarUrl);
+  const nameChanged =
+    nameDraft.trim().replace(/\s+/g, " ") !== (profile?.displayName ?? "").trim();
+
+  const togglePicker = () => {
+    setPickerOpen((open) => {
+      if (!open) {
+        setSuggestions(sampleAvatarPresets(undefined, activePreset));
+      }
+      return !open;
+    });
+  };
+
+  const onSaveName = async () => {
+    setBusy(true);
+    setError(null);
+    const { error: err } = await setMyDisplayName(authUserId, nameDraft);
+    setBusy(false);
+    if (err) setError(err);
+  };
 
   const onPick = async (file: File | undefined) => {
     if (!file) return;
@@ -63,6 +90,34 @@ export function AvatarSettings() {
   return (
     <>
       <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+        Nazwa wyświetlana
+      </div>
+      <div className="mb-3 flex items-center gap-1.5">
+        <input
+          value={nameDraft}
+          onChange={(e) => setNameDraft(e.target.value)}
+          maxLength={DISPLAY_NAME_MAX}
+          placeholder="Imię i nazwisko"
+          disabled={busy}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && nameChanged) void onSaveName();
+          }}
+          className="min-w-0 flex-1 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-accent/50 disabled:opacity-50"
+        />
+        <button
+          type="button"
+          disabled={busy || !nameChanged || !nameDraft.trim()}
+          onClick={() => void onSaveName()}
+          className="shrink-0 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-40"
+        >
+          Zapisz
+        </button>
+      </div>
+      <p className="mb-3 text-[11px] leading-snug text-ink-faint">
+        Widoczna w czacie i zespole. Admin może też ustawić ją w ustawieniach zespołu.
+      </p>
+
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
         Awatar
       </div>
       <div className="flex items-center gap-3">
@@ -83,7 +138,7 @@ export function AvatarSettings() {
           <button
             type="button"
             disabled={busy}
-            onClick={() => setPickerOpen((v) => !v)}
+            onClick={togglePicker}
             className="w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-xs font-medium text-ink transition hover:border-line-strong disabled:opacity-50"
           >
             {busy ? "Zapisywanie…" : pickerOpen ? "Zamknij wybór" : "Zmień awatar"}
@@ -107,7 +162,7 @@ export function AvatarSettings() {
             Propozycje
           </div>
           <div className="grid grid-cols-8 gap-1.5">
-            {AVATAR_PRESETS.map((p) => {
+            {suggestions.map((p) => {
               const active = activePreset === p.id;
               return (
                 <button

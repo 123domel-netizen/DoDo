@@ -17,9 +17,12 @@ export interface AvatarPreset {
   eyes: string;
 }
 
+/** Ile propozycji pokazać w pickerze (losowo z pełnej puli). */
+export const AVATAR_SUGGESTION_COUNT = 16;
+
 /**
- * Galeria min jak w firmie: sukces, fokus, kawa, spotkanie, bug, piątek…
- * Max 2 wyraźnie smutne (deadline / poniedziałek).
+ * Pełna galeria min „z biura”. W UI losujemy subset — patrz `sampleAvatarPresets`.
+ * Max kilka wyraźnie smutnych (deadline / poniedziałek / review).
  */
 export const AVATAR_PRESETS: AvatarPreset[] = [
   { id: "shipped", label: "Po deployu", seed: "OfficeShipped", mouth: "smileLol", eyes: "stars" },
@@ -38,7 +41,62 @@ export const AVATAR_PRESETS: AvatarPreset[] = [
   { id: "sleep", label: "Po nockce", seed: "OfficeSleep", mouth: "plain", eyes: "sleepClose" },
   { id: "monday", label: "Poniedziałek", seed: "OfficeMonday", mouth: "sad", eyes: "sad" },
   { id: "deadline", label: "Deadline", seed: "OfficeDeadline", mouth: "drip", eyes: "tearDrop" },
+  { id: "standup", label: "Stand-up", seed: "OfficeStandup", mouth: "shout", eyes: "glasses" },
+  { id: "pr-merged", label: "PR merged", seed: "OfficePrMerged", mouth: "wideSmile", eyes: "stars" },
+  { id: "pair", label: "Pair programming", seed: "OfficePair", mouth: "cute", eyes: "wink" },
+  { id: "design", label: "Design review", seed: "OfficeDesign", mouth: "shy", eyes: "love" },
+  { id: "hotfix", label: "Hotfix", seed: "OfficeHotfix", mouth: "pissed", eyes: "plain" },
+  { id: "demo", label: "Demo day", seed: "OfficeDemo", mouth: "smileTeeth", eyes: "wink2" },
+  { id: "retro", label: "Retro", seed: "OfficeRetro", mouth: "lilSmile", eyes: "cute" },
+  { id: "lunch", label: "Lunch break", seed: "OfficeLunch", mouth: "tongueOut", eyes: "shades" },
+  { id: "brainstorm", label: "Burza mózgów", seed: "OfficeBrainstorm", mouth: "smileLol", eyes: "plain" },
+  { id: "quiet", label: "Quiet hours", seed: "OfficeQuiet", mouth: "plain", eyes: "closed2" },
+  { id: "ops", label: "On-call", seed: "OfficeOnCall", mouth: "plain", eyes: "glasses" },
+  { id: "ship-it", label: "Ship it", seed: "OfficeShipIt", mouth: "kissHeart", eyes: "love" },
+  { id: "coffee2", label: "Druga kawa", seed: "OfficeCoffee2", mouth: "smileTeeth", eyes: "stars" },
+  { id: "slack", label: "Thread na 40", seed: "OfficeSlackThread", mouth: "drip", eyes: "closed" },
+  { id: "okrs", label: "OKR planning", seed: "OfficeOkr", mouth: "shy", eyes: "glasses" },
+  { id: "client", label: "Call z klientem", seed: "OfficeClient", mouth: "faceMask", eyes: "shades" },
+  { id: "docs", label: "Piszę docs", seed: "OfficeDocs", mouth: "cute", eyes: "plain" },
+  { id: "ci", label: "CI zielone", seed: "OfficeCiGreen", mouth: "wideSmile", eyes: "wink" },
+  { id: "ci-red", label: "CI czerwone", seed: "OfficeCiRed", mouth: "pissed", eyes: "tearDrop" },
+  { id: "mentor", label: "Mentoring", seed: "OfficeMentor", mouth: "lilSmile", eyes: "cute" },
+  { id: "party", label: "Team party", seed: "OfficeParty", mouth: "smileLol", eyes: "love" },
+  { id: "gym", label: "Po treningu", seed: "OfficeGym", mouth: "smileTeeth", eyes: "wink2" },
+  { id: "rain", label: "Deszcz za oknem", seed: "OfficeRain", mouth: "plain", eyes: "sad" },
+  { id: "sun", label: "Słońce w biurze", seed: "OfficeSun", mouth: "wideSmile", eyes: "shades" },
+  { id: "late", label: "Spóźniony train", seed: "OfficeLate", mouth: "shout", eyes: "pissed" },
+  { id: "idea", label: "Eureka", seed: "OfficeIdea", mouth: "smileLol", eyes: "stars" },
+  { id: "focus2", label: "Flow state", seed: "OfficeFlow", mouth: "plain", eyes: "closed2" },
+  { id: "snack", label: "Przekąska", seed: "OfficeSnack", mouth: "tongueOut", eyes: "cute" },
+  { id: "wifi", label: "Wi‑Fi padło", seed: "OfficeWifi", mouth: "sad", eyes: "crying" },
+  { id: "promo", label: "Awans?", seed: "OfficePromo", mouth: "shy", eyes: "love" },
+  { id: "review", label: "Code review", seed: "OfficeReview", mouth: "plain", eyes: "glasses" },
+  { id: "launch", label: "Launch day", seed: "OfficeLaunch", mouth: "kissHeart", eyes: "stars" },
+  { id: "chill", label: "Chill Friday", seed: "OfficeChill", mouth: "lilSmile", eyes: "wink" },
+  { id: "night", label: "Północny push", seed: "OfficeNightPush", mouth: "sick", eyes: "sleepClose" },
 ];
+
+/** Losowe N propozycji z puli; `preferId` zawsze w zestawie (jeśli istnieje). */
+export function sampleAvatarPresets(
+  count = AVATAR_SUGGESTION_COUNT,
+  preferId?: string | null,
+): AvatarPreset[] {
+  const n = Math.min(Math.max(1, count), AVATAR_PRESETS.length);
+  const pool = AVATAR_PRESETS.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = pool[i]!;
+    pool[i] = pool[j]!;
+    pool[j] = a;
+  }
+  const preferred = preferId
+    ? AVATAR_PRESETS.find((p) => p.id === preferId) ?? null
+    : null;
+  if (!preferred) return pool.slice(0, n);
+  const rest = pool.filter((p) => p.id !== preferred.id).slice(0, n - 1);
+  return [preferred, ...rest];
+}
 
 export type DiceBearOpts = {
   mouth?: readonly string[];

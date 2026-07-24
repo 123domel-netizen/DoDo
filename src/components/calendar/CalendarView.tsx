@@ -14,6 +14,7 @@ import { CalendarDaySheet } from "@/components/mobile/CalendarDaySheet";
 import { CalendarNav } from "./CalendarNav";
 import { TimeGrid } from "./TimeGrid";
 import { MonthView } from "./MonthView";
+import { MainDashboardView } from "@/components/dashboard/MainDashboardView";
 import type { CalendarViewKind, Group } from "@/types";
 
 export function CalendarView({
@@ -136,6 +137,7 @@ export function CalendarView({
   );
 
   const mobileCalendar = isMobile && viewOverride !== undefined;
+  const showMainDashboard = !isMobile && settings.mainAreaMode === "dashboard";
 
   return (
     <div
@@ -143,7 +145,9 @@ export function CalendarView({
       {...(mobileCalendar ? swipeHandlers : {})}
     >
       {!isMobile && <CalendarNav />}
-      {view === "month" ? (
+      {showMainDashboard ? (
+        <MainDashboardView />
+      ) : view === "month" ? (
         <MonthView
           days={days}
           items={items}

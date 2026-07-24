@@ -201,6 +201,9 @@ export interface GoogleConnectionStatus {
 
 export type ThemePreference = "light" | "dark" | "system";
 
+/** Główny obszar: siatka kalendarza albo przegląd nadchodzących. */
+export type MainAreaMode = "calendar" | "dashboard";
+
 export interface Settings {
   /** First visible hour in the timed grid (0-23). */
   dayStartHour: number;
@@ -220,6 +223,8 @@ export interface Settings {
   hourHeightAuto: boolean;
   /** UI color scheme preference. */
   theme: ThemePreference;
+  /** Kalendarz vs pełny przegląd zadań/wydarzeń w main. */
+  mainAreaMode: MainAreaMode;
   /** Bump to run one-time settings migrations. */
   settingsVersion?: number;
 }

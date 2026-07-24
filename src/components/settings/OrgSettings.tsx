@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, X } from "lucide-react";
+import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import {
   cancelOrgInvite,
   fetchMyOrgs,
@@ -7,6 +7,7 @@ import {
   inviteToOrg,
   removeOrgMember,
   renameOrg,
+  setOrgMemberDisplayName,
   type OrgDetail,
 } from "@/lib/orgs";
 import {
@@ -16,6 +17,7 @@ import {
 import { cloudEnabled } from "@/lib/supabase";
 import { useStore } from "@/state/store";
 import { OrgStorageSettings } from "@/components/settings/OrgStorageSettings";
+import { DISPLAY_NAME_MAX, patchLocalDisplayName } from "@/lib/profile";
 
 export function OrgSettings() {
   const myOrgs = useStore((s) => s.myOrgs);
@@ -33,6 +35,9 @@ export function OrgSettings() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [memberNameDraft, setMemberNameDraft] = useState("");
+  const [savingMemberName, setSavingMemberName] = useState(false);
 
   const orgId = activeOrgId ?? myOrgs[0]?.id ?? null;
   const isAdmin = detail?.myRole === "admin";
@@ -112,6 +117,34 @@ export function OrgSettings() {
       setRenaming(false);
       await refresh();
     }
+  };
+
+  const startEditMemberName = (userId: string, current: string | null) => {
+    setError(null);
+    setEditingMemberId(userId);
+    setMemberNameDraft(current?.trim() || "");
+  };
+
+  const cancelEditMemberName = () => {
+    setEditingMemberId(null);
+    setMemberNameDraft("");
+  };
+
+  const saveMemberName = async (userId: string) => {
+    if (!orgId || !isAdmin) return;
+    setError(null);
+    setSavingMemberName(true);
+    const res = await setOrgMemberDisplayName(orgId, userId, memberNameDraft);
+    setSavingMemberName(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    const name = memberNameDraft.trim().replace(/\s+/g, " ");
+    patchLocalDisplayName(userId, name);
+    setEditingMemberId(null);
+    setMemberNameDraft("");
+    await refresh();
   };
 
   return (
@@ -223,34 +256,85 @@ export function OrgSettings() {
               Członkowie
             </div>
             <ul className="space-y-1.5">
-              {detail.members.map((m) => (
-                <li
-                  key={m.userId}
-                  className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2 py-1.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-ink">
-                      {m.displayName || m.email || m.userId}
-                      {m.role === "admin" ? (
-                        <span className="ml-1 text-[10px] text-ink-faint">(admin)</span>
+              {detail.members.map((m) => {
+                const editing = editingMemberId === m.userId;
+                return (
+                  <li
+                    key={m.userId}
+                    className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-2 py-1.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      {editing ? (
+                        <input
+                          value={memberNameDraft}
+                          onChange={(e) => setMemberNameDraft(e.target.value)}
+                          maxLength={DISPLAY_NAME_MAX}
+                          autoFocus
+                          placeholder="Imię i nazwisko"
+                          disabled={savingMemberName}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveMemberName(m.userId);
+                            if (e.key === "Escape") cancelEditMemberName();
+                          }}
+                          className="w-full rounded-md border border-line bg-surface px-2 py-1 text-sm text-ink outline-none focus:border-accent/50 disabled:opacity-50"
+                        />
+                      ) : (
+                        <div className="truncate text-sm text-ink">
+                          {m.displayName || m.email || m.userId}
+                          {m.role === "admin" ? (
+                            <span className="ml-1 text-[10px] text-ink-faint">(admin)</span>
+                          ) : null}
+                        </div>
+                      )}
+                      {m.email && (m.displayName || editing) ? (
+                        <div className="truncate text-[10px] text-ink-faint">{m.email}</div>
                       ) : null}
                     </div>
-                    {m.email && m.displayName ? (
-                      <div className="truncate text-[10px] text-ink-faint">{m.email}</div>
-                    ) : null}
-                  </div>
-                  {isAdmin && m.role !== "admin" && m.userId !== authUserId && (
-                    <button
-                      type="button"
-                      onClick={() => void removeMember(m.userId)}
-                      className="shrink-0 rounded-lg p-1.5 text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
-                      title="Usuń z zespołu"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </li>
-              ))}
+                    {isAdmin &&
+                      (editing ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={savingMemberName || !memberNameDraft.trim()}
+                            onClick={() => void saveMemberName(m.userId)}
+                            className="shrink-0 rounded-lg p-1.5 text-accent transition hover:bg-accent/10 disabled:opacity-40"
+                            title="Zapisz nazwę"
+                          >
+                            <Check size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingMemberName}
+                            onClick={cancelEditMemberName}
+                            className="shrink-0 rounded-lg p-1.5 text-ink-faint transition hover:bg-surface disabled:opacity-40"
+                            title="Anuluj"
+                          >
+                            <X size={14} />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEditMemberName(m.userId, m.displayName)}
+                          className="shrink-0 rounded-lg p-1.5 text-ink-faint transition hover:bg-surface hover:text-ink"
+                          title="Zmień nazwę"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      ))}
+                    {isAdmin && m.role !== "admin" && m.userId !== authUserId && !editing && (
+                      <button
+                        type="button"
+                        onClick={() => void removeMember(m.userId)}
+                        className="shrink-0 rounded-lg p-1.5 text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
+                        title="Usuń z zespołu"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
 
