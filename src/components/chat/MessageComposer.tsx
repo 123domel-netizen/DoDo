@@ -217,6 +217,7 @@ export function MessageComposer({
       if (!trimmed) return;
       onSaveEdit?.(editing.id, trimmed, mentions);
       setBody("");
+      requestAnimationFrame(() => taRef.current?.focus());
       return;
     }
     if (sending) return;
@@ -232,6 +233,9 @@ export function MessageComposer({
       if (taRef.current) taRef.current.style.height = "auto";
     } finally {
       setSending(false);
+      // Nie wyłączamy textarea przy sending — focus zostaje; dodatkowo
+      // dogrywamy focus po await (Enter / Wyślij nie zabiera kursora).
+      requestAnimationFrame(() => taRef.current?.focus());
     }
   };
 
@@ -608,13 +612,11 @@ export function MessageComposer({
           <textarea
             ref={taRef}
             value={body}
-            disabled={disabled || sending}
+            disabled={disabled}
             rows={1}
             enterKeyHint={isMobile ? "enter" : "send"}
             placeholder={
-              sending
-                ? "Wysyłanie pliku…"
-                : disabled
+              disabled
                   ? "Rozmowa zarchiwizowana"
                   : placeholder
             }
