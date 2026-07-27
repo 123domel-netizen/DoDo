@@ -8,18 +8,19 @@ const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.35;
 
 type Pt = { x: number; y: number };
+type TouchLike = { clientX: number; clientY: number };
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-function pinchDistance(a: Touch, b: Touch) {
+function pinchDistance(a: TouchLike, b: TouchLike) {
   const dx = a.clientX - b.clientX;
   const dy = a.clientY - b.clientY;
   return Math.hypot(dx, dy);
 }
 
-function pinchCenter(a: Touch, b: Touch): Pt {
+function pinchCenter(a: TouchLike, b: TouchLike): Pt {
   return {
     x: (a.clientX + b.clientX) / 2,
     y: (a.clientY + b.clientY) / 2,
