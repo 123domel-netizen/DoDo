@@ -125,6 +125,8 @@ export function MessageComposer({
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
+  const [fileDragOver, setFileDragOver] = useState(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -149,6 +151,15 @@ export function MessageComposer({
     },
     [],
   );
+
+  useEffect(() => {
+    const onDragEnd = () => {
+      dragDepthRef.current = 0;
+      setFileDragOver(false);
+    };
+    window.addEventListener("dragend", onDragEnd);
+    return () => window.removeEventListener("dragend", onDragEnd);
+  }, []);
 
   const autoGrow = () => {
     const ta = taRef.current;
@@ -224,9 +235,13 @@ export function MessageComposer({
     }
   };
 
-  const addFiles = (list: FileList | null) => {
+  const addFiles = (list: FileList | File[] | null) => {
     if (!list) return;
     const incoming = Array.from(list).filter((f) => {
+      // Pomiń „puste” wpisy katalogów z DnD.
+      if (!f.name || (f.size === 0 && !f.type && !/\.[a-z0-9]+$/i.test(f.name))) {
+        return false;
+      }
       if (f.size > MAX_CHAT_FILE_BYTES) {
         alert(`${f.name}: plik przekracza 25 MB.`);
         return false;
@@ -255,6 +270,49 @@ export function MessageComposer({
     setAttachMode("file");
     setOfficeMode("attachment");
     setFiles((prev) => [...prev, ...incoming].slice(0, 6));
+  };
+
+  const canAcceptFileDrop =
+    allowFiles && !disabled && !editing && !sending && !recording;
+
+  const isFileDrag = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer.types).includes("Files");
+
+  const clearFileDrag = () => {
+    dragDepthRef.current = 0;
+    setFileDragOver(false);
+  };
+
+  const onComposerDragEnter = (e: React.DragEvent) => {
+    if (!canAcceptFileDrop || !isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current += 1;
+    setFileDragOver(true);
+  };
+
+  const onComposerDragLeave = (e: React.DragEvent) => {
+    if (!canAcceptFileDrop || !isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setFileDragOver(false);
+  };
+
+  const onComposerDragOver = (e: React.DragEvent) => {
+    if (!canAcceptFileDrop || !isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  };
+
+  const onComposerDrop = (e: React.DragEvent) => {
+    if (!canAcceptFileDrop || !isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    clearFileDrag();
+    setPlusOpen(false);
+    addFiles(e.dataTransfer.files);
   };
 
   const confirmImageMode = (mode: "photo" | "file") => {
@@ -312,7 +370,25 @@ export function MessageComposer({
     !editing;
 
   return (
-    <div className="relative border-t border-line bg-surface px-2 py-2">
+    <div
+      className={`relative border-t border-line bg-surface px-2 py-2 transition-colors ${
+        fileDragOver ? "border-accent/50 bg-accent/10" : ""
+      }`}
+      onDragEnter={onComposerDragEnter}
+      onDragLeave={onComposerDragLeave}
+      onDragOver={onComposerDragOver}
+      onDrop={onComposerDrop}
+    >
+      {fileDragOver && (
+        <div
+          className="pointer-events-none absolute inset-1 z-30 flex items-center justify-center rounded-xl border-2 border-dashed border-accent/60 bg-accent/15"
+          aria-hidden
+        >
+          <span className="rounded-full bg-surface-overlay/95 px-3 py-1.5 text-xs font-medium text-ink shadow-pop">
+            Upuść, aby dodać załącznik
+          </span>
+        </div>
+      )}
       {sending && (
         <div
           className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs text-ink"
