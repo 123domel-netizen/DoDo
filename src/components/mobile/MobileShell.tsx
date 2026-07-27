@@ -31,6 +31,7 @@ import { MobileDashboard } from "@/components/mobile/MobileDashboard";
 import { MobileTodayPanel } from "@/components/mobile/MobileTodayPanel";
 import { TodoPanel } from "@/components/todo/TodoPanel";
 import { ItemEditorPanel } from "@/components/item/ItemEditorPanel";
+import { ProjectsPreviewNavButton } from "@/components/projectsPreview/ProjectsPreviewNavButton";
 import { Logo } from "@/components/brand/Logo";
 import { ViewSettings } from "@/components/settings/ViewSettings";
 import { GroupsModal } from "@/components/groups/GroupsModal";
@@ -351,6 +352,7 @@ export function MobileShell() {
             emphasize={chatUnread > 0}
           />
         )}
+        <ProjectsPreviewNavButton variant="mobileTab" />
       </nav>
 
       {/* Edytor pełnoekranowy */}

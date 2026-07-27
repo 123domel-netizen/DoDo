@@ -9,6 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_VAPID_PUBLIC_KEY?: string;
   /** Build-time kill switch only: `r2` | `r2_sp` allows client R2 path. */
   readonly VITE_MEDIA_PIPELINE?: string;
+  /** PROJECTS PREVIEW only — never set on production Pages alias. */
+  readonly VITE_PROJECTS_PREVIEW?: string;
 }
 
 interface ImportMeta {
