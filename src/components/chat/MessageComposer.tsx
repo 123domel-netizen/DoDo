@@ -304,7 +304,12 @@ export function MessageComposer({
     if (result && onSendVoice) await onSendVoice(result.file, result.durationSec);
   };
 
-  const showMic = Boolean(onSendVoice) && voiceSupported() && !body.trim() && !editing;
+  const showMic =
+    Boolean(onSendVoice) &&
+    voiceSupported() &&
+    !body.trim() &&
+    files.length === 0 &&
+    !editing;
 
   return (
     <div className="relative border-t border-line bg-surface px-2 py-2">
@@ -454,24 +459,29 @@ export function MessageComposer({
       )}
 
       {files.length > 0 && (
-        <div className="mb-1.5 flex flex-wrap gap-1.5">
-          {files.map((f, i) => (
-            <span
-              key={`${f.name}-${i}`}
-              className="flex items-center gap-1.5 rounded-full border border-line bg-surface-raised px-2 py-0.5 text-[11px] text-ink-light"
-            >
-              <span className="max-w-[9rem] truncate">{f.name}</span>
-              <span className="text-ink-faint">{formatFileSize(f.size)}</span>
-              <button
-                type="button"
-                onClick={() => setFiles(files.filter((_, j) => j !== i))}
-                className="text-ink-faint transition hover:text-ink"
-                aria-label={`Usuń ${f.name}`}
+        <div className="mb-1.5 space-y-1">
+          <div className="flex flex-wrap gap-1.5">
+            {files.map((f, i) => (
+              <span
+                key={`${f.name}-${i}`}
+                className="flex items-center gap-1.5 rounded-full border border-line bg-surface-raised px-2 py-0.5 text-[11px] text-ink-light"
               >
-                <X size={11} />
-              </button>
-            </span>
-          ))}
+                <span className="max-w-[9rem] truncate">{f.name}</span>
+                <span className="text-ink-faint">{formatFileSize(f.size)}</span>
+                <button
+                  type="button"
+                  onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                  className="text-ink-faint transition hover:text-ink"
+                  aria-label={`Usuń ${f.name}`}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+          <p className="px-0.5 text-[11px] text-accent">
+            Plik gotowy — kliknij Wyślij, żeby go wysłać.
+          </p>
         </div>
       )}
 
@@ -524,6 +534,7 @@ export function MessageComposer({
             value={body}
             disabled={disabled || sending}
             rows={1}
+            enterKeyHint={isMobile ? "enter" : "send"}
             placeholder={
               sending
                 ? "Wysyłanie pliku…"
@@ -554,6 +565,8 @@ export function MessageComposer({
                 pickMention(suggestions[0]);
                 return;
               }
+              // Desktop: Enter = wyślij, Shift+Enter = nowa linia.
+              // Mobile: Enter = nowa linia (jak WhatsApp); wysyłka przyciskiem.
               if (!isMobile && e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 if (!sending) void submit();
@@ -680,7 +693,11 @@ export function MessageComposer({
               type="button"
               onClick={() => void submit()}
               disabled={disabled || sending || (!body.trim() && files.length === 0)}
-              className="shrink-0 self-center rounded-full bg-accent-grad p-2.5 text-white shadow-glow transition hover:brightness-110 disabled:opacity-40 disabled:shadow-none"
+              className={`shrink-0 self-center rounded-full bg-accent-grad p-2.5 text-white shadow-glow transition hover:brightness-110 disabled:opacity-40 disabled:shadow-none ${
+                files.length > 0 && !body.trim()
+                  ? "ring-2 ring-accent ring-offset-2 ring-offset-surface animate-pulse"
+                  : ""
+              }`}
               aria-label={editing ? "Zapisz" : "Wyślij"}
             >
               <Send size={16} />

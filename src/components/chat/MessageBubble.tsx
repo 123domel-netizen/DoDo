@@ -43,6 +43,7 @@ import { useStore } from "@/state/store";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { GalleryCard } from "@/components/chat/GalleryCard";
 import { PdfThumb } from "@/components/chat/PdfThumb";
+import { ChatImageLightbox } from "@/components/chat/ChatImageLightbox";
 
 const INLINE_REACTIONS = ["👍", "👎", "😂", "😮"];
 
@@ -359,6 +360,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
   const Icon = fileKindIcon(kind);
   const tone = fileKindTone(kind);
   const ext = fileExtension(att.fileName) || kind.toUpperCase();
+  const [imageOpen, setImageOpen] = useState(false);
   const thumbUrl = useSignedUrl(
     !isUploading && isImage ? (att.thumbPath ?? att.bucketPath) : null,
   );
@@ -366,6 +368,10 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
 
   const openFull = async () => {
     if (isUploading) return;
+    if (isImage) {
+      setImageOpen(true);
+      return;
+    }
     if (isEditable && att.spShareUrl) {
       window.open(att.spShareUrl, "_blank", "noopener");
       return;
@@ -376,25 +382,34 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
 
   if (isImage) {
     return (
-      <button
-        type="button"
-        onClick={() => void openFull()}
-        className="block overflow-hidden rounded-xl border border-line bg-surface-raised"
-        aria-label={`Otwórz ${att.fileName}`}
-      >
-        {thumbUrl ? (
-          <img
-            src={thumbUrl}
-            alt={att.fileName}
-            loading="lazy"
-            className="max-h-52 w-auto max-w-full object-cover"
+      <>
+        <button
+          type="button"
+          onClick={() => void openFull()}
+          className="block overflow-hidden rounded-xl border border-line bg-surface-raised"
+          aria-label={`Podgląd ${att.fileName}`}
+        >
+          {thumbUrl ? (
+            <img
+              src={thumbUrl}
+              alt={att.fileName}
+              loading="lazy"
+              className="max-h-52 w-auto max-w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-24 w-32 items-center justify-center text-xs text-ink-faint">
+              Obraz…
+            </div>
+          )}
+        </button>
+        {imageOpen && !isUploading && (
+          <ChatImageLightbox
+            bucketPath={att.bucketPath}
+            fileName={att.fileName}
+            onClose={() => setImageOpen(false)}
           />
-        ) : (
-          <div className="flex h-24 w-32 items-center justify-center text-xs text-ink-faint">
-            Obraz…
-          </div>
         )}
-      </button>
+      </>
     );
   }
 
