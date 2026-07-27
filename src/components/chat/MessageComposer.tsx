@@ -44,6 +44,21 @@ export interface ReplyTarget {
   snippet: string;
 }
 
+function namePastedFile(file: File): File {
+  const generic =
+    !file.name ||
+    file.name === "blob" ||
+    /^image\d*\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name);
+  if (!generic) return file;
+  const ext = file.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+  const ts = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`;
+  return new File([file], `wklejka-${stamp}.${ext}`, {
+    type: file.type || `image/${ext}`,
+  });
+}
+
 interface MessageComposerProps {
   onSend: (
     body: string,
@@ -237,6 +252,33 @@ export function MessageComposer({
       // dogrywamy focus po await (Enter / Wyślij nie zabiera kursora).
       requestAnimationFrame(() => taRef.current?.focus());
     }
+  };
+
+  const filesFromClipboard = (dt: DataTransfer): File[] => {
+    const seen = new Set<string>();
+    const out: File[] = [];
+    const push = (raw: File | null) => {
+      if (!raw) return;
+      const file = namePastedFile(raw);
+      const key = `${file.name}:${file.size}:${file.type}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(file);
+    };
+    for (const item of dt.items) {
+      if (item.kind === "file") push(item.getAsFile());
+    }
+    for (const file of dt.files) push(file);
+    return out;
+  };
+
+  const onComposerPaste = (e: React.ClipboardEvent) => {
+    if (!canAcceptFileDrop) return;
+    const pasted = filesFromClipboard(e.clipboardData);
+    if (!pasted.length) return;
+    e.preventDefault();
+    setPlusOpen(false);
+    addFiles(pasted);
   };
 
   const addFiles = (list: FileList | File[] | null) => {
@@ -628,6 +670,7 @@ export function MessageComposer({
             }}
             onKeyUp={refreshMention}
             onClick={refreshMention}
+            onPaste={onComposerPaste}
             onBlur={() => setTimeout(() => setMention(null), 200)}
             onKeyDown={(e) => {
               if (suggestions.length > 0 && e.key === "Escape") {
