@@ -22,12 +22,18 @@ describe("OAuth redirect origins", () => {
     ).toBe("https://dodo-c39.pages.dev/");
   });
 
-  it("oauthRedirectUrlFromOrigin uses current origin (preview host no longer allowlisted)", () => {
+  it("oauthRedirectUrlFromOrigin uses current origin for preview hosts", () => {
     expect(
       oauthRedirectUrlFromOrigin("https://media-r2-preview.dodo-c39.pages.dev"),
     ).toBe("https://media-r2-preview.dodo-c39.pages.dev/");
+    expect(
+      oauthRedirectUrlFromOrigin("https://projects-preview.dodo-c39.pages.dev"),
+    ).toBe("https://projects-preview.dodo-c39.pages.dev/");
     expect(isAllowedOAuthOrigin("https://media-r2-preview.dodo-c39.pages.dev")).toBe(
-      false,
+      true,
+    );
+    expect(isAllowedOAuthOrigin("https://projects-preview.dodo-c39.pages.dev")).toBe(
+      true,
     );
   });
 
@@ -60,6 +66,12 @@ describe("OAuth redirect origins", () => {
         "https://dodo-c39.pages.dev",
       ),
     ).toBeNull();
+    expect(
+      resolveSafeReturnTo(
+        "https://projects-preview.dodo-c39.pages.dev/chat",
+        "https://projects-preview.dodo-c39.pages.dev",
+      ),
+    ).toBe("/chat");
     expect(resolveSafeReturnTo("/chat", "https://dodo-c39.pages.dev")).toBe("/chat");
     expect(isAllowedOAuthOrigin("https://evil.example")).toBe(false);
   });

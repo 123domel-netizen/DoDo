@@ -42,6 +42,22 @@ Albo:
 $env:VITE_PROJECTS_PREVIEW="1"; npm run dev
 ```
 
+## Logowanie Google na preview (ważne)
+
+Aplikacja wysyła `redirectTo` = bieżący origin (`https://projects-preview.dodo-c39.pages.dev/`).
+
+Jeśli ten URL **nie** jest na liście **Additional Redirect URLs** w Supabase Auth,
+GoTrue odrzuca go i wraca na **Site URL** = produkcja (`https://dodo-c39.pages.dev`).
+
+**Site URL zostaje produkcyjny** — nie zmieniać.
+
+W Dashboard: Authentication → URL Configuration → Redirect URLs, dodaj:
+
+- `https://projects-preview.dodo-c39.pages.dev`
+- `https://projects-preview.dodo-c39.pages.dev/**`
+
+Lokalna kopia: [`supabase/config.toml`](../supabase/config.toml) (`additional_redirect_urls`).
+
 ## Build i deploy preview
 
 ```bash
