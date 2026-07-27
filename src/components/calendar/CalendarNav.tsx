@@ -19,6 +19,8 @@ export function CalendarNav() {
   const setSettings = useStore((s) => s.setSettings);
   const anchor = new Date(settings.anchorDate);
   const isDashboard = settings.mainAreaMode === "dashboard";
+  const isProjects = settings.mainAreaMode === "projects";
+  const showCalendarChrome = !isDashboard && !isProjects;
 
   const shift = (dir: number) => {
     if (settings.view === "month") {
@@ -42,7 +44,7 @@ export function CalendarNav() {
 
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line px-2 py-1.5">
-      {!isDashboard && (
+      {showCalendarChrome && (
         <>
           <button
             type="button"
@@ -83,7 +85,29 @@ export function CalendarNav() {
         </div>
       )}
 
+      {isProjects && (
+        <div className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
+          Projekty
+          <span className="ml-1.5 font-normal text-ink-faint">· preview</span>
+        </div>
+      )}
+
       <div className="ml-auto flex items-center gap-0.5 rounded-md border border-line bg-surface-raised p-0.5">
+        {import.meta.env.VITE_PROJECTS_PREVIEW === "1" && (
+          <button
+            type="button"
+            onClick={() => setSettings({ mainAreaMode: "projects" })}
+            className={`rounded px-2 py-0.5 text-xs transition ${
+              settings.mainAreaMode === "projects"
+                ? "bg-accent text-white shadow-glow"
+                : "text-ink-light hover:text-ink"
+            }`}
+            aria-label="Projekty (preview)"
+            title="Projekty — preview"
+          >
+            Projekty
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setSettings({ mainAreaMode: "dashboard" })}
@@ -102,7 +126,9 @@ export function CalendarNav() {
             type="button"
             onClick={() => setSettings({ mainAreaMode: "calendar", view: v.key })}
             className={`rounded px-2 py-0.5 text-xs transition ${
-              !isDashboard && settings.view === v.key
+              !isDashboard &&
+              settings.mainAreaMode !== "projects" &&
+              settings.view === v.key
                 ? "bg-accent text-white shadow-glow"
                 : "text-ink-light hover:text-ink"
             }`}

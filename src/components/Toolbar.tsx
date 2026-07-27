@@ -19,7 +19,6 @@ import { TeamSettings } from "@/components/settings/TeamSettings";
 import { OrgSettings } from "@/components/settings/OrgSettings";
 import { AppAdminSettings } from "@/components/settings/AppAdminSettings";
 import { SyncSettings } from "@/components/settings/SyncSettings";
-import { ProjectsPreviewNavButton } from "@/components/projectsPreview/ProjectsPreviewNavButton";
 
 type SettingsTab = "view" | "org" | "contacts" | "tags" | "sync" | "admin";
 
@@ -57,8 +56,6 @@ export function Toolbar({ todoOpen, onToggleTodo }: ToolbarProps) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <ProjectsPreviewNavButton variant="toolbar" />
-
         <button
           onClick={() => setSettingsOpen((v) => !v)}
           className={`rounded-lg p-1.5 transition hover:bg-surface-overlay hover:text-ink ${

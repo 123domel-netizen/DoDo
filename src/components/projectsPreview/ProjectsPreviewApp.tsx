@@ -30,13 +30,18 @@ export type ProjectsPreviewView =
 
 interface ProjectsPreviewAppProps {
   onClose: () => void;
+  /** Render inside main canvas (calendar slot) instead of fullscreen portal. */
+  embedded?: boolean;
 }
 
 /**
- * Fullscreen overlay shell for DoDo PROJECTS PREVIEW.
- * Main entry — parent wires open/close; no production store writes.
+ * PROJECTS PREVIEW shell.
+ * Desktop: embedded in main canvas. Mobile overlay still uses portal.
  */
-export function ProjectsPreviewApp({ onClose }: ProjectsPreviewAppProps) {
+export function ProjectsPreviewApp({
+  onClose,
+  embedded = false,
+}: ProjectsPreviewAppProps) {
   const repo = useProjectsPreviewRepo();
   const [view, setView] = useState<ProjectsPreviewView>({ name: "list" });
   const [menuOpen, setMenuOpen] = useState(false);
@@ -77,11 +82,15 @@ export function ProjectsPreviewApp({ onClose }: ProjectsPreviewAppProps) {
 
   const showListChrome = view.name === "list";
 
-  return createPortal(
+  const shell = (
     <div
-      className="fixed inset-0 z-[9000] flex flex-col bg-surface text-ink"
-      role="dialog"
-      aria-modal="true"
+      className={
+        embedded
+          ? "flex h-full min-h-0 flex-1 flex-col bg-surface text-ink"
+          : "fixed inset-0 z-[9000] flex flex-col bg-surface text-ink"
+      }
+      role={embedded ? "region" : "dialog"}
+      aria-modal={embedded ? undefined : true}
       aria-label="Projekty — preview"
     >
       <header className="flex shrink-0 items-center gap-2 border-b border-line bg-surface-raised/50 px-2 py-2 sm:px-3">
@@ -89,7 +98,7 @@ export function ProjectsPreviewApp({ onClose }: ProjectsPreviewAppProps) {
           type="button"
           onClick={onClose}
           className="rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
-          aria-label="Zamknij"
+          aria-label={embedded ? "Wróć do kalendarza" : "Zamknij"}
         >
           <X size={18} />
         </button>
@@ -227,9 +236,11 @@ export function ProjectsPreviewApp({ onClose }: ProjectsPreviewAppProps) {
       </main>
 
       <ProjectsPreviewBanner />
-    </div>,
-    document.body,
+    </div>
   );
+
+  if (embedded) return shell;
+  return createPortal(shell, document.body);
 }
 
 function MenuItem({

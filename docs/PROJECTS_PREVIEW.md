@@ -89,7 +89,8 @@ Menu ⋮ w module:
 - katalog preset „Nadzór budowy - podstawowy”,
 - Budowa: planer (projekt / wszystkie / ekipy), konflikty ekip (ostrzeżenie),
 - symulacja „Utwórz zadanie / wydarzenie” (bez zapisu do store produkcyjnego),
-- UX mobilny (fullscreen, collapsible kategorie, sheet edycji bloku).
+- UX desktop: **Projekty w głównym canvasie** (obok Przeglądu / widoków kalendarza), nie fullscreen,
+- UX mobilny (tab + overlay, collapsible kategorie, sheet edycji bloku).
 
 ## Niezaimplementowane (świadomie)
 

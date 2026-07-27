@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, lazy, Suspense, type ComponentType } from "react";
 import { addDays, addMonths, startOfDay } from "date-fns";
 import { useStore } from "@/state/store";
 import { getViewDays } from "@/lib/time";
@@ -16,6 +16,18 @@ import { TimeGrid } from "./TimeGrid";
 import { MonthView } from "./MonthView";
 import { MainDashboardView } from "@/components/dashboard/MainDashboardView";
 import type { CalendarViewKind, Group } from "@/types";
+
+const ProjectsPreviewCanvas: ComponentType<{
+  onClose: () => void;
+  embedded?: boolean;
+}> | null =
+  import.meta.env.VITE_PROJECTS_PREVIEW === "1"
+    ? lazy(() =>
+        import("@/components/projectsPreview/ProjectsPreviewApp").then((m) => ({
+          default: m.ProjectsPreviewApp,
+        })),
+      )
+    : null;
 
 export function CalendarView({
   view: viewOverride,
@@ -138,6 +150,10 @@ export function CalendarView({
 
   const mobileCalendar = isMobile && viewOverride !== undefined;
   const showMainDashboard = !isMobile && settings.mainAreaMode === "dashboard";
+  const showProjects =
+    !isMobile &&
+    settings.mainAreaMode === "projects" &&
+    ProjectsPreviewCanvas != null;
 
   return (
     <div
@@ -145,7 +161,20 @@ export function CalendarView({
       {...(mobileCalendar ? swipeHandlers : {})}
     >
       {!isMobile && <CalendarNav />}
-      {showMainDashboard ? (
+      {showProjects && ProjectsPreviewCanvas ? (
+        <Suspense
+          fallback={
+            <div className="flex flex-1 items-center justify-center text-xs text-ink-faint">
+              Ładowanie projektów…
+            </div>
+          }
+        >
+          <ProjectsPreviewCanvas
+            embedded
+            onClose={() => setSettings({ mainAreaMode: "calendar" })}
+          />
+        </Suspense>
+      ) : showMainDashboard ? (
         <MainDashboardView />
       ) : view === "month" ? (
         <MonthView

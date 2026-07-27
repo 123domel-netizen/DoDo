@@ -202,7 +202,7 @@ export interface GoogleConnectionStatus {
 export type ThemePreference = "light" | "dark" | "system";
 
 /** Główny obszar: siatka kalendarza albo przegląd nadchodzących. */
-export type MainAreaMode = "calendar" | "dashboard";
+export type MainAreaMode = "calendar" | "dashboard" | "projects";
 
 export interface Settings {
   /** First visible hour in the timed grid (0-23). */

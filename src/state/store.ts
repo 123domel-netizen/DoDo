@@ -281,7 +281,11 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     settings.settingsVersion = 15;
   }
   if ((settings.settingsVersion ?? 0) < 16) {
-    if (settings.mainAreaMode !== "dashboard" && settings.mainAreaMode !== "calendar") {
+    if (
+      settings.mainAreaMode !== "dashboard" &&
+      settings.mainAreaMode !== "calendar" &&
+      settings.mainAreaMode !== "projects"
+    ) {
       settings.mainAreaMode = "calendar";
     }
     settings.settingsVersion = 16;
