@@ -50,7 +50,14 @@ export function ProjectsListView({
       list = list.filter((p) => normalizeSearchText(p.name).includes(nameQ));
     }
     return list;
-  }, [repo, filterNumber, filterName, showArchived]);
+  }, [
+    repo,
+    state.projects,
+    state.viewAsUserId,
+    filterNumber,
+    filterName,
+    showArchived,
+  ]);
 
   const filterInput =
     "w-full min-w-0 rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink outline-none focus:border-line-strong";
