@@ -94,6 +94,17 @@ export function CalendarNav() {
       )}
 
       <div className="ml-auto flex items-center gap-0.5 rounded-md border border-line bg-surface-raised p-0.5">
+        <button
+          type="button"
+          onClick={() => setSettings({ mainAreaMode: "dashboard" })}
+          className={`rounded px-2 py-0.5 text-xs transition ${
+            isDashboard
+              ? "bg-accent text-white shadow-glow"
+              : "text-ink-light hover:text-ink"
+          }`}
+        >
+          Przegląd
+        </button>
         {schedulesAvailable ? (
           <button
             type="button"
@@ -109,17 +120,6 @@ export function CalendarNav() {
             Harmonogramy
           </button>
         ) : null}
-        <button
-          type="button"
-          onClick={() => setSettings({ mainAreaMode: "dashboard" })}
-          className={`rounded px-2 py-0.5 text-xs transition ${
-            isDashboard
-              ? "bg-accent text-white shadow-glow"
-              : "text-ink-light hover:text-ink"
-          }`}
-        >
-          Przegląd
-        </button>
         <span className="mx-0.5 h-3 w-px bg-line" aria-hidden />
         {VIEWS.map((v) => (
           <button

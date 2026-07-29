@@ -1811,11 +1811,11 @@ function TimelineBoard({
             row.section ? (
               <div
                 key={row.id}
-                className="sticky left-0 z-[5] flex border-b border-line bg-surface-raised"
-                style={{ minWidth: LABEL_PX + chartW, height: ROW_SECTION }}
+                className="flex border-b border-line bg-surface-raised"
+                style={{ height: ROW_SECTION }}
               >
                 <div
-                  className="sticky left-0 flex items-center gap-1.5 border-r border-line px-2.5"
+                  className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-line bg-surface-raised px-2.5"
                   style={{ width: LABEL_PX }}
                 >
                   {row.crew ? (
@@ -1829,13 +1829,13 @@ function TimelineBoard({
                     <button
                       type="button"
                       onClick={() => onEditProject(row.projectId!)}
-                      className="sched-label min-w-0 truncate text-left font-semibold text-ink transition hover:text-accent"
+                      className="sched-label min-w-0 flex-1 truncate text-left font-semibold text-ink transition hover:text-accent"
                       title="Zarządzaj budową (uczestnicy)"
                     >
                       {row.label}
                     </button>
                   ) : (
-                    <span className="sched-label min-w-0 truncate font-semibold text-ink">
+                    <span className="sched-label min-w-0 flex-1 truncate font-semibold text-ink">
                       {row.label}
                     </span>
                   )}
@@ -1843,8 +1843,11 @@ function TimelineBoard({
                     <button
                       type="button"
                       title="Dodaj kategorię na budowie"
-                      onClick={() => onAddUnderProject(row.projectId!)}
-                      className="shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-accent"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddUnderProject(row.projectId!);
+                      }}
+                      className="relative z-10 shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-accent"
                     >
                       <Plus size={12} />
                     </button>
@@ -1853,8 +1856,11 @@ function TimelineBoard({
                     <button
                       type="button"
                       title="Dodaj zdarzenie dokumentacyjne"
-                      onClick={() => onAddProjectDocEvent(row.projectId!)}
-                      className="shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-accent"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddProjectDocEvent(row.projectId!);
+                      }}
+                      className="relative z-10 shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-accent"
                     >
                       <ClipboardList size={12} />
                     </button>
@@ -1863,8 +1869,11 @@ function TimelineBoard({
                     <button
                       type="button"
                       title="Edytuj brygadę"
-                      onClick={() => onEditCrew(row.crew!)}
-                      className="shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-accent"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditCrew(row.crew!);
+                      }}
+                      className="relative z-10 shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-accent"
                     >
                       <Pencil size={12} />
                     </button>
