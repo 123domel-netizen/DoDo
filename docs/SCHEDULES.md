@@ -4,11 +4,13 @@ Moduł budów w DoDo — UI z preview, dane lokalne (DEV) lub Supabase (flaga or
 
 ## Widoczność
 
-| Środowisko | Warunek |
-|------------|---------|
-| `npm run dev` | zawsze (LocalAdapter, pusty start + katalogi) |
-| produkcja | `orgs.schedules_enabled = true` |
-| sandbox | `VITE_PROJECTS_PREVIEW=1` |
+Zakładka **Harmonogramy** jest zawsze w UI.
+
+| Dane | Warunek |
+|------|---------|
+| LocalAdapter (przeglądarka) | domyślnie; DEV i produkcja bez flagi org |
+| Supabase (wspólne dla zespołu) | `orgs.schedules_enabled = true` + migracja `0054` |
+| sandbox preview | `VITE_PROJECTS_PREVIEW=1` |
 
 ## Co jest / czego nie ma
 

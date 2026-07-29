@@ -1,19 +1,12 @@
 import { isProjectsPreviewEnabled } from "@/lib/projectsPreview/enabled";
 
 /**
- * Harmonogramy widoczne gdy:
- * - flaga org `schedules_enabled`, lub
- * - lokalny DEV (`import.meta.env.DEV`), lub
- * - build sandbox `VITE_PROJECTS_PREVIEW=1`.
- *
- * Produkcyjny build bez flagi org = brak zakładki.
+ * Harmonogramy są zawsze w UI (produkcja, DEV, sandbox).
+ * Dane: LocalAdapter, albo cloud gdy org ma `schedules_enabled`
+ * (patrz getScheduleRepository).
  */
-export function isSchedulesModuleEnabled(schedulesEnabled?: boolean): boolean {
-  return (
-    Boolean(schedulesEnabled) ||
-    import.meta.env.DEV ||
-    isProjectsPreviewEnabled()
-  );
+export function isSchedulesModuleEnabled(_schedulesEnabled?: boolean): boolean {
+  return true;
 }
 
 export function isSchedulesPreviewBuild(): boolean {

@@ -12,8 +12,8 @@ import {
 
 /**
  * Active schedule repository.
- * - Cloud when org has schedules_enabled + auth session
- * - Otherwise LocalAdapter (empty + catalogs) for DEV / preview sandbox
+ * - Cloud when org has schedules_enabled + auth session (shared team data)
+ * - Otherwise LocalAdapter (browser-local, empty + catalogs)
  */
 export function getScheduleRepository(opts?: {
   orgId?: string | null;

@@ -451,11 +451,12 @@ export function OrgSettings() {
                 />
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-ink">
-                    Harmonogramy budów
+                    Harmonogramy — sync w chmurze
                   </span>
                   <span className="mt-0.5 block text-[11px] leading-snug text-ink-faint">
-                    Włącza moduł harmonogramów dla całego zespołu (tablica, zdarzenia,
-                    brygady, lista budów). Wymaga migracji Supabase 0054.
+                    Zapis w chmurze dla całego zespołu (wspólna tablica, zdarzenia,
+                    brygady). Bez tego każdy ma lokalny harmonogram w przeglądarce.
+                    Wymaga migracji Supabase 0054.
                   </span>
                 </span>
               </label>
