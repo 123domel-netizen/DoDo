@@ -1,22 +1,23 @@
 import { Suspense, useState, type ComponentType } from "react";
-import { FolderKanban } from "lucide-react";
-import { isProjectsPreviewEnabled } from "@/lib/projectsPreview/enabled";
+import { CalendarRange } from "lucide-react";
+import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
+import { isSchedulesModuleEnabled } from "@/lib/schedules/enabled";
 
-type AppProps = { onClose: () => void };
+type AppProps = { onClose: () => void; embedded?: boolean };
 
-/**
- * Flag-gated entry. When VITE_PROJECTS_PREVIEW !== "1", Rollup DCE drops the
- * dynamic import of ProjectsPreviewApp so production alias stays clean.
- */
+const lazyApp = () =>
+  import("./ProjectsPreviewApp").then((m) => ({
+    default: m.ProjectsPreviewApp,
+  }));
+
+/** Entry to Harmonogramy — visible when useSchedulesAvailable(). */
 export function ProjectsPreviewEntry({
   variant = "toolbar",
 }: {
   variant?: "toolbar" | "mobileTab";
 }) {
-  // Build-time constant — must stay as import.meta.env comparison for DCE.
-  if (import.meta.env.VITE_PROJECTS_PREVIEW !== "1") {
-    return null;
-  }
+  const available = useSchedulesAvailable();
+  if (!available) return null;
   return <ProjectsPreviewEntryLive variant={variant} />;
 }
 
@@ -31,9 +32,7 @@ function ProjectsPreviewEntryLive({
   const ensureApp = () => {
     setOpen(true);
     if (!App) {
-      void import("./ProjectsPreviewApp").then((m) => {
-        setApp(() => m.ProjectsPreviewApp);
-      });
+      void lazyApp().then((m) => setApp(() => m.default));
     }
   };
 
@@ -44,7 +43,7 @@ function ProjectsPreviewEntryLive({
       </Suspense>
     ) : open ? (
       <div className="fixed inset-0 z-[9000] flex items-center justify-center bg-surface text-sm text-ink-faint">
-        Ładowanie preview…
+        Ładowanie harmonogramów…
       </div>
     ) : null;
 
@@ -55,10 +54,10 @@ function ProjectsPreviewEntryLive({
           type="button"
           onClick={ensureApp}
           className="flex flex-1 flex-col items-center gap-0.5 py-1 text-[10px] text-ink-faint transition hover:text-ink"
-          aria-label="Projekty"
+          aria-label="Harmonogramy"
         >
-          <FolderKanban size={20} strokeWidth={1.75} />
-          Projekty
+          <CalendarRange size={20} strokeWidth={1.75} />
+          Plany
         </button>
         {overlay}
       </>
@@ -71,12 +70,12 @@ function ProjectsPreviewEntryLive({
         type="button"
         onClick={ensureApp}
         className="rounded-lg px-2 py-1.5 text-xs font-medium text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-        aria-label="Projekty (preview)"
-        title="Projekty — preview"
+        aria-label="Harmonogramy"
+        title="Harmonogramy"
       >
         <span className="inline-flex items-center gap-1.5">
-          <FolderKanban size={16} />
-          Projekty
+          <CalendarRange size={16} />
+          Harmonogramy
         </span>
       </button>
       {overlay}
@@ -84,7 +83,7 @@ function ProjectsPreviewEntryLive({
   );
 }
 
-/** For tests: menu visible only with preview flag. */
+/** For tests / static checks (DEV or preview build without org context). */
 export function projectsPreviewMenuVisible(): boolean {
-  return isProjectsPreviewEnabled();
+  return isSchedulesModuleEnabled(false);
 }

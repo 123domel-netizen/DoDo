@@ -1,11 +1,8 @@
-import { kindFromLabel, type ProjectKind } from "./types";
-
 export type BulkRowOk = {
   ok: true;
   line: number;
-  number: number;
+  number: string;
   name: string;
-  kind: ProjectKind;
   raw: string;
 };
 
@@ -16,12 +13,10 @@ export type BulkRowErr = {
   error:
     | "missing_name"
     | "invalid_number"
-    | "unknown_kind"
     | "duplicate_in_import"
     | "number_exists";
-  number?: number;
+  number?: string;
   name?: string;
-  kind?: ProjectKind | null;
 };
 
 export type BulkRow = BulkRowOk | BulkRowErr;
@@ -33,149 +28,81 @@ export type BulkParseResult = {
 };
 
 /**
- * Mode A: `114; Vestino - Więcbork; Nadzór budowy`
- * Mode B: `114 Vestino - Więcbork` (+ shared kind)
+ * Parse lines as `114 Vestino - Więcbork`, `B-12; Vestino` (any non-empty code).
  */
 export function parseBulkProjects(
   text: string,
-  opts: {
-    mode: "a" | "b";
-    sharedKind?: ProjectKind;
-    existingNumbers: Set<number>;
-  },
+  opts: { existingNumbers: Set<string> },
 ): BulkParseResult {
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   const rows: BulkRow[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!;
     const line = i + 1;
 
-    if (opts.mode === "a") {
+    let code: string;
+    let name: string;
+
+    if (raw.includes(";")) {
       const parts = raw.split(";").map((p) => p.trim());
-      if (parts.length < 2) {
-        rows.push({ ok: false, line, raw, error: "missing_name" });
+      code = (parts[0] ?? "").trim();
+      name = parts[1] ?? "";
+    } else {
+      const m = raw.match(/^(\S+)\s+(.+)$/);
+      if (!m) {
+        rows.push({ ok: false, line, raw, error: "invalid_number" });
         continue;
       }
-      const num = Number(parts[0]);
-      const name = parts[1] ?? "";
-      const kindRaw = parts[2] ?? "";
-      if (!Number.isInteger(num) || num <= 0) {
-        rows.push({ ok: false, line, raw, error: "invalid_number", name });
-        continue;
-      }
-      if (!name.trim()) {
-        rows.push({
-          ok: false,
-          line,
-          raw,
-          error: "missing_name",
-          number: num,
-        });
-        continue;
-      }
-      const kind = kindFromLabel(kindRaw);
-      if (!kind) {
-        rows.push({
-          ok: false,
-          line,
-          raw,
-          error: "unknown_kind",
-          number: num,
-          name,
-          kind: null,
-        });
-        continue;
-      }
-      if (seen.has(num)) {
-        rows.push({
-          ok: false,
-          line,
-          raw,
-          error: "duplicate_in_import",
-          number: num,
-          name,
-          kind,
-        });
-        continue;
-      }
-      if (opts.existingNumbers.has(num)) {
-        rows.push({
-          ok: false,
-          line,
-          raw,
-          error: "number_exists",
-          number: num,
-          name,
-          kind,
-        });
-        continue;
-      }
-      seen.add(num);
-      rows.push({ ok: true, line, raw, number: num, name: name.trim(), kind });
-      continue;
+      code = (m[1] ?? "").trim();
+      name = (m[2] ?? "").trim();
     }
 
-    // Mode B: number + rest as name
-    const m = raw.match(/^(\d+)\s+(.+)$/);
-    if (!m) {
-      rows.push({ ok: false, line, raw, error: "invalid_number" });
-      continue;
-    }
-    const num = Number(m[1]);
-    const name = (m[2] ?? "").trim();
-    if (!Number.isInteger(num) || num <= 0) {
+    if (!code) {
       rows.push({ ok: false, line, raw, error: "invalid_number", name });
       continue;
     }
-    if (!name) {
-      rows.push({ ok: false, line, raw, error: "missing_name", number: num });
-      continue;
-    }
-    const kind = opts.sharedKind ?? null;
-    if (!kind) {
+    if (!name.trim()) {
       rows.push({
         ok: false,
         line,
         raw,
-        error: "unknown_kind",
-        number: num,
-        name,
-        kind: null,
+        error: "missing_name",
+        number: code,
       });
       continue;
     }
-    if (seen.has(num)) {
+    name = name.trim();
+    const key = code.toLowerCase();
+    if (seen.has(key)) {
       rows.push({
         ok: false,
         line,
         raw,
         error: "duplicate_in_import",
-        number: num,
+        number: code,
         name,
-        kind,
       });
       continue;
     }
-    if (opts.existingNumbers.has(num)) {
+    if (opts.existingNumbers.has(key)) {
       rows.push({
         ok: false,
         line,
         raw,
         error: "number_exists",
-        number: num,
+        number: code,
         name,
-        kind,
       });
       continue;
     }
-    seen.add(num);
-    rows.push({ ok: true, line, raw, number: num, name, kind });
+    seen.add(key);
+    rows.push({ ok: true, line, raw, number: code, name });
   }
 
   return {

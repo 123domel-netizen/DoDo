@@ -1,6 +1,7 @@
 import { addDays, addMonths, startOfDay } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useStore } from "@/state/store";
+import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
 import type { CalendarViewKind } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
@@ -17,6 +18,7 @@ const VIEWS: { key: CalendarViewKind; label: string }[] = [
 export function CalendarNav() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
+  const schedulesAvailable = useSchedulesAvailable();
   const anchor = new Date(settings.anchorDate);
   const isDashboard = settings.mainAreaMode === "dashboard";
   const isProjects = settings.mainAreaMode === "projects";
@@ -87,13 +89,12 @@ export function CalendarNav() {
 
       {isProjects && (
         <div className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
-          Projekty
-          <span className="ml-1.5 font-normal text-ink-faint">· preview</span>
+          Harmonogramy
         </div>
       )}
 
       <div className="ml-auto flex items-center gap-0.5 rounded-md border border-line bg-surface-raised p-0.5">
-        {import.meta.env.VITE_PROJECTS_PREVIEW === "1" && (
+        {schedulesAvailable ? (
           <button
             type="button"
             onClick={() => setSettings({ mainAreaMode: "projects" })}
@@ -102,12 +103,12 @@ export function CalendarNav() {
                 ? "bg-accent text-white shadow-glow"
                 : "text-ink-light hover:text-ink"
             }`}
-            aria-label="Projekty (preview)"
-            title="Projekty — preview"
+            aria-label="Harmonogramy"
+            title="Harmonogramy"
           >
-            Projekty
+            Harmonogramy
           </button>
-        )}
+        ) : null}
         <button
           type="button"
           onClick={() => setSettings({ mainAreaMode: "dashboard" })}

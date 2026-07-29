@@ -1,9 +1,16 @@
-export type ProjectKind = "nadzor" | "budowa" | "projektowanie" | "inny";
+import type { ScheduleCatalogPreset } from "./scheduleCatalog";
 
 export type ProjectStatus = "active" | "archived";
 
-export type SupervisionItemStatus =
-  | "brak"
+/**
+ * Two kinds of point-in-time events on a harmonogram:
+ * `budowlane` — logistyka/plac budowy (⚡ dźwig, dostawa),
+ * `dokumentacyjne` — wpisy do dziennika / nadzór (kropka ze stanem).
+ */
+export type ScheduleEventKind = "budowlane" | "dokumentacyjne";
+
+/** Stan zdarzenia dokumentacyjnego. `do_wpisania` napędza kolejkę w nagłówku. */
+export type DocEventStatus =
   | "do_sprawdzenia"
   | "do_wpisania"
   | "wpisane"
@@ -16,17 +23,23 @@ export type ScheduleBlockStatus =
   | "wstrzymane"
   | "zakonczone";
 
+export type { ScheduleCatalogPreset };
+
 export interface PreviewUser {
   id: string;
   displayName: string;
 }
 
+/** Every project in preview is a Budowa — 1:1 with its harmonogram. */
 export interface PreviewProject {
   id: string;
   orgId: string;
-  number: number;
+  /**
+   * Identyfikator budowy w zespole (cyfry, kod, skrót…), unikalny.
+   * Historycznie „numer” — nie musi być liczbą.
+   */
+  number: string;
   name: string;
-  kind: ProjectKind;
   adminUserId: string;
   memberIds: string[];
   createdAt: string;
@@ -40,33 +53,52 @@ export interface SupervisionCatalogCategory {
   activities: string[];
 }
 
+/** Katalog czynności dokumentacyjnych (wspólne id etapów z harmonogramem). */
 export interface SupervisionCatalogPreset {
   id: string;
   name: string;
   categories: SupervisionCatalogCategory[];
 }
 
-/** Per-project checklist instance row. */
-export interface SupervisionItem {
-  id: string;
+export type ScheduleBlockRole = "work" | "subcategory";
+
+/**
+ * Nadpisanie wiersza kategorii na konkretnej budowie
+ * (własna nazwa zamiast proponowanej z katalogu + notatka).
+ */
+export interface ScheduleCategoryMeta {
   projectId: string;
   categoryId: string;
-  activity: string;
-  /** Custom description when activity is "Inny". */
-  customLabel?: string;
-  status: SupervisionItemStatus;
-  noticedAt: string | null;
+  /** Puste = tytuł z katalogu. */
+  title: string;
   note: string;
-  reportedByUserId: string | null;
-  writtenAt: string | null;
-  writtenByUserId: string | null;
+  /**
+   * Przewidywane okno na tablicy. Puste = wyliczane z pozycji w kategorii.
+   * Szary „spill” = zakresy/podkategorie wystające poza to okno.
+   */
+  startDate: string;
+  endDate: string;
 }
 
 export interface ScheduleBlock {
   id: string;
   projectId: string;
+  /** Display title (often same as scope, can be more specific). */
   title: string;
+  /** Schedule category id from budowa catalog. */
+  categoryId: string;
+  /** Główny element / zakres — from catalog or custom. */
+  scope: string;
+  /**
+   * `work` — leaf task/bar.
+   * `subcategory` — container with a planned date window; children hang under it.
+   */
+  role: ScheduleBlockRole;
+  /** Parent subcategory id (only for work). null = top-level under category. */
+  parentId: string | null;
+  /** Brygada assigned to the work. Empty string = jeszcze nieprzypisana. */
   crewId: string;
+  /** For subcategory = planned window; for work = actual dates. */
   startDate: string; // YYYY-MM-DD
   endDate: string;
   status: ScheduleBlockStatus;
@@ -78,23 +110,45 @@ export interface PreviewCrew {
   id: string;
   name: string;
   color: string;
+  /** Headcount on site (optional). */
+  headcount: number | null;
+  /** Person overseeing the crew. */
+  supervisor: string;
+  /** Company / contractor name. */
+  company: string;
+  /** Contact phone. */
+  phone: string;
 }
 
-export interface ProjectRefEntity {
-  entityType: "project";
-  entityId: string;
-  projectNumber: number;
-  labelSnapshot: string;
-}
-
-export interface PreviewChatMessage {
+/**
+ * Punktowe zdarzenie na harmonogramie. Nie jest robotą (nie ma czasu trwania)
+ * ani zadaniem w kalendarzu.
+ *
+ * Umieszczenie na osi: `categoryId` (wymagane) → wiersz kategorii;
+ * opcjonalnie `blockId` podkategorii/roboty → wiersz tego bloku.
+ */
+export interface ScheduleEvent {
   id: string;
-  authorUserId: string;
-  body: string;
-  createdAt: string;
-  projectRefs: ProjectRefEntity[];
-  /** Parsed mention display names for demo (@Jacek). */
-  mentionNames: string[];
+  projectId: string;
+  /**
+   * Opcjonalne powiązanie z podkategorią lub robotą.
+   * null = tylko kategoria (domyślne).
+   */
+  blockId: string | null;
+  kind: ScheduleEventKind;
+  title: string;
+  date: string; // YYYY-MM-DD
+  note: string;
+  /** Kategoria z katalogu budów — główne miejsce na osi. */
+  categoryId?: string;
+  /** Only for `dokumentacyjne`. */
+  status?: DocEventStatus;
+  activity?: string;
+  /** Custom description when activity is "Inny". */
+  customLabel?: string;
+  writtenAt?: string | null;
+  reportedByUserId?: string | null;
+  writtenByUserId?: string | null;
 }
 
 export interface ProjectsPreviewState {
@@ -107,26 +161,36 @@ export interface ProjectsPreviewState {
   /** Highest number ever used in org — unused numbers are not reused automatically. */
   nextNumberHint: number;
   catalog: SupervisionCatalogPreset;
-  supervisionItems: SupervisionItem[];
+  /** Budowa: kategorie + główne elementy (zakresy). */
+  scheduleCatalog: ScheduleCatalogPreset;
   crews: PreviewCrew[];
   scheduleBlocks: ScheduleBlock[];
-  messages: PreviewChatMessage[];
+  /** Zdarzenia budowlane + dokumentacyjne na osi harmonogramu. */
+  scheduleEvents: ScheduleEvent[];
+  /** Własne nazwy / notatki wierszy kategorii na budowach. */
+  categoryMeta: ScheduleCategoryMeta[];
 }
 
-export const PROJECT_KIND_LABEL: Record<ProjectKind, string> = {
-  nadzor: "Nadzór budowy",
-  budowa: "Budowa",
-  projektowanie: "Projektowanie",
-  inny: "Inny",
+export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
+  active: "Aktywny",
+  archived: "Archiwum",
 };
 
-export const SUPERVISION_STATUS_LABEL: Record<SupervisionItemStatus, string> = {
-  brak: "Brak",
+export const SCHEDULE_EVENT_KIND_LABEL: Record<ScheduleEventKind, string> = {
+  budowlane: "Budowlane",
+  dokumentacyjne: "Dokumentacyjne",
+};
+
+export const DOC_EVENT_STATUS_LABEL: Record<DocEventStatus, string> = {
   do_sprawdzenia: "Do sprawdzenia",
   do_wpisania: "Do wpisania",
   wpisane: "Wpisane",
   nie_dotyczy: "Nie dotyczy",
 };
+
+export const DOC_EVENT_STATUSES = Object.keys(
+  DOC_EVENT_STATUS_LABEL,
+) as DocEventStatus[];
 
 export const SCHEDULE_STATUS_LABEL: Record<ScheduleBlockStatus, string> = {
   planowane: "Planowane",
@@ -136,15 +200,28 @@ export const SCHEDULE_STATUS_LABEL: Record<ScheduleBlockStatus, string> = {
   zakonczone: "Zakończone",
 };
 
+/** Human label of an event, whatever its kind. */
+export function scheduleEventLabel(e: ScheduleEvent): string {
+  return e.customLabel?.trim() || e.title.trim() || e.activity || "Zdarzenie";
+}
+
+export function isDocEvent(e: ScheduleEvent): boolean {
+  return e.kind === "dokumentacyjne";
+}
+
+export function isToWrite(e: ScheduleEvent): boolean {
+  return e.kind === "dokumentacyjne" && e.status === "do_wpisania";
+}
+
 export function projectLabel(p: Pick<PreviewProject, "number" | "name">): string {
   return `#${p.number} ${p.name}`;
 }
 
-export function kindFromLabel(raw: string): ProjectKind | null {
-  const n = raw.trim().toLowerCase();
-  if (n === "nadzór budowy" || n === "nadzor budowy" || n === "nadzor") return "nadzor";
-  if (n === "budowa") return "budowa";
-  if (n === "projektowanie") return "projektowanie";
-  if (n === "inny") return "inny";
-  return null;
+/** Sort / search: cyfry naturalnie, reszta alfabetycznie. */
+export function compareProjectCodes(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+export function normalizeProjectCode(raw: string): string {
+  return raw.trim();
 }

@@ -1,6 +1,6 @@
 import { normalizeSearchText } from "./normalize";
 import type { PreviewProject } from "./types";
-import { projectLabel } from "./types";
+import { compareProjectCodes, projectLabel } from "./types";
 
 export type ProjectSearchHit = {
   project: PreviewProject;
@@ -9,7 +9,7 @@ export type ProjectSearchHit = {
 
 /**
  * Rank:
- * 1 exact number
+ * 1 exact number/code
  * 2 number starts with query
  * 3 name starts with query
  * 4 name contains query
@@ -22,13 +22,13 @@ export function searchProjects(
   if (!q) {
     return projects
       .slice()
-      .sort((a, b) => a.number - b.number)
+      .sort((a, b) => compareProjectCodes(a.number, b.number))
       .map((project) => ({ project, rank: 99 }));
   }
 
   const hits: ProjectSearchHit[] = [];
   for (const project of projects) {
-    const num = String(project.number);
+    const num = normalizeSearchText(project.number);
     const nameN = normalizeSearchText(project.name);
     const labelN = normalizeSearchText(projectLabel(project));
     let rank: number | null = null;
@@ -41,7 +41,7 @@ export function searchProjects(
 
   hits.sort((a, b) => {
     if (a.rank !== b.rank) return a.rank - b.rank;
-    return a.project.number - b.project.number;
+    return compareProjectCodes(a.project.number, b.project.number);
   });
   return hits;
 }

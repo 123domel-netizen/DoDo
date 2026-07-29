@@ -1,11 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import {
-  PROJECT_KIND_LABEL,
-  type PreviewProject,
-  type ProjectKind,
-} from "@/lib/projectsPreview/types";
+  scheduleCreateProject,
+  scheduleUpdateProject,
+} from "@/lib/schedules/scheduleRepoActions";
+import { todayIso } from "@/lib/projectsPreview/projectMetrics";
+import {
+  countPresetItems,
+  defaultPlannedEndDate,
+} from "@/lib/projectsPreview/schedulePresetSeed";
+import type { PreviewProject } from "@/lib/projectsPreview/types";
+import { IsoDateInput } from "./IsoDateInput";
 
 interface ProjectFormDialogProps {
   open: boolean;
@@ -14,8 +20,6 @@ interface ProjectFormDialogProps {
   project?: PreviewProject | null;
   onSaved?: (projectId: string) => void;
 }
-
-const KINDS = Object.keys(PROJECT_KIND_LABEL) as ProjectKind[];
 
 export function ProjectFormDialog({
   open,
@@ -29,9 +33,19 @@ export function ProjectFormDialog({
 
   const [number, setNumber] = useState("");
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<ProjectKind>("nadzor");
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [applyPreset, setApplyPreset] = useState(true);
+  const [startDate, setStartDate] = useState(todayIso());
+  const [endDate, setEndDate] = useState(defaultPlannedEndDate(todayIso()));
+  /** Gdy użytkownik ręcznie zmieni koniec — nie nadpisuj przy zmianie startu. */
+  const [endTouched, setEndTouched] = useState(false);
+
+  const presetCounts = useMemo(
+    () => countPresetItems(state.scheduleCatalog),
+    [state.scheduleCatalog],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -39,15 +53,25 @@ export function ProjectFormDialog({
     if (project) {
       setNumber(String(project.number));
       setName(project.name);
-      setKind(project.kind);
       setMemberIds(project.memberIds.filter((id) => id !== project.adminUserId));
     } else {
+      const start = todayIso();
       setNumber(String(repo.suggestNextNumber()));
       setName("");
-      setKind("nadzor");
       setMemberIds([]);
+      setApplyPreset(true);
+      setStartDate(start);
+      setEndDate(defaultPlannedEndDate(start));
+      setEndTouched(false);
     }
   }, [open, project, repo]);
+
+  const onStartChange = (value: string) => {
+    setStartDate(value);
+    if (!endTouched && value) {
+      setEndDate(defaultPlannedEndDate(value));
+    }
+  };
 
   const toggleMember = (id: string) => {
     setMemberIds((prev) =>
@@ -55,28 +79,32 @@ export function ProjectFormDialog({
     );
   };
 
-  const submit = () => {
+  const submit = async () => {
     setError(null);
-    const num = Number(number);
-    if (!Number.isInteger(num) || num <= 0) {
-      setError("Podaj prawidłowy numer projektu.");
+    setSaving(true);
+    const code = number.trim();
+    if (!code) {
+      setError("Podaj numer lub ID budowy.");
+      setSaving(false);
       return;
     }
     if (!name.trim()) {
       setError("Nazwa jest wymagana.");
+      setSaving(false);
       return;
     }
     if (editing && project) {
-      if (repo.numberExists(num, project.id)) {
+      if (repo.numberExists(code, project.id)) {
         setError("Numer już istnieje w zespole.");
+        setSaving(false);
         return;
       }
-      // Number is immutable after create in model — only name/kind/members/status
-      const res = repo.updateProject(project.id, {
+      const res = await scheduleUpdateProject(repo, project.id, {
+        number: code,
         name: name.trim(),
-        kind,
         memberIds,
       });
+      setSaving(false);
       if (!res.ok) {
         setError(res.error);
         return;
@@ -85,16 +113,37 @@ export function ProjectFormDialog({
       onClose();
       return;
     }
-    if (repo.numberExists(num)) {
+    if (repo.numberExists(code)) {
       setError("Numer już istnieje w zespole.");
+      setSaving(false);
       return;
     }
-    const res = repo.createProject({
-      number: num,
+    if (applyPreset) {
+      if (!startDate) {
+        setError("Podaj dzień początku budowy.");
+        setSaving(false);
+        return;
+      }
+      if (!endDate) {
+        setError("Podaj planowaną datę zakończenia.");
+        setSaving(false);
+        return;
+      }
+      if (endDate < startDate) {
+        setError("Data zakończenia nie może być wcześniejsza niż początek.");
+        setSaving(false);
+        return;
+      }
+    }
+    const res = await scheduleCreateProject(repo, {
+      number: code,
       name: name.trim(),
-      kind,
       memberIds,
+      schedulePreset: applyPreset
+        ? { startDate, endDate }
+        : null,
     });
+    setSaving(false);
     if (!res.ok) {
       setError(res.error);
       return;
@@ -110,21 +159,21 @@ export function ProjectFormDialog({
           {editing ? "Edytuj projekt" : "Nowy projekt"}
         </h2>
         <p className="mb-4 text-sm text-ink-faint">
-          Administrator ustawiany jest automatycznie. Numer musi być unikalny w zespole.
+          Każdy projekt to budowa. Administrator ustawiany jest automatycznie,
+          numer / ID musi być unikalny w zespole.
         </p>
 
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-              Numer
+              Numer / ID
             </span>
             <input
-              type="number"
-              min={1}
+              type="text"
               value={number}
-              disabled={editing}
               onChange={(e) => setNumber(e.target.value)}
-              className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-line-strong disabled:opacity-60"
+              placeholder="np. 131 lub B-2026/01"
+              className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-line-strong"
             />
           </label>
           <label className="block">
@@ -134,36 +183,74 @@ export function ProjectFormDialog({
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="np. Vestino - Więcbork"
+              placeholder='np. "Charzykowy - Słoneczna Ostoja"'
               className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-line-strong"
             />
           </label>
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-              Rodzaj
-            </span>
-            <select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as ProjectKind)}
-              className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-line-strong"
-            >
-              {KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {PROJECT_KIND_LABEL[k]}
-                </option>
-              ))}
-            </select>
-          </label>
+
+          {!editing ? (
+            <div className="rounded-lg border border-line bg-surface-raised/40 p-3">
+              <label className="flex items-start gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={applyPreset}
+                  onChange={(e) => setApplyPreset(e.target.checked)}
+                  className="mt-0.5 accent-[var(--color-accent,#3b82f6)]"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink">
+                    Wypełnij harmonogram z katalogu
+                  </span>
+                  <span className="mt-0.5 block text-[12px] leading-snug text-ink-faint">
+                    {presetCounts.categories} kategorii i{" "}
+                    {presetCounts.subcategories} podkategorii, bez zakresów —
+                    rozłożone na planowany okres budowy.
+                  </span>
+                </span>
+              </label>
+
+              {applyPreset ? (
+                <div className="mt-3 grid grid-cols-2 gap-2.5">
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                      Początek budowy
+                    </span>
+                    <IsoDateInput
+                      value={startDate}
+                      onChange={onStartChange}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                      Planowane zakończenie
+                    </span>
+                    <IsoDateInput
+                      value={endDate}
+                      onChange={(iso) => {
+                        setEndTouched(true);
+                        setEndDate(iso);
+                      }}
+                    />
+                  </label>
+                  <p className="col-span-2 text-[11px] text-ink-faint">
+                    Domyślnie ~12 miesięcy. Etapy mają różne wagi (np. stan surowy
+                    dłużej niż pod klucz).
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <fieldset>
             <legend className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
               Uczestnicy
             </legend>
             <div className="max-h-40 space-y-1 overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-raised/50 p-2">
               {state.users.map((u) => {
-                const isAdmin =
+                  const isAdmin =
                   editing && project
                     ? u.id === project.adminUserId
-                    : u.id === state.viewAsUserId;
+                    : u.id === repo.currentUserId();
                 const checked = isAdmin || memberIds.includes(u.id);
                 return (
                   <label
@@ -209,9 +296,10 @@ export function ProjectFormDialog({
           <button
             type="button"
             onClick={submit}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white transition hover:brightness-110"
+            disabled={saving}
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
           >
-            {editing ? "Zapisz" : "Dodaj projekt"}
+            {saving ? "Zapis…" : editing ? "Zapisz" : "Dodaj projekt"}
           </button>
         </div>
       </div>

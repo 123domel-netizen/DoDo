@@ -10,6 +10,7 @@ export interface MyOrg {
   seatLimit: number;
   planEndsAt: string | null;
   invitesLocked: boolean;
+  schedulesEnabled: boolean;
   createdAt: string;
   seatUsed: number;
   myRole: OrgMemberRole;
@@ -56,6 +57,7 @@ export interface OrgDetail {
   planEndsAt: string | null;
   adminNote: string | null;
   invitesLocked: boolean;
+  schedulesEnabled: boolean;
   createdAt: string;
   seatUsed: number;
   canInvite: boolean;
@@ -79,6 +81,7 @@ function mapMyOrg(row: Record<string, unknown>): MyOrg {
     seatLimit: Number(row.seat_limit),
     planEndsAt: (row.plan_ends_at as string | null) ?? null,
     invitesLocked: Boolean(row.invites_locked),
+    schedulesEnabled: Boolean(row.schedules_enabled),
     createdAt: row.created_at as string,
     seatUsed: Number(row.seat_used),
     myRole: row.my_role === "admin" ? "admin" : "member",
@@ -113,6 +116,7 @@ function mapDetail(raw: Record<string, unknown>): OrgDetail {
     planEndsAt: (raw.planEndsAt as string | null) ?? null,
     adminNote: (raw.adminNote as string | null) ?? null,
     invitesLocked: Boolean(raw.invitesLocked),
+    schedulesEnabled: Boolean(raw.schedulesEnabled),
     createdAt: raw.createdAt as string,
     seatUsed: Number(raw.seatUsed),
     canInvite: Boolean(raw.canInvite),
@@ -390,6 +394,19 @@ export async function appRemoveOrgMember(
     p_user_id: userId,
   });
   if (error) return { error: mapOrgRpcError(error.message) };
+  return {};
+}
+
+export async function setOrgSchedulesEnabled(
+  orgId: string,
+  enabled: boolean,
+): Promise<{ error?: string }> {
+  if (!cloudEnabled || !supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("org_set_schedules_enabled", {
+    p_org_id: orgId,
+    p_enabled: enabled,
+  });
+  if (error) return { error: error.message };
   return {};
 }
 

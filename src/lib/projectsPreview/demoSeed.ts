@@ -1,15 +1,19 @@
 import { buildNadzorPodstawowyPreset } from "./catalogPreset";
+import { buildBudowaScheduleCatalog } from "./scheduleCatalog";
 import type {
-  PreviewChatMessage,
   PreviewCrew,
   PreviewProject,
   PreviewUser,
   ProjectsPreviewState,
   ScheduleBlock,
-  SupervisionItem,
+  ScheduleEvent,
 } from "./types";
 
-export const PREVIEW_STORAGE_KEY = "dodo-projects-preview-v1";
+export const PREVIEW_STORAGE_KEY = "dodo-schedules-local-v1";
+/** Legacy preview keys — never auto-load demo blobs into the app module. */
+export const PREVIEW_STORAGE_KEY_V7 = "dodo-projects-preview-v7";
+export const PREVIEW_STORAGE_KEY_V6 = "dodo-projects-preview-v6";
+export const PREVIEW_STORAGE_KEY_V5 = "dodo-projects-preview-v5";
 export const PREVIEW_ORG_ID = "preview-org-demo";
 
 export const DEMO_USERS: PreviewUser[] = [
@@ -30,9 +34,8 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     {
       id: "p-114",
       orgId: PREVIEW_ORG_ID,
-      number: 114,
+      number: "114",
       name: "Vestino - Więcbork",
-      kind: "nadzor",
       adminUserId: "u-admin",
       memberIds: ["u-admin", "u-jacek", "u-ola"],
       createdAt: "2026-06-01T10:00:00.000Z",
@@ -41,9 +44,8 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     {
       id: "p-115",
       orgId: PREVIEW_ORG_ID,
-      number: 115,
+      number: "115",
       name: "Dom jednorodzinny - Sępólno",
-      kind: "nadzor",
       adminUserId: "u-admin",
       memberIds: ["u-admin", "u-jacek", "u-marek"],
       createdAt: "2026-06-02T10:00:00.000Z",
@@ -52,78 +54,183 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     {
       id: "p-121",
       orgId: PREVIEW_ORG_ID,
-      number: 121,
+      number: "121",
       name: "Osiedle Leśne",
-      kind: "budowa",
       adminUserId: "u-admin",
       memberIds: ["u-admin", "u-ola", "u-marek"],
       createdAt: "2026-06-03T10:00:00.000Z",
       status: "active",
     },
+    // Cold start: no schedule, no events — demonstrates the empty budowa flow.
     {
-      id: "p-130",
+      id: "p-140",
       orgId: PREVIEW_ORG_ID,
-      number: 130,
-      name: "PZT Więcbork",
-      kind: "projektowanie",
-      adminUserId: "u-jacek",
-      memberIds: ["u-jacek", "u-admin"],
-      createdAt: "2026-06-04T10:00:00.000Z",
+      number: "140",
+      name: "Parking przy ul. Lipowej",
+      adminUserId: "u-admin",
+      memberIds: ["u-admin", "u-ola"],
+      createdAt: "2026-07-24T10:00:00.000Z",
       status: "active",
     },
   ];
 
   const crews: PreviewCrew[] = [
-    { id: "crew-elew", name: "Ekipa elewacyjna", color: "#3b82f6" },
-    { id: "crew-dach", name: "Ekipa dachowa", color: "#f59e0b" },
-    { id: "crew-inst", name: "Instalacje", color: "#10b981" },
+    {
+      id: "crew-elew",
+      name: "Brygada elewacyjna",
+      color: "#6b8ab8",
+      headcount: 6,
+      supervisor: "Piotr Lewandowski",
+      company: "Elewacje Nord Sp. z o.o.",
+      phone: "+48 500 100 200",
+    },
+    {
+      id: "crew-dach",
+      name: "Brygada dachowa",
+      color: "#c4a35a",
+      headcount: 4,
+      supervisor: "Marcin Kowalski",
+      company: "Dach-Pro",
+      phone: "+48 501 200 300",
+    },
+    {
+      id: "crew-inst",
+      name: "Instalacje",
+      color: "#5a9e84",
+      headcount: 3,
+      supervisor: "Anna Wiśniewska",
+      company: "Instal-Plus",
+      phone: "+48 502 300 400",
+    },
   ];
 
   const scheduleBlocks: ScheduleBlock[] = [
     {
       id: "sb-1",
       projectId: "p-121",
+      categoryId: "deweloperski-zew",
+      scope: "Termoizolacja ścian",
       title: "Elewacja — budynek A",
-      crewId: "crew-elew",
+      role: "subcategory",
+      parentId: null,
+      crewId: "",
       startDate: "2026-07-20",
       endDate: "2026-07-31",
+      status: "planowane",
+      color: "#6b8ab8",
+      note: "Okno podkategorii elewacji",
+    },
+    {
+      id: "sb-1a",
+      projectId: "p-121",
+      categoryId: "deweloperski-zew",
+      scope: "Termoizolacja ścian",
+      title: "Klejenie styropianu",
+      role: "work",
+      parentId: "sb-1",
+      crewId: "crew-elew",
+      startDate: "2026-07-20",
+      endDate: "2026-07-25",
       status: "w_realizacji",
-      color: "#3b82f6",
-      note: "Potwierdź termin elewacji",
+      color: "#6b8ab8",
+      note: "",
+    },
+    {
+      id: "sb-1b",
+      projectId: "p-121",
+      categoryId: "deweloperski-zew",
+      scope: "Termoizolacja ścian",
+      title: "Tynk elewacyjny",
+      role: "work",
+      parentId: "sb-1",
+      crewId: "crew-elew",
+      startDate: "2026-07-26",
+      endDate: "2026-07-31",
+      status: "planowane",
+      color: "#8aa0c4",
+      note: "",
+    },
+    {
+      id: "sb-1c",
+      projectId: "p-121",
+      categoryId: "deweloperski-zew",
+      scope: "Termoizolacja ścian",
+      title: "Rusztowania — demontaż",
+      role: "work",
+      parentId: "sb-1",
+      crewId: "crew-elew",
+      startDate: "2026-08-01",
+      endDate: "2026-08-04",
+      status: "planowane",
+      color: "#a8b8d4",
+      note: "Wychodzi poza okno podkategorii (demo overflow)",
     },
     {
       id: "sb-2",
       projectId: "p-121",
+      categoryId: "stan-surowy-zamkniety",
+      scope: "Konstrukcja dachu",
       title: "Dach — budynek B",
+      role: "work",
+      parentId: null,
       crewId: "crew-dach",
       startDate: "2026-07-22",
       endDate: "2026-08-05",
       status: "potwierdzone",
-      color: "#f59e0b",
+      color: "#c4a35a",
       note: "",
     },
     {
       id: "sb-3",
       projectId: "p-121",
+      categoryId: "instalacje",
+      scope: "Instalacje sanitarne",
       title: "Instalacje CO",
+      role: "work",
+      parentId: null,
       crewId: "crew-inst",
       startDate: "2026-08-01",
       endDate: "2026-08-12",
       status: "planowane",
-      color: "#10b981",
+      color: "#5a9e84",
       note: "",
     },
   ];
 
-  const supervisionItems: SupervisionItem[] = [
+  const scheduleEvents: ScheduleEvent[] = [
+    {
+      id: "se-1",
+      projectId: "p-121",
+      // Podkategoria elewacji — nie robota.
+      blockId: "sb-1",
+      categoryId: "deweloperski-zew",
+      kind: "budowlane",
+      title: "Przyjedzie dźwig do układania stropu",
+      date: "2026-07-28",
+      note: "Potwierdzić godzinę z brygadą",
+    },
+    {
+      id: "se-2",
+      projectId: "p-121",
+      // Tylko kategoria — wiersz „Stan surowy zamknięty”.
+      blockId: null,
+      categoryId: "stan-surowy-zamkniety",
+      kind: "budowlane",
+      title: "Dostawa więźby",
+      date: "2026-07-24",
+      note: "",
+    },
     {
       id: "si-1",
       projectId: "p-114",
-      categoryId: "stan-zero",
-      activity: "Zbrojenie fundamentów",
+      blockId: null,
+      kind: "dokumentacyjne",
+      title: "Zakończono zbrojenie fundamentów.",
+      date: "2026-07-20",
+      note: "",
       status: "do_wpisania",
-      noticedAt: "2026-07-20",
-      note: "Zakończono zbrojenie fundamentów",
+      categoryId: "stan-0",
+      activity: "Zakończono zbrojenie fundamentów.",
       reportedByUserId: "u-ola",
       writtenAt: null,
       writtenByUserId: null,
@@ -131,11 +238,14 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     {
       id: "si-2",
       projectId: "p-115",
-      categoryId: "stan-surowy-zamkniety",
-      activity: "Konstrukcja dachu",
+      blockId: null,
+      kind: "dokumentacyjne",
+      title: "Rozpoczęto montaż konstrukcji dachu",
+      date: "2026-07-22",
+      note: "",
       status: "do_wpisania",
-      noticedAt: "2026-07-22",
-      note: "Rozpoczęto montaż konstrukcji dachu",
+      categoryId: "stan-surowy-zamkniety",
+      activity: "Rozpoczęto montaż konstrukcji dachu",
       reportedByUserId: "u-marek",
       writtenAt: null,
       writtenByUserId: null,
@@ -143,11 +253,15 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     {
       id: "si-3",
       projectId: "p-114",
-      categoryId: "wpisy-wstepne",
-      activity: "Przekazanie placu budowy",
-      status: "wpisane",
-      noticedAt: "2026-06-05",
+      blockId: null,
+      kind: "dokumentacyjne",
+      title: "Objąłem funkcję kierownika budowy dla przedmiotowej inwestycji.",
+      date: "2026-06-05",
       note: "",
+      status: "wpisane",
+      categoryId: "wpisy-wstepne",
+      activity:
+        "Objąłem funkcję kierownika budowy dla przedmiotowej inwestycji.",
       reportedByUserId: "u-admin",
       writtenAt: "2026-06-06",
       writtenByUserId: "u-admin",
@@ -155,62 +269,49 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     {
       id: "si-4",
       projectId: "p-115",
-      categoryId: "stan-zero",
-      activity: "Wykopy fundamentowe",
-      status: "do_sprawdzenia",
-      noticedAt: "2026-07-18",
+      blockId: null,
+      kind: "dokumentacyjne",
+      title: "Rozpoczęto wykopy pod fundamenty",
+      date: "2026-07-18",
       note: "Sprawdzić głębokość",
+      status: "do_sprawdzenia",
+      categoryId: "stan-0",
+      activity: "Rozpoczęto wykopy pod fundamenty",
       reportedByUserId: "u-jacek",
       writtenAt: null,
       writtenByUserId: null,
     },
-  ];
-
-  const messages: PreviewChatMessage[] = [
     {
-      id: "m1",
-      authorUserId: "u-admin",
-      body: "#114 Vestino - Więcbork zrób PZT-kę @Jacek",
-      createdAt: "2026-07-25T09:12:00.000Z",
-      projectRefs: [
-        {
-          entityType: "project",
-          entityId: "p-114",
-          projectNumber: 114,
-          labelSnapshot: "#114 Vestino - Więcbork",
-        },
-      ],
-      mentionNames: ["Jacek"],
+      id: "si-5",
+      projectId: "p-121",
+      // Opcjonalne powiązanie z robotą (demo mostu).
+      blockId: "sb-1a",
+      kind: "dokumentacyjne",
+      title: "Odbiór robót elewacyjnych — budynek A",
+      date: "2026-07-26",
+      note: "",
+      status: "do_wpisania",
+      categoryId: "deweloperski-zew",
+      activity: "Odbiór robót elewacyjnych — budynek A",
+      reportedByUserId: "u-ola",
+      writtenAt: null,
+      writtenByUserId: null,
     },
     {
-      id: "m2",
-      authorUserId: "u-ola",
-      body: "#121 Osiedle Leśne potwierdź termin elewacji",
-      createdAt: "2026-07-25T10:05:00.000Z",
-      projectRefs: [
-        {
-          entityType: "project",
-          entityId: "p-121",
-          projectNumber: 121,
-          labelSnapshot: "#121 Osiedle Leśne",
-        },
-      ],
-      mentionNames: [],
-    },
-    {
-      id: "m3",
-      authorUserId: "u-marek",
-      body: "#115 Dom jednorodzinny - Sępólno sprawdź, czy można wpisać zakończenie zbrojenia fundamentów",
-      createdAt: "2026-07-25T11:40:00.000Z",
-      projectRefs: [
-        {
-          entityType: "project",
-          entityId: "p-115",
-          projectNumber: 115,
-          labelSnapshot: "#115 Dom jednorodzinny - Sępólno",
-        },
-      ],
-      mentionNames: [],
+      id: "si-6",
+      projectId: "p-121",
+      blockId: null,
+      kind: "dokumentacyjne",
+      title: "Objąłem funkcję kierownika budowy dla przedmiotowej inwestycji.",
+      date: "2026-06-10",
+      note: "",
+      status: "wpisane",
+      categoryId: "wpisy-wstepne",
+      activity:
+        "Objąłem funkcję kierownika budowy dla przedmiotowej inwestycji.",
+      reportedByUserId: "u-admin",
+      writtenAt: "2026-06-11",
+      writtenByUserId: "u-admin",
     },
   ];
 
@@ -220,23 +321,44 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     users: DEMO_USERS,
     viewAsUserId,
     projects,
-    nextNumberHint: 131,
+    nextNumberHint: 141,
     catalog,
-    supervisionItems,
+    scheduleCatalog: buildBudowaScheduleCatalog(),
     crews,
     scheduleBlocks,
-    messages,
+    scheduleEvents,
+    categoryMeta: [],
   };
 }
 
 export function emptyishState(): ProjectsPreviewState {
+  return buildEmptyScheduleState();
+}
+
+/**
+ * Produkcyjny / DEV start: puste budowy, katalogi z presetów, jeden użytkownik.
+ * Bez DEMO_USERS i bez przykładowych projektów.
+ */
+export function buildEmptyScheduleState(opts?: {
+  orgId?: string;
+  userId?: string;
+  displayName?: string;
+}): ProjectsPreviewState {
+  const userId = opts?.userId?.trim() || "local-user";
+  const displayName = opts?.displayName?.trim() || "Ty";
   return {
-    ...buildDemoState(),
+    version: 1,
+    orgId: opts?.orgId?.trim() || "local-schedules",
+    users: [{ id: userId, displayName }],
+    viewAsUserId: userId,
     projects: [],
-    supervisionItems: [],
-    scheduleBlocks: [],
-    messages: [],
     nextNumberHint: 1,
+    catalog: buildNadzorPodstawowyPreset(),
+    scheduleCatalog: buildBudowaScheduleCatalog(),
+    crews: [],
+    scheduleBlocks: [],
+    scheduleEvents: [],
+    categoryMeta: [],
   };
 }
 

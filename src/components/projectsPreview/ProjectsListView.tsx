@@ -1,207 +1,184 @@
-import { useState } from "react";
-import {
-  Archive,
-  CalendarRange,
-  ClipboardList,
-  MessagesSquare,
-  Plus,
-  Search,
-  Upload,
-} from "lucide-react";
+import { useMemo, useState } from "react";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
+import { formatEventDate } from "@/lib/projectsPreview/projectLastEvent";
+import { normalizeSearchText } from "@/lib/projectsPreview/normalize";
 import {
-  PROJECT_KIND_LABEL,
-  projectLabel,
-  type ProjectKind,
-  type ProjectStatus,
-} from "@/lib/projectsPreview/types";
+  projectNextDeadline,
+  projectStageLabel,
+} from "@/lib/projectsPreview/projectMetrics";
+import { PROJECT_STATUS_LABEL, type PreviewProject } from "@/lib/projectsPreview/types";
 import { BulkImportDialog } from "./BulkImportDialog";
 import { ProjectFormDialog } from "./ProjectFormDialog";
 
 interface ProjectsListViewProps {
-  onOpenProject: (projectId: string) => void;
-  onOpenToWrite: () => void;
-  onOpenScheduleAll: () => void;
-  onOpenSandboxChat: () => void;
+  /** Archiwum toggle lives in the module header. */
+  showArchived: boolean;
+  formOpen: boolean;
+  bulkOpen: boolean;
+  onFormOpenChange: (open: boolean) => void;
+  onBulkOpenChange: (open: boolean) => void;
 }
 
-const KIND_FILTERS: Array<{ id: ProjectKind | "all"; label: string }> = [
-  { id: "all", label: "Wszystkie" },
-  { id: "nadzor", label: "Nadzór" },
-  { id: "budowa", label: "Budowa" },
-  { id: "projektowanie", label: "Projektowanie" },
-  { id: "inny", label: "Inny" },
-];
+const COLUMN_COUNT = 5;
 
+/** Kolumnowa tabela budów: etap, termin, ostatnie zdarzenie. */
 export function ProjectsListView({
-  onOpenProject,
-  onOpenToWrite,
-  onOpenScheduleAll,
-  onOpenSandboxChat,
+  showArchived,
+  formOpen,
+  bulkOpen,
+  onFormOpenChange,
+  onBulkOpenChange,
 }: ProjectsListViewProps) {
   const repo = useProjectsPreviewRepo();
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<ProjectKind | "all">("all");
-  const [status, setStatus] = useState<ProjectStatus>("active");
-  const [formOpen, setFormOpen] = useState(false);
-  const [bulkOpen, setBulkOpen] = useState(false);
+  const state = repo.getState();
+  const [filterNumber, setFilterNumber] = useState("");
+  const [filterName, setFilterName] = useState("");
+  const [editingProject, setEditingProject] = useState<PreviewProject | null>(
+    null,
+  );
 
-  const projects = repo.visibleProjectList({ kind, status, query });
+  const projects = useMemo(() => {
+    let list = repo.visibleProjectList({
+      status: showArchived ? "all" : "active",
+    });
+    const numQ = filterNumber.trim();
+    if (numQ) {
+      list = list.filter((p) => String(p.number).includes(numQ));
+    }
+    const nameQ = normalizeSearchText(filterName);
+    if (nameQ) {
+      list = list.filter((p) => normalizeSearchText(p.name).includes(nameQ));
+    }
+    return list;
+  }, [repo, filterNumber, filterName, showArchived]);
+
+  const filterInput =
+    "w-full min-w-0 rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink outline-none focus:border-line-strong";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 space-y-3 border-b border-line px-3 py-3 sm:px-4">
-        <div className="relative">
-          <Search
-            size={15}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
-          />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Szukaj po numerze lub nazwie…"
-            className="w-full rounded-lg border border-line bg-surface-raised py-2 pl-8 pr-3 text-sm text-ink outline-none focus:border-line-strong"
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-1.5">
-          {KIND_FILTERS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => setKind(f.id)}
-              className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
-                kind === f.id
-                  ? "bg-accent/15 text-accent"
-                  : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-          <span className="mx-1 self-center text-line">|</span>
-          <button
-            type="button"
-            onClick={() => setStatus("active")}
-            className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
-              status === "active"
-                ? "bg-accent/15 text-accent"
-                : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-            }`}
-          >
-            Aktywne
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatus("archived")}
-            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
-              status === "archived"
-                ? "bg-accent/15 text-accent"
-                : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-            }`}
-          >
-            <Archive size={11} />
-            Archiwalne
-          </button>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setFormOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white transition hover:brightness-110"
-          >
-            <Plus size={15} />
-            Dodaj projekt
-          </button>
-          <button
-            type="button"
-            onClick={() => setBulkOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-sm font-medium text-ink transition hover:border-line-strong"
-          >
-            <Upload size={14} />
-            Dodaj zbiorczo
-          </button>
-        </div>
-
-        <div className="flex flex-wrap gap-2 text-xs">
-          <QuickLink
-            icon={<ClipboardList size={13} />}
-            label="Do wpisania"
-            onClick={onOpenToWrite}
-          />
-          <QuickLink
-            icon={<CalendarRange size={13} />}
-            label="Plan wszystkich budów"
-            onClick={onOpenScheduleAll}
-          />
-          <QuickLink
-            icon={<MessagesSquare size={13} />}
-            label="Czat demo"
-            onClick={onOpenSandboxChat}
-          />
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar">
-        {projects.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-ink-faint">
-            Brak projektów spełniających kryteria.
-          </p>
-        ) : (
-          <ul className="divide-y divide-line/70">
-            {projects.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  onClick={() => onOpenProject(p.id)}
-                  className="flex w-full items-start gap-3 px-3 py-3 text-left transition hover:bg-surface-raised/60 sm:px-4"
+      <div className="min-h-0 flex-1 overflow-auto thin-scrollbar">
+        <table className="w-full min-w-[640px] border-collapse text-left text-[12px]">
+          <thead className="sticky top-0 z-10 bg-surface-raised/95 backdrop-blur-sm">
+            <tr className="border-b border-line text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              <th className="w-[4rem] px-2 py-1">Numer</th>
+              <th className="min-w-[10rem] px-1.5 py-1">Nazwa</th>
+              <th className="w-[9rem] px-1.5 py-1">Etap</th>
+              <th className="w-[6.5rem] px-1.5 py-1">Termin</th>
+              <th className="min-w-[11rem] px-1.5 py-1">Ostatnie</th>
+            </tr>
+            <tr className="border-b border-line bg-surface">
+              <th className="px-2 pb-1 pt-0">
+                <input
+                  value={filterNumber}
+                  onChange={(e) => setFilterNumber(e.target.value)}
+                  placeholder="#"
+                  inputMode="numeric"
+                  className={filterInput}
+                  aria-label="Filtruj numer"
+                />
+              </th>
+              <th className="px-1.5 pb-1 pt-0">
+                <input
+                  value={filterName}
+                  onChange={(e) => setFilterName(e.target.value)}
+                  placeholder="Szukaj nazwy…"
+                  className={filterInput}
+                  aria-label="Filtruj nazwę"
+                />
+              </th>
+              <th className="px-1.5 pb-1 pt-0" />
+              <th className="px-1.5 pb-1 pt-0" />
+              <th className="px-1.5 pb-1 pt-0" />
+            </tr>
+          </thead>
+          <tbody>
+            {projects.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={COLUMN_COUNT}
+                  className="px-4 py-8 text-center text-sm text-ink-faint"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-ink">
-                      {projectLabel(p)}
-                    </div>
-                    <div className="mt-0.5 text-[12px] text-ink-faint">
-                      {PROJECT_KIND_LABEL[p.kind]}
-                      {" · "}
-                      {p.memberIds.length}{" "}
-                      {p.memberIds.length === 1
-                        ? "uczestnik"
-                        : p.memberIds.length < 5
-                          ? "uczestników"
-                          : "uczestników"}
-                    </div>
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+                  Brak budów spełniających kryteria.
+                </td>
+              </tr>
+            ) : (
+              projects.map((p) => {
+                const last = repo.getProjectLastEvent(p.id);
+                const stage = projectStageLabel(
+                  p.id,
+                  state.scheduleBlocks,
+                  state.scheduleCatalog,
+                );
+                const deadline = projectNextDeadline(p.id, state.scheduleBlocks);
+                return (
+                  <tr
+                    key={p.id}
+                    className="cursor-pointer border-b border-line/50 transition hover:bg-surface-raised/50"
+                    onClick={() => setEditingProject(p)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setEditingProject(p);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    title="Edytuj budowę"
+                  >
+                    <td className="whitespace-nowrap px-2 py-1 font-semibold tabular-nums text-accent">
+                      #{p.number}
+                    </td>
+                    <td className="max-w-[14rem] truncate px-1.5 py-1 font-medium text-ink sm:max-w-none">
+                      {p.name}
+                      {p.status === "archived" ? (
+                        <span className="ml-1.5 text-[10px] font-normal text-ink-faint">
+                          ({PROJECT_STATUS_LABEL.archived})
+                        </span>
+                      ) : null}
+                    </td>
+                    <td
+                      className="max-w-[9rem] truncate px-1.5 py-1 text-ink-light"
+                      title={stage ?? undefined}
+                    >
+                      {stage ?? "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-1.5 py-1 text-ink-light">
+                      {deadline ? formatEventDate(deadline) : "—"}
+                    </td>
+                    <td className="max-w-[14rem] truncate px-1.5 py-1 text-ink">
+                      {last ? (
+                        <span title={`${last.label} · ${formatEventDate(last.at)}`}>
+                          {last.label}
+                          <span className="ml-1.5 text-[10px] text-ink-faint">
+                            {formatEventDate(last.at)}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
       </div>
 
-      <ProjectFormDialog open={formOpen} onClose={() => setFormOpen(false)} />
-      <BulkImportDialog open={bulkOpen} onClose={() => setBulkOpen(false)} />
+      <ProjectFormDialog
+        open={formOpen}
+        onClose={() => onFormOpenChange(false)}
+      />
+      <ProjectFormDialog
+        open={editingProject != null}
+        project={editingProject}
+        onClose={() => setEditingProject(null)}
+      />
+      <BulkImportDialog
+        open={bulkOpen}
+        onClose={() => onBulkOpenChange(false)}
+      />
     </div>
-  );
-}
-
-function QuickLink({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-md border border-line/80 px-2 py-1 font-medium text-ink-light transition hover:border-accent/40 hover:text-accent"
-    >
-      {icon}
-      {label}
-    </button>
   );
 }

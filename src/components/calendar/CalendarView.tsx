@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, lazy, Suspense, type ComponentType } from "react";
 import { addDays, addMonths, startOfDay } from "date-fns";
 import { useStore } from "@/state/store";
+import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
 import { getViewDays } from "@/lib/time";
 import { itemMatchesGroupFilter, groupIdForNewItem } from "@/lib/groups";
 import { collectReminderMarkers } from "@/lib/reminders";
@@ -17,17 +18,14 @@ import { MonthView } from "./MonthView";
 import { MainDashboardView } from "@/components/dashboard/MainDashboardView";
 import type { CalendarViewKind, Group } from "@/types";
 
-const ProjectsPreviewCanvas: ComponentType<{
+const SchedulesCanvas: ComponentType<{
   onClose: () => void;
   embedded?: boolean;
-}> | null =
-  import.meta.env.VITE_PROJECTS_PREVIEW === "1"
-    ? lazy(() =>
-        import("@/components/projectsPreview/ProjectsPreviewApp").then((m) => ({
-          default: m.ProjectsPreviewApp,
-        })),
-      )
-    : null;
+}> = lazy(() =>
+  import("@/components/projectsPreview/ProjectsPreviewApp").then((m) => ({
+    default: m.ProjectsPreviewApp,
+  })),
+);
 
 export function CalendarView({
   view: viewOverride,
@@ -149,11 +147,10 @@ export function CalendarView({
   );
 
   const mobileCalendar = isMobile && viewOverride !== undefined;
+  const schedulesAvailable = useSchedulesAvailable();
   const showMainDashboard = !isMobile && settings.mainAreaMode === "dashboard";
   const showProjects =
-    !isMobile &&
-    settings.mainAreaMode === "projects" &&
-    ProjectsPreviewCanvas != null;
+    !isMobile && settings.mainAreaMode === "projects" && schedulesAvailable;
 
   return (
     <div
@@ -161,15 +158,15 @@ export function CalendarView({
       {...(mobileCalendar ? swipeHandlers : {})}
     >
       {!isMobile && <CalendarNav />}
-      {showProjects && ProjectsPreviewCanvas ? (
+      {showProjects ? (
         <Suspense
           fallback={
             <div className="flex flex-1 items-center justify-center text-xs text-ink-faint">
-              Ładowanie projektów…
+              Ładowanie harmonogramów…
             </div>
           }
         >
-          <ProjectsPreviewCanvas
+          <SchedulesCanvas
             embedded
             onClose={() => setSettings({ mainAreaMode: "calendar" })}
           />

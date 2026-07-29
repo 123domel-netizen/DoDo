@@ -3,30 +3,81 @@ import {
   ArrowLeft,
   BookOpen,
   CalendarRange,
-  Download,
+  History,
+  List,
   MoreVertical,
-  RotateCcw,
-  Sparkles,
+  Pencil,
+  Plus,
+  Upload,
+  Users,
   X,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
+import type { ScheduleEventKind } from "@/lib/projectsPreview/types";
 import { CatalogView } from "./CatalogView";
-import { PreviewAsSwitcher } from "./PreviewAsSwitcher";
-import { ProjectDetailView } from "./ProjectDetailView";
+import { BuildsFilterControl } from "./BuildsFilterControl";
+import { CrewsView } from "./CrewsView";
+import { EventsView } from "./EventsView";
 import { ProjectsListView } from "./ProjectsListView";
-import { ProjectsPreviewBanner } from "./ProjectsPreviewBanner";
-import { SandboxChat } from "./SandboxChat";
-import { ScheduleTab } from "./ScheduleTab";
-import { ToWriteQueueView } from "./ToWriteQueueView";
+import { ProjectFormDialog } from "./ProjectFormDialog";
+import { SCHEDULE_TOOLBAR_SLOT_ID, ScheduleTab } from "./ScheduleTab";
+
+/** Board grouping — "project" is implied by `focusProjectId`. */
+export type BoardMode = "allBuilds" | "byCrew";
 
 export type ProjectsPreviewView =
-  | { name: "list" }
-  | { name: "detail"; projectId: string }
-  | { name: "toWrite" }
-  | { name: "catalog" }
-  | { name: "scheduleAll" }
-  | { name: "sandboxChat"; filterProjectId?: string | null };
+  | {
+      name: "board";
+      mode: BoardMode;
+      /** "all" = every visible budowa. */
+      projectIds?: string[] | "all";
+      /** Set = single budowa, plan mode. */
+      focusProjectId?: string;
+    }
+  | { name: "events"; kind: ScheduleEventKind }
+  | { name: "list"; archived?: boolean }
+  | { name: "crews" }
+  | { name: "catalog"; from: ProjectsPreviewView };
+
+/** Row 1 segments. Everything else is a sub-state of one of them. */
+type PrimarySection = "board" | "events" | "list" | "crews";
+
+const PRIMARY_SECTIONS: Array<{
+  id: PrimarySection;
+  label: string;
+  icon: React.ReactNode;
+}> = [
+  { id: "board", label: "Harmonogramy", icon: <CalendarRange size={13} /> },
+  { id: "events", label: "Zdarzenia", icon: <History size={13} /> },
+  { id: "crews", label: "Brygady", icon: <Users size={13} /> },
+  { id: "list", label: "Budowy", icon: <List size={13} /> },
+];
+
+function primaryOf(view: ProjectsPreviewView): PrimarySection {
+  switch (view.name) {
+    case "list":
+      return "list";
+    case "crews":
+      return "crews";
+    case "events":
+      return "events";
+    case "catalog":
+      return primaryOf(view.from);
+    default:
+      return "board";
+  }
+}
+
+const BOARD_MODES: Array<{ id: BoardMode; label: string }> = [
+  { id: "allBuilds", label: "Wg budów" },
+  { id: "byCrew", label: "Wg brygad" },
+];
+
+const EVENT_KINDS: Array<{ id: ScheduleEventKind; label: string }> = [
+  { id: "budowlane", label: "Budowlane" },
+  { id: "dokumentacyjne", label: "Dokumentacyjne" },
+];
 
 interface ProjectsPreviewAppProps {
   onClose: () => void;
@@ -35,29 +86,96 @@ interface ProjectsPreviewAppProps {
 }
 
 /**
- * PROJECTS PREVIEW shell.
- * Desktop: embedded in main canvas. Mobile overlay still uses portal.
+ * HARMONOGRAMY shell.
+ * Two-row chrome: row 1 never changes (sekcje), row 2 is the context bar.
  */
 export function ProjectsPreviewApp({
   onClose,
   embedded = false,
 }: ProjectsPreviewAppProps) {
   const repo = useProjectsPreviewRepo();
-  const [view, setView] = useState<ProjectsPreviewView>({ name: "list" });
+  const [view, setView] = useState<ProjectsPreviewView>({
+    name: "board",
+    mode: "allBuilds",
+    projectIds: "all",
+  });
+  /** Row/day focused after a jump onto the board. */
+  const [highlight, setHighlight] = useState<{
+    blockId: string | null;
+    date: string | null;
+  }>({ blockId: null, date: null });
+  const [editOpen, setEditOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const [formOpen, setFormOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [crewFormOpen, setCrewFormOpen] = useState(false);
+  /** Shared across Tablica + Zdarzenia; also mirrored into board view.projectIds. */
+  const [buildsFilter, setBuildsFilterState] = useState<string[] | "all">("all");
+
+  /** Last sub-state per section, so row 1 does not reset the context bar. */
+  const memory = useRef({
+    listArchived: false,
+    boardMode: "allBuilds" as BoardMode,
+    boardProjectIds: "all" as string[] | "all",
+    eventsKind: "budowlane" as ScheduleEventKind,
+  });
+
+  const focusedProject =
+    view.name === "board" && view.focusProjectId
+      ? repo.getProjectIfVisible(view.focusProjectId)
+      : null;
+  const isAdmin = focusedProject?.adminUserId === repo.currentUserId();
+
+  const primary = primaryOf(view);
+  const activeProjects = repo.visibleProjectList({ status: "active" });
+  const canGoBack = view.name === "catalog" || Boolean(focusedProject);
+
+  const clearFocus = () => {
+    setHighlight({ blockId: null, date: null });
+    setView({
+      name: "board",
+      mode: memory.current.boardMode,
+      projectIds: memory.current.boardProjectIds,
+    });
+  };
+
+  const goBack = () => {
+    if (view.name === "catalog") {
+      setView(view.from);
+      return;
+    }
+    if (focusedProject) clearFocus();
+  };
+
+  const goToSection = (section: PrimarySection) => {
+    if (section === "list") {
+      setView({ name: "list", archived: memory.current.listArchived });
+    } else if (section === "crews") {
+      setView({ name: "crews" });
+    } else if (section === "events") {
+      setView({ name: "events", kind: memory.current.eventsKind });
+    } else {
+      setView({
+        name: "board",
+        mode: memory.current.boardMode,
+        projectIds: memory.current.boardProjectIds,
+      });
+    }
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (menuOpen) setMenuOpen(false);
-        else if (view.name !== "list") setView({ name: "list" });
-        else onClose();
-      }
+      if (e.key !== "Escape") return;
+      if (menuOpen) setMenuOpen(false);
+      else if (canGoBack) goBack();
+      else onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menuOpen, view.name, onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- goBack derives from view
+  }, [menuOpen, canGoBack, view, onClose]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -68,179 +186,359 @@ export function ProjectsPreviewApp({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [menuOpen]);
 
-  const downloadExport = () => {
-    const json = repo.exportJson();
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `dodo-projects-preview-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const _focusProject = (
+    projectId: string,
+    focus?: { blockId?: string | null; date?: string | null },
+  ) => {
+    setHighlight({
+      blockId: focus?.blockId ?? null,
+      date: focus?.date ?? null,
+    });
+    setView({
+      name: "board",
+      mode: memory.current.boardMode,
+      projectIds: memory.current.boardProjectIds,
+      focusProjectId: projectId,
+    });
+  };
+  void _focusProject;
+
+  const setEventsKind = (kind: ScheduleEventKind) => {
+    memory.current.eventsKind = kind;
+    setView({ name: "events", kind });
+  };
+
+  const setBuildsFilter = (value: string[] | "all") => {
+    memory.current.boardProjectIds = value;
+    setBuildsFilterState(value);
+    if (view.name === "board" && !view.focusProjectId) {
+      setView({ ...view, projectIds: value });
+    }
+  };
+
+  const setListArchived = (archived: boolean) => {
+    memory.current.listArchived = archived;
+    setView({ name: "list", archived });
+  };
+
+  const setBoardMode = (mode: BoardMode) => {
+    memory.current.boardMode = mode;
+    if (view.name !== "board") return;
+    setView({ ...view, mode });
+  };
+
+  const openCatalog = () => {
+    if (view.name !== "catalog") setView({ name: "catalog", from: view });
     setMenuOpen(false);
   };
 
-  const showListChrome = view.name === "list";
+  const listCount =
+    view.name === "list"
+      ? repo.visibleProjectList({ status: view.archived ? "all" : "active" })
+          .length
+      : 0;
+
+  const crewCount = repo.getState().crews.length;
 
   const shell = (
     <div
       className={
         embedded
-          ? "flex h-full min-h-0 flex-1 flex-col bg-surface text-ink"
+          ? "relative flex h-full min-h-0 flex-1 flex-col bg-surface text-ink"
           : "fixed inset-0 z-[9000] flex flex-col bg-surface text-ink"
       }
       role={embedded ? "region" : "dialog"}
       aria-modal={embedded ? undefined : true}
-      aria-label="Projekty — preview"
+      aria-label="Harmonogramy"
     >
-      <header className="flex shrink-0 items-center gap-2 border-b border-line bg-surface-raised/50 px-2 py-2 sm:px-3">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
-          aria-label={embedded ? "Wróć do kalendarza" : "Zamknij"}
-        >
-          <X size={18} />
-        </button>
-
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold tracking-tight text-ink sm:text-base">
-            Projekty
-          </h1>
-          <p className="truncate text-[10px] text-ink-faint">
-            Preview · dane lokalne
-            {!showListChrome ? ` · ${viewLabel(view)}` : ""}
-          </p>
-        </div>
-
-        <PreviewAsSwitcher />
-
-        <div className="relative" ref={menuRef}>
+      <header className="shrink-0 border-b border-line bg-surface-raised/50">
+        <div className="flex h-9 items-center gap-1 px-1.5 sm:px-2">
           <button
             type="button"
-            onClick={() => setMenuOpen((o) => !o)}
-            className="rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
-            aria-label="Narzędzia preview"
-            aria-expanded={menuOpen}
+            onClick={onClose}
+            className="shrink-0 rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+            aria-label={embedded ? "Wróć do kalendarza" : "Zamknij"}
+            title={embedded ? "Wróć do kalendarza" : "Zamknij"}
           >
-            <MoreVertical size={18} />
+            <X size={16} />
           </button>
-          {menuOpen ? (
-            <div className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-line bg-surface-overlay py-1 shadow-pop">
-              <MenuItem
-                icon={<RotateCcw size={14} />}
-                label="Resetuj dane demonstracyjne"
-                onClick={() => {
-                  if (
-                    confirm(
-                      "Przywrócić dane demonstracyjne? Lokalne zmiany preview zostaną nadpisane.",
-                    )
-                  ) {
-                    repo.resetDemo();
-                    setView({ name: "list" });
-                  }
-                  setMenuOpen(false);
-                }}
-              />
-              <MenuItem
-                icon={<Sparkles size={14} />}
-                label="Wczytaj przykładowe projekty"
-                onClick={() => {
-                  repo.loadDemoProjects();
-                  setMenuOpen(false);
-                }}
-              />
-              <MenuItem
-                icon={<Download size={14} />}
-                label="Eksportuj JSON"
-                onClick={downloadExport}
-              />
-              <div className="my-1 border-t border-line" />
-              <MenuItem
-                icon={<BookOpen size={14} />}
-                label="Katalog czynności"
-                onClick={() => {
-                  setView({ name: "catalog" });
-                  setMenuOpen(false);
-                }}
-              />
-              <MenuItem
-                icon={<CalendarRange size={14} />}
-                label="Plan wszystkich budów"
-                onClick={() => {
-                  setView({ name: "scheduleAll" });
-                  setMenuOpen(false);
-                }}
-              />
-            </div>
+
+          <BuildsFilterControl
+            projects={activeProjects}
+            value={buildsFilter}
+            onChange={setBuildsFilter}
+            disabled={Boolean(focusedProject)}
+          />
+
+          <nav
+            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto thin-scrollbar"
+            aria-label="Sekcje Harmonogramów"
+          >
+            {PRIMARY_SECTIONS.map((s) => {
+              const active = primary === s.id;
+              // Focused budowa / catalog live under a section — mark the trail.
+              const ancestor = active && canGoBack;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => goToSection(s.id)}
+                  aria-current={active ? "page" : undefined}
+                  className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12px] font-medium transition ${
+                    active
+                      ? ancestor
+                        ? "bg-accent/[0.07] text-accent/80"
+                        : "bg-accent/15 text-accent"
+                      : "text-ink-faint hover:bg-surface-raised hover:text-ink"
+                  }`}
+                >
+                  {s.icon}
+                  {s.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="relative shrink-0" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              className="rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+              aria-label="Narzędzia Harmonogramów"
+              aria-expanded={menuOpen}
+            >
+              <MoreVertical size={16} />
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-line bg-surface-overlay py-1 shadow-pop">
+                {focusedProject && isAdmin ? (
+                  <>
+                    <MenuItem
+                      icon={<Pencil size={14} />}
+                      label="Edytuj budowę"
+                      onClick={() => {
+                        setEditOpen(true);
+                        setMenuOpen(false);
+                      }}
+                    />
+                    <div className="my-1 border-t border-line" />
+                  </>
+                ) : null}
+                <MenuItem
+                  icon={<BookOpen size={14} />}
+                  label="Katalog czynności"
+                  onClick={openCatalog}
+                />
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex h-8 items-center gap-1 overflow-x-auto thin-scrollbar border-t border-line/60 px-1.5 sm:px-2">
+          {canGoBack ? (
+            <button
+              type="button"
+              onClick={goBack}
+              className="shrink-0 rounded-md p-1 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+              aria-label="Wróć"
+              title="Wróć"
+            >
+              <ArrowLeft size={15} />
+            </button>
           ) : null}
+
+          {view.name === "events" ? (
+            <Segmented
+              options={EVENT_KINDS}
+              value={view.kind}
+              onChange={(id) => setEventsKind(id)}
+            />
+          ) : null}
+
+          {view.name === "list" ? (
+            <>
+              <Segmented
+                options={[
+                  { id: "active", label: "Aktywne" },
+                  { id: "archived", label: "Archiwum" },
+                ]}
+                value={view.archived ? "archived" : "active"}
+                onChange={(id) => setListArchived(id === "archived")}
+              />
+              <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+                {listCount} {pluralBudowy(listCount)}
+              </span>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setBulkOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light transition hover:border-line-strong hover:text-ink"
+                  title="Import zbiorczy"
+                >
+                  <Upload size={12} />
+                  Import
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:brightness-110"
+                  title="Dodaj budowę"
+                >
+                  <Plus size={12} />
+                  Budowa
+                </button>
+              </div>
+            </>
+          ) : null}
+
+          {view.name === "crews" ? (
+            <>
+              <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+                {crewCount} {pluralBrygady(crewCount)}
+              </span>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCrewFormOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:brightness-110"
+                  title="Dodaj brygadę"
+                >
+                  <Plus size={12} />
+                  Brygada
+                </button>
+              </div>
+            </>
+          ) : null}
+
+          {view.name === "board" && focusedProject ? (
+            <button
+              type="button"
+              onClick={() => isAdmin && setEditOpen(true)}
+              className="min-w-0 shrink truncate text-left text-[12px] font-semibold text-ink transition hover:text-accent"
+              title={isAdmin ? "Edytuj budowę" : projectTitle(focusedProject)}
+            >
+              <span className="tabular-nums text-accent">
+                #{focusedProject.number}
+              </span>{" "}
+              {focusedProject.name}
+              {focusedProject.status === "archived" ? (
+                <span className="ml-1 text-[10px] font-normal text-ink-faint">
+                  archiwum
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+
+          {view.name === "board" && !focusedProject ? (
+            <Segmented
+              options={BOARD_MODES}
+              value={view.mode}
+              onChange={(id) => setBoardMode(id)}
+            />
+          ) : null}
+
+          {view.name === "catalog" ? (
+            <span className="shrink-0 text-[12px] font-semibold text-ink">
+              Katalog czynności
+            </span>
+          ) : null}
+
+          {/* Always mounted: ScheduleTab portals its toolbar here on mount. */}
+          <div
+            id={SCHEDULE_TOOLBAR_SLOT_ID}
+            className={
+              view.name === "board"
+                ? "flex min-w-0 flex-1 items-center"
+                : "hidden"
+            }
+          />
         </div>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-hidden">
+      <main className="relative min-h-0 flex-1 overflow-hidden">
+        {view.name === "board" ? (
+          <ScheduleTab
+            key={view.focusProjectId ?? "org-board"}
+            chromeInParent
+            projectId={view.focusProjectId}
+            projectIds={view.projectIds}
+            mode={view.focusProjectId ? "project" : view.mode}
+            highlightBlockId={highlight.blockId}
+            highlightDate={highlight.date}
+            onModeChange={(mode) => {
+              if (mode === "project") return;
+              setBoardMode(mode);
+            }}
+          />
+        ) : null}
+        {view.name === "events" ? (
+          <EventsView kind={view.kind} projectIds={buildsFilter} />
+        ) : null}
         {view.name === "list" ? (
           <ProjectsListView
-            onOpenProject={(id) => setView({ name: "detail", projectId: id })}
-            onOpenToWrite={() => setView({ name: "toWrite" })}
-            onOpenScheduleAll={() => setView({ name: "scheduleAll" })}
-            onOpenSandboxChat={() => setView({ name: "sandboxChat" })}
+            showArchived={Boolean(view.archived)}
+            formOpen={formOpen}
+            bulkOpen={bulkOpen}
+            onFormOpenChange={setFormOpen}
+            onBulkOpenChange={setBulkOpen}
           />
         ) : null}
-        {view.name === "detail" ? (
-          <ProjectDetailView
-            projectId={view.projectId}
-            onBack={() => setView({ name: "list" })}
-            onOpenSandboxFiltered={(id) =>
-              setView({ name: "sandboxChat", filterProjectId: id })
-            }
-            onOpenCatalog={() => setView({ name: "catalog" })}
+        {view.name === "crews" ? (
+          <CrewsView
+            createOpen={crewFormOpen}
+            onCreateOpenChange={setCrewFormOpen}
           />
         ) : null}
-        {view.name === "toWrite" ? (
-          <ToWriteQueueView
-            onBack={() => setView({ name: "list" })}
-            onOpenProject={(id) => setView({ name: "detail", projectId: id })}
-          />
-        ) : null}
-        {view.name === "catalog" ? (
-          <CatalogView onBack={() => setView({ name: "list" })} />
-        ) : null}
-        {view.name === "scheduleAll" ? (
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-2 border-b border-line px-3 py-2 sm:px-4">
-              <button
-                type="button"
-                onClick={() => setView({ name: "list" })}
-                className="rounded-md p-1.5 text-ink-faint hover:bg-surface-raised hover:text-ink"
-                aria-label="Wróć"
-              >
-                <ArrowLeft size={18} />
-              </button>
-              <CalendarRange size={15} className="text-accent" />
-              <h2 className="text-sm font-semibold text-ink">
-                Plan wszystkich budów
-              </h2>
-            </div>
-            <div className="min-h-0 flex-1">
-              <ScheduleTab showViewSwitcher />
-            </div>
-          </div>
-        ) : null}
-        {view.name === "sandboxChat" ? (
-          <SandboxChat
-            onBack={() => setView({ name: "list" })}
-            onOpenProject={(id) => setView({ name: "detail", projectId: id })}
-            initialFilterProjectId={view.filterProjectId ?? null}
-          />
-        ) : null}
+        {view.name === "catalog" ? <CatalogView onBack={goBack} /> : null}
       </main>
 
-      <ProjectsPreviewBanner />
+      {focusedProject ? (
+        <ProjectFormDialog
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          project={focusedProject}
+        />
+      ) : null}
+
     </div>
   );
 
   if (embedded) return shell;
   return createPortal(shell, document.body);
+}
+
+function projectTitle(p: { number: string; name: string }): string {
+  return `#${p.number} ${p.name}`;
+}
+
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ id: T; label: string }>;
+  value: T;
+  onChange: (id: T) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 rounded-md bg-surface-raised/60 p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          onClick={() => onChange(o.id)}
+          aria-pressed={value === o.id}
+          className={`rounded px-2 py-0.5 text-[11px] font-medium transition ${
+            value === o.id
+              ? "bg-accent/15 text-accent"
+              : "text-ink-faint hover:text-ink"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function MenuItem({
@@ -264,21 +562,19 @@ function MenuItem({
   );
 }
 
-function viewLabel(view: ProjectsPreviewView): string {
-  switch (view.name) {
-    case "detail":
-      return "szczegóły";
-    case "toWrite":
-      return "do wpisania";
-    case "catalog":
-      return "katalog";
-    case "scheduleAll":
-      return "plan budów";
-    case "sandboxChat":
-      return "czat demo";
-    default:
-      return "lista";
-  }
+/** Polish plural: 1 budowa / 2-4 budowy / 5+ budów. */
+function pluralBudowy(n: number): string {
+  if (n === 1) return "budowa";
+  return isFewForm(n) ? "budowy" : "budów";
 }
 
-export { ProjectsPreviewBanner } from "./ProjectsPreviewBanner";
+function pluralBrygady(n: number): string {
+  if (n === 1) return "brygada";
+  return isFewForm(n) ? "brygady" : "brygad";
+}
+
+function isFewForm(n: number): boolean {
+  const rest10 = n % 10;
+  const rest100 = n % 100;
+  return rest10 >= 2 && rest10 <= 4 && (rest100 < 12 || rest100 > 14);
+}

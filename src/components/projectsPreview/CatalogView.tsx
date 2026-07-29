@@ -7,11 +7,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
-import type {
-  ProjectsPreviewState,
-  SupervisionCatalogCategory,
-} from "@/lib/projectsPreview/types";
-import type { ProjectsPreviewRepository } from "@/lib/projectsPreview/repository";
+import type { SupervisionCatalogCategory } from "@/lib/projectsPreview/types";
 
 interface CatalogViewProps {
   onBack: () => void;
@@ -23,7 +19,7 @@ export function CatalogView({ onBack }: CatalogViewProps) {
   const [draftByCat, setDraftByCat] = useState<Record<string, string>>({});
 
   const setCategories = (categories: SupervisionCatalogCategory[]) => {
-    commitCatalog(repo, categories);
+    repo.updateSupervisionCatalog(categories);
   };
 
   const addActivity = (catId: string) => {
@@ -67,7 +63,7 @@ export function CatalogView({ onBack }: CatalogViewProps) {
         </button>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold text-ink">{catalog.name}</h2>
-          <p className="text-[11px] text-ink-faint">Preset lokalny (preview)</p>
+          <p className="text-[11px] text-ink-faint">Czynności dokumentacyjne zespołu</p>
         </div>
         <button
           type="button"
@@ -144,19 +140,4 @@ export function CatalogView({ onBack }: CatalogViewProps) {
       </div>
     </div>
   );
-}
-
-function commitCatalog(
-  repo: ProjectsPreviewRepository,
-  categories: SupervisionCatalogCategory[],
-) {
-  const state = repo.getState();
-  const next: ProjectsPreviewState = {
-    ...state,
-    catalog: { ...state.catalog, categories },
-  };
-  // Preview-only: commit is private on the class; call through for local catalog edits.
-  (
-    repo as unknown as { commit: (s: ProjectsPreviewState) => void }
-  ).commit(next);
 }

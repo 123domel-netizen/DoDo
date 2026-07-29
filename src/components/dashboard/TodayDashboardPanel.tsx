@@ -9,7 +9,11 @@ import {
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { Item, UserTag } from "@/types";
-import { calendarBlockFromDeadline, defaultTaskDueRange, itemDurationMinutes } from "@/lib/factory";
+import {
+  calendarBlockFromDeadline,
+  defaultTaskDueRange,
+  itemDurationMinutes,
+} from "@/lib/factory";
 import { fmt, tint } from "@/lib/format";
 import { isSharedItem, SHARE_CALENDAR_COLOR } from "@/lib/share";
 import { effectiveReminders } from "@/lib/reminders";
@@ -17,7 +21,16 @@ import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
 import { baseItemId } from "@/lib/itemId";
 import { deadlineIconDimmed } from "@/lib/deadlines";
 import { itemSupportsTodoDone } from "@/lib/items";
-import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
+import {
+  EVENTS_DISPLAY_TARGET,
+  useTodayDashboardData,
+} from "@/hooks/useTodayDashboardData";
+import { useScheduleDashboardHints } from "@/hooks/useScheduleDashboardHints";
+import type { ScheduleDashboardHint } from "@/lib/projectsPreview/dashboardScheduleHints";
+import {
+  ScheduleDashboardHintRow,
+  ScheduleDashboardHintSectionLabel,
+} from "@/components/dashboard/ScheduleDashboardHintRow";
 
 const DASHBOARD_LEFT_COL = "flex w-14 shrink-0 justify-center";
 
@@ -28,6 +41,56 @@ export function TodayDashboardPanel() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
+  const addItem = useStore((s) => s.addItem);
+
+  const scheduleUpcomingBudget = Math.max(
+    0,
+    EVENTS_DISPLAY_TARGET - todayEvents.length - upcomingEvents.length,
+  );
+  const { today: scheduleToday, upcoming: scheduleUpcoming } =
+    useScheduleDashboardHints({
+      maxToday: 3,
+      maxUpcoming: scheduleUpcomingBudget,
+    });
+
+  const hasTodaySection =
+    todayEvents.length > 0 || scheduleToday.length > 0;
+  const hasUpcomingSection =
+    upcomingEvents.length > 0 || scheduleUpcoming.length > 0;
+
+  const isoFromHintDate = (date: string) =>
+    new Date(`${date}T12:00:00`).toISOString();
+
+  const addTaskFromHint = (hint: ScheduleDashboardHint) => {
+    const due = isoFromHintDate(hint.date);
+    addItem({
+      type: "task",
+      title: `${hint.projectLabel}: ${hint.title}`,
+      showInTodo: true,
+      showInCalendar: false,
+      hasDueDate: true,
+      start: due,
+      end: due,
+      description: `Harmonogram (${hint.kind === "budowlane" ? "budowlane" : "dokumentacyjne"})`,
+    });
+  };
+
+  const addEventFromHint = (hint: ScheduleDashboardHint) => {
+    const due = isoFromHintDate(hint.date);
+    const { start, end } = calendarBlockFromDeadline(due, 60);
+    const item = addItem({
+      type: "event",
+      title: `${hint.projectLabel}: ${hint.title}`,
+      showInTodo: true,
+      showInCalendar: true,
+      hasDueDate: true,
+      allDay: true,
+      start,
+      end,
+      description: `Harmonogram (${hint.kind === "budowlane" ? "budowlane" : "dokumentacyjne"})`,
+    });
+    setEditing(item.id);
+  };
 
   const tagsForItem = (item: Item) => {
     const baseId = baseItemId(item.id);
@@ -53,12 +116,12 @@ export function TodayDashboardPanel() {
       <section className="border-b border-line p-3">
         <div
           className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
-            todayEvents.length === 0 ? "mb-1" : "mb-2"
+            hasTodaySection ? "mb-2" : "mb-1"
           }`}
         >
           <CalendarClock size={14} className="shrink-0" />
           <span className="shrink-0">Wydarzenia dzisiaj</span>
-          {todayEvents.length === 0 && (
+          {!hasTodaySection && (
             <span className="text-xs font-normal normal-case text-ink-faint">
               Brak wydarzeń na dziś
             </span>
@@ -82,11 +145,26 @@ export function TodayDashboardPanel() {
             ))}
           </div>
         )}
-        {upcomingEvents.length > 0 && (
+        {scheduleToday.length > 0 ? (
+          <div className={todayEvents.length > 0 ? "mt-1.5 space-y-1" : "space-y-1"}>
+            {todayEvents.length === 0 ? null : (
+              <ScheduleDashboardHintSectionLabel />
+            )}
+            {scheduleToday.map((hint) => (
+              <ScheduleDashboardHintRow
+                key={hint.id}
+                hint={hint}
+                onAddTask={() => addTaskFromHint(hint)}
+                onAddEvent={() => addEventFromHint(hint)}
+              />
+            ))}
+          </div>
+        ) : null}
+        {hasUpcomingSection && (
           <>
             <div
               className={`mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
-                todayEvents.length === 0 ? "mt-1.5" : "mt-4"
+                hasTodaySection ? "mt-4" : "mt-1.5"
               }`}
             >
               Nadchodzące
@@ -105,6 +183,15 @@ export function TodayDashboardPanel() {
                       ? () => toggleTaskDone(baseItemId(it.id))
                       : undefined
                   }
+                />
+              ))}
+              {scheduleUpcoming.map((hint) => (
+                <ScheduleDashboardHintRow
+                  key={hint.id}
+                  hint={hint}
+                  showDate
+                  onAddTask={() => addTaskFromHint(hint)}
+                  onAddEvent={() => addEventFromHint(hint)}
                 />
               ))}
             </div>

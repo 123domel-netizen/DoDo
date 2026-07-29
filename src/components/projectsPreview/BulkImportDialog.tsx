@@ -2,15 +2,12 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Upload } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
+import { scheduleImportProjects } from "@/lib/schedules/scheduleRepoActions";
 import {
   parseBulkProjects,
   type BulkRow,
   type BulkRowErr,
 } from "@/lib/projectsPreview/bulkParse";
-import {
-  PROJECT_KIND_LABEL,
-  type ProjectKind,
-} from "@/lib/projectsPreview/types";
 
 interface BulkImportDialogProps {
   open: boolean;
@@ -20,13 +17,15 @@ interface BulkImportDialogProps {
 
 const ERROR_LABEL: Record<BulkRowErr["error"], string> = {
   missing_name: "Brak nazwy",
-  invalid_number: "Nieprawidłowy numer",
-  unknown_kind: "Nieznany rodzaj",
+  invalid_number: "Nieprawidłowy numer / ID",
   duplicate_in_import: "Duplikat w imporcie",
   number_exists: "Numer już istnieje",
 };
 
-const KINDS = Object.keys(PROJECT_KIND_LABEL) as ProjectKind[];
+const PLACEHOLDER = [
+  "114 Vestino - Więcbork",
+  "B-12; Dom jednorodzinny - Sępólno",
+].join("\n");
 
 export function BulkImportDialog({
   open,
@@ -34,34 +33,25 @@ export function BulkImportDialog({
   onImported,
 }: BulkImportDialogProps) {
   const repo = useProjectsPreviewRepo();
-  const [mode, setMode] = useState<"a" | "b">("a");
-  const [sharedKind, setSharedKind] = useState<ProjectKind>("nadzor");
   const [text, setText] = useState("");
   const [accepted, setAccepted] = useState(false);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
 
   const existingNumbers = useMemo(() => {
-    const s = new Set<number>();
-    for (const p of repo.getState().projects) s.add(p.number);
+    const s = new Set<string>();
+    for (const p of repo.getState().projects) s.add(p.number.toLowerCase());
     return s;
   }, [repo, open]); // eslint-disable-line react-hooks/exhaustive-deps -- refresh when dialog opens
 
   const parsed = useMemo(
-    () =>
-      parseBulkProjects(text, {
-        mode,
-        sharedKind: mode === "b" ? sharedKind : undefined,
-        existingNumbers,
-      }),
-    [text, mode, sharedKind, existingNumbers],
+    () => parseBulkProjects(text, { existingNumbers }),
+    [text, existingNumbers],
   );
 
   const reset = () => {
     setText("");
     setAccepted(false);
     setResultMsg(null);
-    setMode("a");
-    setSharedKind("nadzor");
   };
 
   const handleClose = () => {
@@ -69,7 +59,7 @@ export function BulkImportDialog({
     onClose();
   };
 
-  const importOk = () => {
+  const importOk = async () => {
     if (!accepted) {
       setResultMsg("Zaakceptuj podsumowanie przed importem.");
       return;
@@ -79,8 +69,9 @@ export function BulkImportDialog({
       setResultMsg("Brak poprawnych wierszy do importu.");
       return;
     }
-    const res = repo.importProjects(
-      okRows.map((r) => ({ number: r.number, name: r.name, kind: r.kind })),
+    const res = await scheduleImportProjects(
+      repo,
+      okRows.map((r) => ({ number: r.number, name: r.name })),
     );
     if (!res.ok) {
       setResultMsg(res.error);
@@ -88,8 +79,8 @@ export function BulkImportDialog({
     }
     setResultMsg(
       parsed.errorCount > 0
-        ? `Zaimportowano ${res.count} projektów. ${parsed.errorCount} wierszy pominięto (błędy).`
-        : `Zaimportowano ${res.count} projektów.`,
+        ? `Zaimportowano ${res.count} budów. ${parsed.errorCount} wierszy pominięto (błędy).`
+        : `Zaimportowano ${res.count} budów.`,
     );
     onImported?.();
     setTimeout(handleClose, 600);
@@ -99,41 +90,11 @@ export function BulkImportDialog({
     <Modal open={open} onClose={handleClose} width={640}>
       <div className="p-5">
         <h2 className="mb-1 text-lg font-semibold text-ink">Import zbiorczy</h2>
-        <p className="mb-4 text-sm text-ink-faint">
-          Podgląd przed zapisem. Błędne wiersze nie są importowane — możesz
-          zaimportować tylko poprawne po akceptacji podsumowania.
+        <p className="mb-3 text-sm text-ink-faint">
+          Jeden wiersz = jedna budowa: <code className="text-ink-light">114 Vestino</code>{" "}
+          lub <code className="text-ink-light">B-12; Vestino</code>. Numer / ID może być
+          dowolnym tekstem. Podgląd przed zapisem — błędne wiersze nie są importowane.
         </p>
-
-        <div className="mb-3 flex flex-wrap gap-2">
-          <ModeChip active={mode === "a"} onClick={() => { setMode("a"); setAccepted(false); }}>
-            Tryb A — numer; nazwa; rodzaj
-          </ModeChip>
-          <ModeChip active={mode === "b"} onClick={() => { setMode("b"); setAccepted(false); }}>
-            Tryb B — numer nazwa
-          </ModeChip>
-        </div>
-
-        {mode === "b" ? (
-          <label className="mb-3 block">
-            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-              Wspólny rodzaj
-            </span>
-            <select
-              value={sharedKind}
-              onChange={(e) => {
-                setSharedKind(e.target.value as ProjectKind);
-                setAccepted(false);
-              }}
-              className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-line-strong"
-            >
-              {KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {PROJECT_KIND_LABEL[k]}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
 
         <textarea
           value={text}
@@ -143,11 +104,7 @@ export function BulkImportDialog({
             setResultMsg(null);
           }}
           rows={7}
-          placeholder={
-            mode === "a"
-              ? "114; Vestino - Więcbork; Nadzór budowy\n115; Dom jednorodzinny - Sępólno; Nadzór budowy"
-              : "114 Vestino - Więcbork\n115 Dom jednorodzinny - Sępólno"
-          }
+          placeholder={PLACEHOLDER}
           className="mb-3 w-full resize-y rounded-lg border border-line bg-surface-raised px-3 py-2 font-mono text-xs text-ink outline-none focus:border-line-strong"
         />
 
@@ -168,8 +125,7 @@ export function BulkImportDialog({
                     <td className="px-2 py-1.5">
                       {row.ok ? (
                         <span className="inline-flex items-center gap-1 text-emerald-400">
-                          <CheckCircle2 size={12} /> OK
-                          {row.ok ? ` #${row.number}` : null}
+                          <CheckCircle2 size={12} /> OK #{row.number}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-amber-400">
@@ -179,9 +135,7 @@ export function BulkImportDialog({
                       )}
                     </td>
                     <td className="max-w-[14rem] truncate px-2 py-1.5 text-ink-light">
-                      {row.ok
-                        ? `${row.name} · ${PROJECT_KIND_LABEL[row.kind]}`
-                        : row.raw}
+                      {row.ok ? row.name : row.raw}
                     </td>
                   </tr>
                 ))}
@@ -240,29 +194,5 @@ export function BulkImportDialog({
         </div>
       </div>
     </Modal>
-  );
-}
-
-function ModeChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
-        active
-          ? "border-accent/50 bg-accent/15 text-accent"
-          : "border-line text-ink-light hover:border-line-strong hover:text-ink"
-      }`}
-    >
-      {children}
-    </button>
   );
 }
