@@ -30,8 +30,8 @@ interface ScheduleEventSheetProps {
   /** Which kind the creation flow starts on. */
   defaultKind?: ScheduleEventKind;
   /**
-   * When set, kind cannot be switched (docs = investment only,
-   * construction = category lanes).
+   * When set, kind cannot be switched. Prefer locking only while editing an
+   * existing event (create flows keep the Budowlane / Dokumentacyjne toggle).
    */
   lockKind?: boolean;
   defaultDate?: string;

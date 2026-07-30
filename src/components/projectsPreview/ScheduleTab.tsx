@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
-  ClipboardList,
   FolderTree,
   LayoutTemplate,
   Pencil,
@@ -906,10 +905,10 @@ export function ScheduleTab({
                 kind,
               })
             }
-            onAddProjectDocEvent={(pid) =>
+            onAddProjectEvent={(pid) =>
               openEventSheet({
                 projectId: pid,
-                kind: "dokumentacyjne",
+                kind: "budowlane",
               })
             }
             onEditEvent={(event) => openEventSheet({ event })}
@@ -1059,7 +1058,7 @@ export function ScheduleTab({
           defaultCategoryId={eventEdit.categoryId}
           event={eventEdit.event}
           defaultKind={eventEdit.kind}
-          lockKind
+          lockKind={Boolean(eventEdit.event)}
           defaultDate={todayIso()}
           catalog={state.catalog}
           scheduleCatalog={state.scheduleCatalog}
@@ -1608,7 +1607,7 @@ function TimelineBoard({
   onEditCategory,
   onAddUnderProject,
   onEditProject,
-  onAddProjectDocEvent,
+  onAddProjectEvent,
   onAddCategoryEvent,
   onEditEvent,
   onEditCrew,
@@ -1662,8 +1661,8 @@ function TimelineBoard({
   }) => void;
   onAddUnderProject?: (projectId: string) => void;
   onEditProject?: (projectId: string) => void;
-  /** Documentary events — only at investment (project) level. */
-  onAddProjectDocEvent?: (projectId: string) => void;
+  /** Add schedule event on a build (kind chooser in sheet; default budowlane). */
+  onAddProjectEvent?: (projectId: string) => void;
   onAddCategoryEvent?: (
     opts: { projectId: string; categoryId: string },
     kind: ScheduleEventKind,
@@ -1852,17 +1851,17 @@ function TimelineBoard({
                       <Plus size={12} />
                     </button>
                   ) : null}
-                  {row.projectId && onAddProjectDocEvent && !row.crew ? (
+                  {row.projectId && onAddProjectEvent && !row.crew ? (
                     <button
                       type="button"
-                      title="Dodaj zdarzenie dokumentacyjne"
+                      title="Dodaj zdarzenie"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onAddProjectDocEvent(row.projectId!);
+                        onAddProjectEvent(row.projectId!);
                       }}
                       className="relative z-10 shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-accent"
                     >
-                      <ClipboardList size={12} />
+                      <Zap size={12} />
                     </button>
                   ) : null}
                   {row.crew && onEditCrew ? (
@@ -2145,7 +2144,7 @@ function TimelineBoard({
                         row.projectId ? (
                           <button
                             type="button"
-                            title="Dodaj zdarzenie budowlane (np. dźwig)"
+                            title="Dodaj zdarzenie"
                             onClick={(e) => {
                               e.stopPropagation();
                               onAddCategoryEvent(
