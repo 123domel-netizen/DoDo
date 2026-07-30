@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { Item, UserTag } from "@/types";
-import { groupIdForNewItem, itemMatchesGroupFilter } from "@/lib/groups";
+import { groupIdForNewItem, findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
 import { withNormalizedAllDay, itemCoversCalendarDay } from "@/lib/allDay";
 import { expandItemsForRange } from "@/lib/recurrence";
 import { calendarBlockFromDeadline, defaultTaskDueRange, itemDurationMinutes } from "@/lib/factory";
@@ -24,6 +24,7 @@ import { effectiveReminders } from "@/lib/reminders";
 import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
 import { baseItemId } from "@/lib/itemId";
 import { deadlineIconDimmed } from "@/lib/deadlines";
+import { itemSupportsTodoDone } from "@/lib/items";
 import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
 import { overviewTitle } from "@/lib/chat/feed";
@@ -85,6 +86,10 @@ export function MobileDashboard() {
     return m;
   }, [groupsArr]);
 
+  const inArchiveView =
+    activeGroupFilter != null &&
+    activeGroupFilter === (findArchiveGroup(groupsArr)?.id ?? null);
+
   const today = startOfDay(new Date());
   const todayEnd = addDays(today, 1);
 
@@ -96,10 +101,10 @@ export function MobileDashboard() {
             itemMatchesGroupFilter(it, activeGroupFilter, "dashboard") &&
             it.hasDueDate &&
             it.showInCalendar &&
-            (it.type !== "task" || !it.done),
+            (inArchiveView || !(itemSupportsTodoDone(it) && it.done)),
         )
         .map(withNormalizedAllDay),
-    [itemsMap, activeGroupFilter],
+    [itemsMap, activeGroupFilter, inArchiveView],
   );
 
   const todayEvents = useMemo(
@@ -127,8 +132,11 @@ export function MobileDashboard() {
     () =>
       Object.values(itemsMap)
         .filter((it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "dashboard"))
-        .filter((it) => !it.done)
+        .filter((it) => inArchiveView || !it.done)
         .sort((a, b) => {
+          if (inArchiveView) {
+            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          }
           const ap = a.pinnedAt ? 1 : 0;
           const bp = b.pinnedAt ? 1 : 0;
           if (ap !== bp) return bp - ap;
@@ -138,7 +146,7 @@ export function MobileDashboard() {
           if (!b.hasDueDate) return -1;
           return new Date(a.end).getTime() - new Date(b.end).getTime();
         }),
-    [itemsMap, activeGroupFilter],
+    [itemsMap, activeGroupFilter, inArchiveView],
   );
 
   const tagsForItem = (item: Item) => {

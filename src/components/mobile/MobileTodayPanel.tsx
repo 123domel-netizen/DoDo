@@ -3,10 +3,11 @@ import { addDays, startOfDay } from "date-fns";
 import { CalendarClock, ListChecks } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { Item } from "@/types";
-import { itemMatchesGroupFilter } from "@/lib/groups";
+import { findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
 import { withNormalizedAllDay } from "@/lib/allDay";
 import { expandItemsForRange } from "@/lib/recurrence";
 import { calendarBlockFromDeadline, defaultTaskDueRange, itemDurationMinutes } from "@/lib/factory";
+import { itemSupportsTodoDone } from "@/lib/items";
 import { EventRow, TodoRow } from "@/components/todo/TodoPanel";
 
 export function MobileTodayPanel() {
@@ -23,6 +24,10 @@ export function MobileTodayPanel() {
     return m;
   }, [groupsArr]);
 
+  const inArchiveView =
+    activeGroupFilter != null &&
+    activeGroupFilter === (findArchiveGroup(groupsArr)?.id ?? null);
+
   const today = startOfDay(new Date());
   const todayEnd = addDays(today, 1);
 
@@ -33,27 +38,30 @@ export function MobileTodayPanel() {
           itemMatchesGroupFilter(it, activeGroupFilter, "dashboard") &&
           it.hasDueDate &&
           it.showInCalendar &&
-          (it.type !== "task" || !it.done),
+          (inArchiveView || !(itemSupportsTodoDone(it) && it.done)),
       )
       .map(withNormalizedAllDay);
     return expandItemsForRange(base, today, todayEnd).sort((a, b) => {
       if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
       return new Date(a.start).getTime() - new Date(b.start).getTime();
     });
-  }, [itemsMap, activeGroupFilter, today, todayEnd]);
+  }, [itemsMap, activeGroupFilter, inArchiveView, today, todayEnd]);
 
   const tasks = useMemo(
     () =>
       Object.values(itemsMap)
         .filter((it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "dashboard"))
-        .filter((it) => !it.done)
+        .filter((it) => inArchiveView || !it.done)
         .sort((a, b) => {
+          if (inArchiveView) {
+            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          }
           if (!a.hasDueDate && !b.hasDueDate) return 0;
           if (!a.hasDueDate) return 1;
           if (!b.hasDueDate) return -1;
           return new Date(a.end).getTime() - new Date(b.end).getTime();
         }),
-    [itemsMap, activeGroupFilter],
+    [itemsMap, activeGroupFilter, inArchiveView],
   );
 
   return (

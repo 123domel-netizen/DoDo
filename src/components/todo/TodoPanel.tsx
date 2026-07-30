@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bell,
   CalendarClock,
@@ -53,6 +53,11 @@ export function TodoPanel() {
 
   const inArchiveView = activeGroupFilter === archiveGroupId;
 
+  // ARCH: przełącz na listę zadań — Dashboard domyślnie ukrywał ukończone.
+  useEffect(() => {
+    if (inArchiveView && !isMobile) setTab("tasks");
+  }, [inArchiveView, isMobile]);
+
   const todos = useMemo(() => {
     const base = Object.values(itemsMap).filter(
       (it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "tasks"),
@@ -95,18 +100,25 @@ export function TodoPanel() {
   }, [itemsMap, activeGroupFilter, inArchiveView]);
 
   const upcomingEvents = useMemo(() => {
+    const matched = Object.values(itemsMap).filter((it) =>
+      itemMatchesGroupFilter(it, activeGroupFilter, "events"),
+    );
+    if (inArchiveView) {
+      return matched
+        .filter((it) => it.hasDueDate && it.showInCalendar)
+        .sort(
+          (a, b) =>
+            new Date(b.start).getTime() - new Date(a.start).getTime(),
+        );
+    }
     const now = new Date();
     const horizon = addMonths(now, 6);
     return itemsForUpcomingEventsList(
-      Object.values(itemsMap).filter(
-        (it) =>
-          itemMatchesGroupFilter(it, activeGroupFilter, "events") &&
-          (it.type !== "task" || !it.done),
-      ),
+      matched.filter((it) => it.type !== "task" || !it.done),
       now,
       horizon,
     );
-  }, [itemsMap, activeGroupFilter]);
+  }, [itemsMap, activeGroupFilter, inArchiveView]);
 
   const newTaskBase = () => ({
     type: "task" as const,
@@ -145,7 +157,9 @@ export function TodoPanel() {
   }, [todos]);
   const counterLabel =
     activeTab === "events"
-      ? `${upcomingEvents.length} nadchodzących`
+      ? inArchiveView
+        ? `${upcomingEvents.length} w archiwum`
+        : `${upcomingEvents.length} nadchodzących`
       : activeTab === "tasks"
         ? inArchiveView
           ? `${todos.length} zakończonych`
@@ -241,7 +255,9 @@ export function TodoPanel() {
           <>
             {upcomingEvents.length === 0 && (
               <div className="px-2 py-6 text-center text-sm text-ink-faint">
-                Brak nadchodzących wydarzeń.
+                {inArchiveView
+                  ? "Brak zarchiwizowanych wydarzeń."
+                  : "Brak nadchodzących wydarzeń."}
               </div>
             )}
             <div className="w-full space-y-1">

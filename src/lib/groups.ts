@@ -8,7 +8,7 @@ import {
   isShareGroup,
   isSharedItem,
 } from "@/lib/share";
-import { isItemDeleted } from "@/lib/items";
+import { isItemDeleted, itemSupportsTodoDone } from "@/lib/items";
 
 export const ARCHIVE_GROUP_NAME = "ARCH";
 export const ARCHIVE_GROUP_COLOR = "#6A7280";
@@ -170,7 +170,18 @@ export function itemMatchesGroupFilter(
 
   if (filterGroupId) {
     if (isSharedItem(item)) return false;
-    return item.groupId === filterGroupId;
+    if (item.groupId === filterGroupId) return true;
+    // ARCH: wykonane zadania powinny tu być — złap też done bez groupId archiwum
+    // (stare dane / niespójność sync), żeby widok ARCH nie był pusty.
+    if (
+      archiveId &&
+      filterGroupId === archiveId &&
+      item.done &&
+      itemSupportsTodoDone(item)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   // ALL: moje itemy + SHARE; ARCH tylko w zakładce ARCH (nie w liście zadań / dashboard).

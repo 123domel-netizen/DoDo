@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { addDays, addMonths, startOfDay } from "date-fns";
 import { useStore } from "@/state/store";
 import type { Item } from "@/types";
-import { itemMatchesGroupFilter } from "@/lib/groups";
+import { findArchiveGroup, itemMatchesGroupFilter } from "@/lib/groups";
 import { withNormalizedAllDay, itemCoversCalendarDay } from "@/lib/allDay";
 import { expandItemsForRange } from "@/lib/recurrence";
 import { itemSupportsTodoDone } from "@/lib/items";
@@ -29,6 +29,10 @@ export function useTodayDashboardData(opts?: { eventsTarget?: number }) {
     return m;
   }, [groupsArr]);
 
+  const inArchiveView =
+    activeGroupFilter != null &&
+    activeGroupFilter === (findArchiveGroup(groupsArr)?.id ?? null);
+
   const today = startOfDay(new Date());
   const todayEnd = addDays(today, 1);
 
@@ -40,10 +44,10 @@ export function useTodayDashboardData(opts?: { eventsTarget?: number }) {
             itemMatchesGroupFilter(it, activeGroupFilter, "dashboard") &&
             it.hasDueDate &&
             it.showInCalendar &&
-            !(itemSupportsTodoDone(it) && it.done),
+            (inArchiveView || !(itemSupportsTodoDone(it) && it.done)),
         )
         .map(withNormalizedAllDay),
-    [itemsMap, activeGroupFilter],
+    [itemsMap, activeGroupFilter, inArchiveView],
   );
 
   const todayEvents = useMemo(
@@ -71,15 +75,27 @@ export function useTodayDashboardData(opts?: { eventsTarget?: number }) {
     () =>
       Object.values(itemsMap)
         .filter((it) => it.showInTodo && itemMatchesGroupFilter(it, activeGroupFilter, "dashboard"))
-        .filter((it) => !it.done)
+        .filter((it) => inArchiveView || !it.done)
         .sort((a, b) => {
+          if (inArchiveView) {
+            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          }
           if (!a.hasDueDate && !b.hasDueDate) return 0;
           if (!a.hasDueDate) return 1;
           if (!b.hasDueDate) return -1;
           return new Date(a.end).getTime() - new Date(b.end).getTime();
         }),
-    [itemsMap, activeGroupFilter],
+    [itemsMap, activeGroupFilter, inArchiveView],
   );
 
-  return { groups, itemsMap, tagsMap, myTagIdsByItem, todayEvents, upcomingEvents, tasks };
+  return {
+    groups,
+    itemsMap,
+    tagsMap,
+    myTagIdsByItem,
+    todayEvents,
+    upcomingEvents,
+    tasks,
+    inArchiveView,
+  };
 }
