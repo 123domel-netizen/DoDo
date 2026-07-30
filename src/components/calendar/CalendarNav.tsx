@@ -1,6 +1,7 @@
 import { addDays, addMonths, startOfDay } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useStore } from "@/state/store";
+import { useChatStore } from "@/lib/chat/store";
 import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
 import type { CalendarViewKind } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
@@ -14,6 +15,22 @@ const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "month", label: "Miesiąc" },
 ];
 
+/** Wysokość huba sprzed wejścia w Harmonogramy (powiększony / normalny / zwinięty). */
+let hubLayoutBeforeSchedules: {
+  hubExpanded: boolean;
+  hubCollapsed: boolean;
+} | null = null;
+
+function restoreHubLayoutAfterSchedules() {
+  const saved = hubLayoutBeforeSchedules;
+  if (!saved) return;
+  hubLayoutBeforeSchedules = null;
+  useChatStore.setState({
+    hubExpanded: saved.hubExpanded,
+    hubCollapsed: saved.hubCollapsed,
+  });
+}
+
 /** Pasek nawigacji kalendarza (desktop) — nad siatką / przeglądem. */
 export function CalendarNav() {
   const settings = useStore((s) => s.settings);
@@ -23,6 +40,24 @@ export function CalendarNav() {
   const isDashboard = settings.mainAreaMode === "dashboard";
   const isProjects = settings.mainAreaMode === "projects";
   const showCalendarChrome = !isDashboard && !isProjects;
+
+  const openSchedules = () => {
+    if (!isProjects) {
+      const s = useChatStore.getState();
+      hubLayoutBeforeSchedules = {
+        hubExpanded: s.hubExpanded,
+        hubCollapsed: s.hubCollapsed,
+      };
+    }
+    setSettings({ mainAreaMode: "projects" });
+    // Tylko przy kliknięciu w nav: hub z powiększonego → normalny (nie do paska).
+    useChatStore.setState({ hubExpanded: false, hubCollapsed: false });
+  };
+
+  const leaveSchedulesTo = (patch: Parameters<typeof setSettings>[0]) => {
+    setSettings(patch);
+    if (isProjects) restoreHubLayoutAfterSchedules();
+  };
 
   const shift = (dir: number) => {
     if (settings.view === "month") {
@@ -96,7 +131,7 @@ export function CalendarNav() {
       <div className="ml-auto flex items-center gap-0.5 rounded-md border border-line bg-surface-raised p-0.5">
         <button
           type="button"
-          onClick={() => setSettings({ mainAreaMode: "dashboard" })}
+          onClick={() => leaveSchedulesTo({ mainAreaMode: "dashboard" })}
           className={`rounded px-2 py-0.5 text-xs transition ${
             isDashboard
               ? "bg-accent text-white shadow-glow"
@@ -108,7 +143,7 @@ export function CalendarNav() {
         {schedulesAvailable ? (
           <button
             type="button"
-            onClick={() => setSettings({ mainAreaMode: "projects" })}
+            onClick={openSchedules}
             className={`rounded px-2 py-0.5 text-xs transition ${
               settings.mainAreaMode === "projects"
                 ? "bg-accent text-white shadow-glow"
@@ -125,7 +160,9 @@ export function CalendarNav() {
           <button
             key={v.key}
             type="button"
-            onClick={() => setSettings({ mainAreaMode: "calendar", view: v.key })}
+            onClick={() =>
+              leaveSchedulesTo({ mainAreaMode: "calendar", view: v.key })
+            }
             className={`rounded px-2 py-0.5 text-xs transition ${
               !isDashboard &&
               settings.mainAreaMode !== "projects" &&

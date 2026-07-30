@@ -53,11 +53,18 @@ function ProjectsPreviewEntryLive({
         <button
           type="button"
           onClick={ensureApp}
-          className="flex flex-1 flex-col items-center gap-0.5 py-1 text-[10px] text-ink-faint transition hover:text-ink"
+          className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 transition ${
+            open ? "text-accent" : "text-ink-faint"
+          }`}
           aria-label="Harmonogramy"
+          aria-pressed={open}
         >
-          <CalendarRange size={20} strokeWidth={1.75} />
-          Plany
+          <span className="relative flex h-6 w-6 items-center justify-center">
+            <CalendarRange size={22} strokeWidth={open ? 2.25 : 1.75} />
+          </span>
+          <span className="max-w-full truncate text-[10px] font-medium leading-none">
+            Harmonogramy
+          </span>
         </button>
         {overlay}
       </>

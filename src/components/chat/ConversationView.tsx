@@ -24,8 +24,15 @@ import {
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { isMuted, mergeMessages, overviewTitle, threadDisplayTitle } from "@/lib/chat/feed";
+import {
+  groupThreadAnnotations,
+  isMuted,
+  mergeMessages,
+  overviewTitle,
+  threadDisplayTitle,
+} from "@/lib/chat/feed";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { ThreadAnnotationGroup } from "@/components/chat/ThreadAnnotationGroup";
 import { dmPeerMember } from "@/lib/avatar";
 import {
   MUTE_PRESETS,
@@ -179,6 +186,11 @@ function MessageFeed({
   /** scrollHeight sprzed dołożenia starszych — do zakotwiczenia pozycji. */
   const anchorHeight = useRef<number | null>(null);
 
+  const feedItems = useMemo(
+    () => groupThreadAnnotations(messages, inThread),
+    [messages, inThread],
+  );
+
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -282,30 +294,50 @@ function MessageFeed({
           Brak wiadomości — napisz pierwszą.
         </div>
       )}
-      {messages.map((m, i) => {
-        const prev = messages[i - 1];
-        const isThreadAnno = Boolean(m.threadRootId) && !inThread;
-        const prevSameAuthor =
-          !isThreadAnno &&
-          Boolean(prev) &&
-          !prev!.threadRootId &&
-          prev!.kind !== "system" &&
-          m.kind !== "system" &&
-          prev!.authorUserId === m.authorUserId;
-        const showAuthor = !prevSameAuthor;
-        const gapMs = prev
-          ? new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime()
+      {feedItems.map((item, i) => {
+        const prevItem = i > 0 ? feedItems[i - 1]! : null;
+        const prevLast = prevItem
+          ? prevItem.type === "message"
+            ? prevItem.msg
+            : prevItem.messages[prevItem.messages.length - 1]!
+          : null;
+        const itemTime =
+          item.type === "message"
+            ? item.msg.createdAt
+            : item.messages[item.messages.length - 1]!.createdAt;
+        const gapMs = prevLast
+          ? new Date(itemTime).getTime() - new Date(prevLast.createdAt).getTime()
           : Number.POSITIVE_INFINITY;
         const showTime = gapMs > 5 * 60_000;
+
+        if (item.type === "threadGroup") {
+          const root =
+            messages.find((x) => x.id === item.rootId) ??
+            quotedLookup(item.rootId);
+          return (
+            <ThreadAnnotationGroup
+              key={`tg-${item.rootId}-${item.messages[0]!.id}`}
+              messages={item.messages}
+              rootId={item.rootId}
+              threadTitle={threadDisplayTitle(root)}
+              profiles={profiles}
+              myUserId={myUserId}
+              showTime={showTime}
+              flashMessageId={flashMessageId}
+              onOpenThread={onOpenThread}
+            />
+          );
+        }
+
+        const m = item.msg;
+        const prevSameAuthor =
+          Boolean(prevLast) &&
+          !prevLast!.threadRootId &&
+          prevLast!.kind !== "system" &&
+          m.kind !== "system" &&
+          prevLast!.authorUserId === m.authorUserId;
+        const showAuthor = !prevSameAuthor;
         const quotedMsg = m.replyToMessageId ? quotedLookup(m.replyToMessageId) : null;
-        const threadTitle = isThreadAnno
-          ? (() => {
-              const root =
-                messages.find((x) => x.id === m.threadRootId) ??
-                quotedLookup(m.threadRootId!);
-              return threadDisplayTitle(root);
-            })()
-          : undefined;
         return (
           <MessageBubble
             key={m.id}
@@ -330,7 +362,6 @@ function MessageFeed({
             flash={m.id === flashMessageId}
             replyCount={replyCounts[m.id] ?? 0}
             inThread={inThread}
-            threadTitle={threadTitle}
             onOpenThread={onOpenThread}
             onOpenActions={onOpenActions}
             onReply={onReply}

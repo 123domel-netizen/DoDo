@@ -312,18 +312,12 @@ export function MobileShell() {
         )}
       </main>
 
-      {/* Dolne menu: Dashboard · Kalendarz · Zadania · Czat (zawsze widoczne) */}
+      {/* Dolne menu: Kalendarz · Zadania · Dashboard · Harmonogramy · Czat */}
       <nav
         className="z-30 flex shrink-0 items-stretch border-t border-line bg-surface"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         aria-label="Menu główne"
       >
-        <BottomTab
-          active={tab === "dashboard"}
-          onSelect={() => setTab("dashboard")}
-          icon={<LayoutDashboard size={22} strokeWidth={tab === "dashboard" ? 2.25 : 1.75} />}
-          label="Dashboard"
-        />
         <BottomTab
           active={tab === "calendar"}
           onSelect={() => setTab("calendar")}
@@ -336,6 +330,13 @@ export function MobileShell() {
           icon={<ListChecks size={22} strokeWidth={tab === "tasks" ? 2.25 : 1.75} />}
           label="Zadania"
         />
+        <BottomTab
+          active={tab === "dashboard"}
+          onSelect={() => setTab("dashboard")}
+          icon={<LayoutDashboard size={22} strokeWidth={tab === "dashboard" ? 2.25 : 1.75} />}
+          label="Dashboard"
+        />
+        <ProjectsPreviewNavButton variant="mobileTab" />
         {cloudEnabled && (
           <BottomTab
             active={tab === "chat"}
@@ -352,7 +353,6 @@ export function MobileShell() {
             emphasize={chatUnread > 0}
           />
         )}
-        <ProjectsPreviewNavButton variant="mobileTab" />
       </nav>
 
       {/* Edytor pełnoekranowy */}

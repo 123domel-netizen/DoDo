@@ -368,3 +368,45 @@ export function threadDisplayTitle(root: ChatMessage | null | undefined): string
   if (named) return named;
   return defaultThreadTitle(root);
 }
+
+/**
+ * Element feedu głównego: zwykła wiadomość albo grupa kolejnych adnotacji
+ * z tego samego wątku (bez przerwy innymi wiadomościami).
+ */
+export type ChatFeedItem =
+  | { type: "message"; msg: ChatMessage }
+  | { type: "threadGroup"; rootId: string; messages: ChatMessage[] };
+
+/**
+ * W feedzie głównym łączy ciągi odpowiedzi z tym samym `threadRootId`
+ * w jedną grupę. Wewnątrz otwartego wątku (`inThread`) nie grupuje.
+ */
+export function groupThreadAnnotations(
+  messages: ChatMessage[],
+  inThread: boolean,
+): ChatFeedItem[] {
+  if (inThread) {
+    return messages.map((msg) => ({ type: "message" as const, msg }));
+  }
+
+  const out: ChatFeedItem[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const m = messages[i]!;
+    const rootId = m.threadRootId;
+    if (!rootId) {
+      out.push({ type: "message", msg: m });
+      i += 1;
+      continue;
+    }
+    const group: ChatMessage[] = [m];
+    let j = i + 1;
+    while (j < messages.length && messages[j]!.threadRootId === rootId) {
+      group.push(messages[j]!);
+      j += 1;
+    }
+    out.push({ type: "threadGroup", rootId, messages: group });
+    i = j;
+  }
+  return out;
+}

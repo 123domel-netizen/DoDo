@@ -35,7 +35,6 @@ import { mentionsUser } from "@/lib/chat/mentions";
 import { aggregatePoll, groupReactions } from "@/lib/chat/polls";
 import { formatDuration } from "@/lib/chat/voice";
 import { isThreadUnread } from "@/lib/chat/recentThreads";
-import { threadDisplayTitle } from "@/lib/chat/feed";
 import { isItemDeleted } from "@/lib/items";
 import { fetchMessageById } from "@/lib/chat/api";
 import { useChatStore } from "@/lib/chat/store";
@@ -138,7 +137,7 @@ function MessageContentPreview({
       )}
 
       {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
-        <div className="mt-1.5 flex w-full min-w-0 flex-col gap-1.5">
+        <div className="mt-1.5 flex w-fit max-w-full min-w-0 flex-col items-start gap-1.5">
           {msg.attachments!.map((att) => (
             <AttachmentTile key={att.id} att={att} />
           ))}
@@ -386,7 +385,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
         <button
           type="button"
           onClick={() => void openFull()}
-          className="block overflow-hidden rounded-xl border border-line bg-surface-raised"
+          className="inline-block max-w-full overflow-hidden rounded-xl border border-line bg-surface-raised align-top"
           aria-label={`Podgląd ${att.fileName}`}
         >
           {thumbUrl ? (
@@ -394,7 +393,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
               src={thumbUrl}
               alt={att.fileName}
               loading="lazy"
-              className="max-h-52 w-auto max-w-full object-cover"
+              className="block max-h-52 max-w-full h-auto w-auto"
             />
           ) : (
             <div className="flex h-24 w-32 items-center justify-center text-xs text-ink-faint">
@@ -748,8 +747,6 @@ interface MessageBubbleProps {
   flash?: boolean;
   replyCount?: number;
   inThread?: boolean;
-  /** Tytuł wątku dla adnotacji w głównym feedzie. */
-  threadTitle?: string;
   onOpenThread?: (rootId: string) => void;
   onOpenActions?: (msg: ChatMessage, anchor: DOMRect) => void;
   onReply?: (msg: ChatMessage) => void;
@@ -775,7 +772,6 @@ export function MessageBubble({
   flash = false,
   replyCount = 0,
   inThread = false,
-  threadTitle: threadTitleProp,
   onOpenThread,
   onOpenActions,
   onReply,
@@ -791,17 +787,6 @@ export function MessageBubble({
   const items = useStore((s) => s.items);
   const threadLastReply = useChatStore((s) => s.threadLastReply[msg.id]);
   const threadSeenAt = useChatStore((s) => s.threadSeenAt[msg.id]);
-  const resolvedThreadTitle = useChatStore((s) => {
-    if (!msg.threadRootId || inThread) return null;
-    if (threadTitleProp) return threadTitleProp;
-    const rootId = msg.threadRootId;
-    const root =
-      s.messagesByConv[msg.conversationId]?.find((m) => m.id === rootId) ??
-      s.threadByRoot[rootId]?.find((m) => m.id === rootId) ??
-      s.pinnedByConv[msg.conversationId]?.find((m) => m.id === rootId) ??
-      s.focusFeed?.messages.find((m) => m.id === rootId);
-    return threadDisplayTitle(root);
-  });
   const hasThread = !inThread && replyCount > 0;
   const threadUnread = isThreadUnread({
     replyCount,
@@ -809,47 +794,9 @@ export function MessageBubble({
     lastReply: threadLastReply,
     seenAt: threadSeenAt,
   });
-
-  // Odpowiedź w wątku w głównym czacie → kompaktowa adnotacja (klik = otwórz wątek).
-  if (msg.threadRootId && !inThread) {
-    const preview = msg.deletedAt
-      ? "Wiadomość usunięta"
-      : messagePreviewLabel(msg.kind, msg.body).trim() ||
-        (msg.attachments?.length ? "(załącznik)" : "…");
-    const timeLabel = showTime
-      ? format(new Date(msg.createdAt), isToday(new Date(msg.createdAt)) ? "HH:mm" : "d MMM HH:mm", {
-          locale: pl,
-        })
-      : null;
-    return (
-      <button
-        type="button"
-        data-message-id={msg.id}
-        onClick={() => onOpenThread?.(msg.threadRootId!)}
-        title="Otwórz wątek"
-        className={`mx-3 my-0.5 flex w-[calc(100%-1.5rem)] max-w-full flex-col gap-0.5 rounded-lg border-l-[3px] border-thread bg-thread/12 px-2.5 py-1.5 text-left transition hover:bg-thread/20 ${
-          flash ? "ring-2 ring-thread/50 ring-offset-1 ring-offset-surface" : ""
-        } ${mine ? "ml-auto mr-3" : ""}`}
-      >
-        <div className="flex min-w-0 items-center gap-1.5 text-[10px] leading-none text-thread">
-          <MessageSquare size={10} className="shrink-0" />
-          <span className="min-w-0 truncate font-semibold">
-            {resolvedThreadTitle || "Wątek"}
-          </span>
-          {timeLabel && (
-            <span className="ml-auto shrink-0 tabular-nums text-ink-faint">{timeLabel}</span>
-          )}
-        </div>
-        <div className="line-clamp-2 min-w-0 text-[12px] leading-snug text-ink-light">
-          <span className="font-medium text-ink">{authorName}</span>
-          <span className="text-ink-faint">: </span>
-          <span className={msg.deletedAt ? "italic text-ink-faint" : "text-ink"}>
-            {preview}
-          </span>
-        </div>
-      </button>
-    );
-  }
+  const attachmentsStretch =
+    !msg.deletedAt &&
+    (msg.attachments?.some((a) => !a.mimeType.startsWith("image/")) ?? false);
 
   if (msg.kind === "system") {
     if (msg.payload?.movedStub) {
@@ -1035,9 +982,7 @@ export function MessageBubble({
         )}
 
         <div
-          className={`relative max-w-full ${
-            !deleted && (msg.attachments?.length ?? 0) > 0 ? "w-full" : ""
-          }`}
+          className={`relative max-w-full ${attachmentsStretch ? "w-full" : ""}`}
         >
           {canAct && (onOpenActions || onReply || onToggleReaction) && (
             <HoverToolbar
@@ -1062,7 +1007,7 @@ export function MessageBubble({
                 : undefined
             }
             className={`chat-msg-bubble relative box-border max-w-full min-w-0 overflow-hidden flow-root text-[14.5px] leading-[1.35] transition-colors ${
-              !deleted && (msg.attachments?.length ?? 0) > 0 ? "w-full" : ""
+              attachmentsStretch ? "w-full" : ""
             } ${bubbleClass} ${pending ? "opacity-60" : ""} ${
               failed ? "ring-1 ring-inset ring-red-500/50" : ""
             } ${
@@ -1179,7 +1124,11 @@ export function MessageBubble({
                 )}
 
                 {msg.kind !== "voice" && (msg.attachments?.length ?? 0) > 0 && (
-                  <div className="mt-1.5 flex w-full min-w-0 flex-col gap-1.5">
+                  <div
+                    className={`mt-1.5 flex min-w-0 flex-col gap-1.5 ${
+                      attachmentsStretch ? "w-full" : "w-fit max-w-full"
+                    } ${mine ? "items-end" : "items-start"}`}
+                  >
                     {msg.attachments!.map((att) => (
                       <AttachmentTile key={att.id} att={att} />
                     ))}

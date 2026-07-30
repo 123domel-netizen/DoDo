@@ -3,6 +3,7 @@ import {
   applyFocusIncoming,
   applyMessageToOverview,
   defaultThreadTitle,
+  groupThreadAnnotations,
   isMuted,
   markOverviewRead,
   mergeMessages,
@@ -475,5 +476,72 @@ describe("formatConversationLastPreview", () => {
         "Ty",
       ),
     ).toBe("Ty: DFGHJ");
+  });
+});
+
+describe("groupThreadAnnotations", () => {
+  it("łączy kolejne odpowiedzi z tym samym wątkiem", () => {
+    const items = groupThreadAnnotations(
+      [
+        msg({ id: "a", threadRootId: null, body: "główna" }),
+        msg({ id: "b", threadRootId: "root1", body: "r1" }),
+        msg({ id: "c", threadRootId: "root1", body: "r2" }),
+        msg({ id: "d", threadRootId: "root1", body: "r3" }),
+        msg({ id: "e", threadRootId: null, body: "znów główna" }),
+      ],
+      false,
+    );
+    expect(items).toHaveLength(3);
+    expect(items[0]).toEqual({ type: "message", msg: expect.objectContaining({ id: "a" }) });
+    expect(items[1]).toMatchObject({
+      type: "threadGroup",
+      rootId: "root1",
+      messages: [{ id: "b" }, { id: "c" }, { id: "d" }],
+    });
+    expect(items[2]).toEqual({ type: "message", msg: expect.objectContaining({ id: "e" }) });
+  });
+
+  it("przerywa grupę przy innym wątku", () => {
+    const items = groupThreadAnnotations(
+      [
+        msg({ id: "b", threadRootId: "root1" }),
+        msg({ id: "c", threadRootId: "root2" }),
+        msg({ id: "d", threadRootId: "root1" }),
+      ],
+      false,
+    );
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.type)).toEqual(["threadGroup", "threadGroup", "threadGroup"]);
+    expect(items[0]).toMatchObject({ rootId: "root1", messages: [{ id: "b" }] });
+    expect(items[1]).toMatchObject({ rootId: "root2", messages: [{ id: "c" }] });
+    expect(items[2]).toMatchObject({ rootId: "root1", messages: [{ id: "d" }] });
+  });
+
+  it("pojedyncza adnotacja to grupa długości 1", () => {
+    const items = groupThreadAnnotations(
+      [msg({ id: "b", threadRootId: "root1" })],
+      false,
+    );
+    expect(items).toEqual([
+      {
+        type: "threadGroup",
+        rootId: "root1",
+        messages: [expect.objectContaining({ id: "b" })],
+      },
+    ]);
+  });
+
+  it("w wątku nie grupuje", () => {
+    const items = groupThreadAnnotations(
+      [
+        msg({ id: "b", threadRootId: "root1" }),
+        msg({ id: "c", threadRootId: "root1" }),
+      ],
+      true,
+    );
+    expect(items).toEqual([
+      { type: "message", msg: expect.objectContaining({ id: "b" }) },
+      { type: "message", msg: expect.objectContaining({ id: "c" }) },
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Toolbar } from "@/components/Toolbar";
 import { CalendarView } from "@/components/calendar/CalendarView";
 import { SidePanel } from "@/components/SidePanel";
@@ -28,17 +28,12 @@ const WorkspaceHub = lazy(() =>
 export default function App() {
   const hydrated = useStore((s) => s.hydrated);
   const theme = useStore((s) => s.settings.theme);
-  const mainAreaMode = useStore((s) => s.settings.mainAreaMode);
   const editingId = useStore((s) => s.editingId);
   const panelMode = useChatStore((s) => s.panelMode);
   const hubExpanded = useChatStore((s) => s.hubExpanded);
   const hubCollapsed = useChatStore((s) => s.hubCollapsed);
   const isMobile = useIsMobile();
   const [todoOpen, setTodoOpen] = useState(true);
-  const hubBeforeSchedulesRef = useRef<{
-    expanded: boolean;
-    collapsed: boolean;
-  } | null>(null);
   useReminderScheduler();
   useAutoCloudRefresh();
   useHubHotkeys(!isMobile && cloudEnabled);
@@ -53,29 +48,6 @@ export default function App() {
     applyTheme(theme);
     watchSystemTheme(theme, () => {});
   }, [theme]);
-
-  /** Harmonogramy potrzebują miejsca — zwijamy hub; przy wyjściu przywracamy. */
-  useEffect(() => {
-    if (isMobile || !cloudEnabled) return;
-    if (mainAreaMode === "projects") {
-      if (!hubBeforeSchedulesRef.current) {
-        const s = useChatStore.getState();
-        hubBeforeSchedulesRef.current = {
-          expanded: s.hubExpanded,
-          collapsed: s.hubCollapsed,
-        };
-      }
-      useChatStore.getState().setHubCollapsed(true);
-      return;
-    }
-    const prev = hubBeforeSchedulesRef.current;
-    if (!prev) return;
-    hubBeforeSchedulesRef.current = null;
-    useChatStore.setState({
-      hubExpanded: prev.expanded,
-      hubCollapsed: prev.collapsed,
-    });
-  }, [mainAreaMode, isMobile]);
 
   // Detal hubu / edytor wymuszają otwarcie prawego panelu.
   const detailForced = Boolean(editingId) || panelMode !== "todo";
