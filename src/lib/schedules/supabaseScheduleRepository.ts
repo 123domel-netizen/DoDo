@@ -39,6 +39,17 @@ type BundleRow = {
 
 const cache = new Map<string, SupabaseScheduleRepository>();
 
+/** Postgres uuid columns reject local demo ids like `se-abc123`. */
+function isUuid(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    id,
+  );
+}
+
+function asCloudId(id: string | undefined): string {
+  return id && isUuid(id) ? id : crypto.randomUUID();
+}
+
 export function getSupabaseScheduleRepo(
   orgId: string,
   userId: string,
@@ -348,13 +359,21 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   }
 
   seedScheduleTemplate(projectId: string) {
-    const blocks = this.inner.seedScheduleTemplate(projectId);
-    void this.syncBlocks(blocks);
-    return blocks;
+    const before = new Set(this.inner.getState().scheduleBlocks.map((b) => b.id));
+    this.inner.seedScheduleTemplate(projectId);
+    this.rewriteNonUuidBlockIds(before);
+    const toSync = this.inner
+      .listSchedule(projectId)
+      .filter((b) => !before.has(b.id));
+    void this.syncBlocks(toSync);
+    return toSync;
   }
 
   upsertCrew(crew: Omit<PreviewCrew, "id"> & { id?: string }) {
-    const row = this.inner.upsertCrew(crew);
+    const row = this.inner.upsertCrew({
+      ...crew,
+      id: asCloudId(crew.id),
+    });
     void this.syncCrew(row);
     return row;
   }
@@ -366,15 +385,25 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   }
 
   upsertScheduleBlock(block: Omit<ScheduleBlock, "id"> & { id?: string }) {
-    const row = this.inner.upsertScheduleBlock(block);
+    const row = this.inner.upsertScheduleBlock({
+      ...block,
+      id: asCloudId(block.id),
+    });
     void this.syncBlock(row);
     return row;
   }
 
   promoteToSubcategory(blockId: string) {
+    const before = new Set(this.inner.getState().scheduleBlocks.map((b) => b.id));
     const row = this.inner.promoteToSubcategory(blockId);
-    if (row) void this.reload();
-    return row;
+    if (!row) return row;
+    this.rewriteNonUuidBlockIds(before);
+    const parent = this.inner.getState().scheduleBlocks.find((b) => b.id === row.id) ?? row;
+    const children = this.inner
+      .getState()
+      .scheduleBlocks.filter((b) => b.parentId === parent.id && !before.has(b.id));
+    void this.syncBlocks([parent, ...children]);
+    return parent;
   }
 
   demoteSubcategory(id: string, opts?: { keepAsWork?: boolean }) {
@@ -421,7 +450,10 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   }
 
   upsertScheduleEvent(event: ScheduleEventInput) {
-    const row = this.inner.upsertScheduleEvent(event);
+    const row = this.inner.upsertScheduleEvent({
+      ...event,
+      id: asCloudId(event.id),
+    });
     void this.syncEvent(row);
     return row;
   }
@@ -538,6 +570,26 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     await this.loadPromise;
   }
 
+  /** Replace newly minted demo ids (`sb-…`) with UUIDs so Postgres upserts succeed. */
+  private rewriteNonUuidBlockIds(beforeIds: Set<string>) {
+    const state = this.inner.getState();
+    const idMap = new Map<string, string>();
+    const rewritten = state.scheduleBlocks.map((b) => {
+      if (beforeIds.has(b.id) || isUuid(b.id)) return b;
+      const nextId = crypto.randomUUID();
+      idMap.set(b.id, nextId);
+      return { ...b, id: nextId };
+    });
+    if (idMap.size === 0) return;
+    const fixed = rewritten.map((b) => ({
+      ...b,
+      parentId:
+        b.parentId && idMap.has(b.parentId) ? idMap.get(b.parentId)! : b.parentId,
+      crewId: b.crewId && isUuid(b.crewId) ? b.crewId : "",
+    }));
+    this.inner.hydrate({ ...state, scheduleBlocks: fixed });
+  }
+
   private async saveCatalog(
     kind: "supervision" | "schedule",
     preset: SupervisionCatalogPreset | ScheduleCatalogPreset,
@@ -552,7 +604,7 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   private async syncCrew(row: PreviewCrew) {
     if (!supabase) return;
-    await supabase.from("construction_crews").upsert({
+    const { error } = await supabase.from("construction_crews").upsert({
       id: row.id,
       org_id: this.orgId,
       name: row.name,
@@ -562,11 +614,15 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       company: row.company,
       phone: row.phone,
     });
+    if (error) {
+      console.warn("[schedules] sync crew failed:", error.message);
+      await this.reload();
+    }
   }
 
   private async syncBlock(row: ScheduleBlock) {
     if (!supabase) return;
-    await supabase.from("schedule_blocks").upsert({
+    const { error } = await supabase.from("schedule_blocks").upsert({
       id: row.id,
       project_id: row.projectId,
       title: row.title,
@@ -581,6 +637,10 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       color: row.color,
       note: row.note,
     });
+    if (error) {
+      console.warn("[schedules] sync block failed:", error.message);
+      await this.reload();
+    }
   }
 
   private async syncBlocks(blocks: ScheduleBlock[]) {
@@ -589,7 +649,7 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   private async syncEvent(row: ScheduleEvent) {
     if (!supabase) return;
-    await supabase.from("schedule_events").upsert({
+    const { error } = await supabase.from("schedule_events").upsert({
       id: row.id,
       project_id: row.projectId,
       block_id: row.blockId,
@@ -605,6 +665,10 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       reported_by_user_id: row.reportedByUserId ?? null,
       written_by_user_id: row.writtenByUserId ?? null,
     });
+    if (error) {
+      console.warn("[schedules] sync event failed:", error.message);
+      await this.reload();
+    }
   }
 
   private async syncCategoryMeta(row: ScheduleCategoryMeta) {

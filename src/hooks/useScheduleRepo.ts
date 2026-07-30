@@ -27,6 +27,31 @@ export function useScheduleRepo(): ScheduleRepository {
     return repo.subscribe(() => setTick((n) => n + 1));
   }, [repo]);
 
+  // Cloud bundle is loaded once per tab — refresh when returning to the app
+  // so events saved in another browser/tab show up here.
+  useEffect(() => {
+    if (repo.mode !== "cloud" || !repo.reload) return;
+    let busy = false;
+    const refresh = () => {
+      if (document.visibilityState === "hidden" || busy) return;
+      busy = true;
+      void repo.reload!()
+        .catch((err) => console.warn("[schedules] reload failed:", err))
+        .finally(() => {
+          busy = false;
+        });
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [repo]);
+
   useEffect(() => {
     if (repo.mode !== "local" || !repo.setIdentity) return;
     const userId = authUserId?.trim() || "local-user";

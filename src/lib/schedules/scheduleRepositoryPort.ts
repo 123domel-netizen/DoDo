@@ -31,6 +31,9 @@ export interface ScheduleRepository {
   getState(): ProjectsPreviewState;
   subscribe(fn: () => void): () => void;
 
+  /** Cloud: re-fetch org bundle. Local: no-op. */
+  reload?(): Promise<void>;
+
   /** Current user id (viewAs in preview, auth.uid in cloud). */
   currentUserId(): string;
 
