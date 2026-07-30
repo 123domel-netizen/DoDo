@@ -181,6 +181,18 @@ export const SCHEDULE_EVENT_KIND_LABEL: Record<ScheduleEventKind, string> = {
   dokumentacyjne: "Dokumentacyjne",
 };
 
+/**
+ * Sentinel `categoryId` for budowlane events pinned to the investment row
+ * (not a schedule category lane).
+ */
+export const PROJECT_LEVEL_EVENT_CATEGORY = "__project__";
+
+export function isProjectLevelEventCategory(
+  categoryId: string | null | undefined,
+): boolean {
+  return !categoryId || categoryId === PROJECT_LEVEL_EVENT_CATEGORY;
+}
+
 export const DOC_EVENT_STATUS_LABEL: Record<DocEventStatus, string> = {
   do_sprawdzenia: "Do sprawdzenia",
   do_wpisania: "Do wpisania",

@@ -6,9 +6,14 @@ import type { ScheduleCatalogPreset } from "@/lib/projectsPreview/scheduleCatalo
 import {
   DOC_EVENT_STATUS_LABEL,
   DOC_EVENT_STATUSES,
+  PROJECT_LEVEL_EVENT_CATEGORY,
   SCHEDULE_EVENT_KIND_LABEL,
+  isProjectLevelEventCategory,
+  projectLabel,
   type DocEventStatus,
+  type PreviewProject,
   type ScheduleBlock,
+  type ScheduleCategoryMeta,
   type ScheduleEvent,
   type ScheduleEventKind,
   type SupervisionCatalogPreset,
@@ -19,8 +24,12 @@ export type ScheduleEventDraft = Omit<ScheduleEvent, "id"> & { id?: string };
 
 interface ScheduleEventSheetProps {
   projectId: string;
+  /** Display name of the investment (project-level placement option). */
+  project?: Pick<PreviewProject, "number" | "name"> | null;
   /** Blocks the event can hang off — works and subcategories of this budowa. */
   blocks: ScheduleBlock[];
+  /** Category meta for this budowa (custom titles / planned windows). */
+  categoryMeta?: ScheduleCategoryMeta[];
   /** Preselected block, e.g. the row the ⚡ was clicked on. */
   blockId: string | null;
   /** Prefill category when opening from a category lane. */
@@ -37,7 +46,7 @@ interface ScheduleEventSheetProps {
   defaultDate?: string;
   /** Katalog czynności dokumentacyjnych. */
   catalog: SupervisionCatalogPreset;
-  /** Katalog kategorii / zakresów harmonogramu — główne miejsce na osi. */
+  /** Katalog kategorii / zakresów harmonogramu — tytuły kategorii na osi. */
   scheduleCatalog: ScheduleCatalogPreset;
   onClose: () => void;
   onSave: (data: ScheduleEventDraft) => void;
@@ -48,11 +57,14 @@ const KINDS: ScheduleEventKind[] = ["budowlane", "dokumentacyjne"];
 
 /**
  * Single add/edit sheet for both kinds of zdarzenie.
- * Budowlane: category lane (+ optional block). Dokumentacyjne: investment only.
+ * Budowlane: categories present on this budowa's schedule (+ investment row).
+ * Dokumentacyjne: supervision catalog stages + activities.
  */
 export function ScheduleEventSheet({
   projectId,
+  project,
   blocks,
+  categoryMeta = [],
   blockId,
   defaultCategoryId,
   event,
@@ -65,7 +77,34 @@ export function ScheduleEventSheet({
   onSave,
   onDelete,
 }: ScheduleEventSheetProps) {
-  const placementCats = mergePlacementCategories(scheduleCatalog, catalog);
+  const investmentLabel = project
+    ? projectLabel(project)
+    : "Inwestycja";
+  const scheduleCats = (() => {
+    const base = scheduleCategoriesOnProject(
+      blocks,
+      categoryMeta,
+      scheduleCatalog,
+      projectId,
+    );
+    // Keep a legacy / removed category selectable while editing.
+    const current =
+      event?.kind === "budowlane" &&
+      event.categoryId &&
+      !isProjectLevelEventCategory(event.categoryId) &&
+      !base.some((c) => c.id === event.categoryId)
+        ? [
+            {
+              id: event.categoryId,
+              title:
+                scheduleCatalog.categories.find((c) => c.id === event.categoryId)
+                  ?.title ?? event.categoryId,
+              sortOrder: 998,
+            },
+          ]
+        : [];
+    return [...base, ...current];
+  })();
   const docCategories = catalog.categories
     .slice()
     .sort((a, b) => a.sortOrder - b.sortOrder);
@@ -80,15 +119,19 @@ export function ScheduleEventSheet({
       : (event?.blockId ?? blockId ?? "");
   const [selectedBlockId, setSelectedBlockId] = useState(initialBlockId);
 
+  const initialKind = event?.kind ?? defaultKind;
   const inferredCategory =
     event?.categoryId ||
     defaultCategoryId ||
-    (defaultKind === "dokumentacyjne" || event?.kind === "dokumentacyjne"
+    (initialKind === "dokumentacyjne"
       ? docCategories[0]?.id
-      : blockCategory(blocks, initialBlockId) || placementCats[0]?.id) ||
+      : blockCategory(blocks, initialBlockId) ||
+        PROJECT_LEVEL_EVENT_CATEGORY) ||
     "";
   const [categoryId, setCategoryId] = useState(inferredCategory);
-  const [categoryTouched, setCategoryTouched] = useState(Boolean(event?.categoryId));
+  const [categoryTouched, setCategoryTouched] = useState(
+    Boolean(event?.categoryId),
+  );
 
   const [title, setTitle] = useState(
     event?.kind === "budowlane" ? event.title : "",
@@ -116,26 +159,39 @@ export function ScheduleEventSheet({
   const selectedBlock = blocks.find((b) => b.id === selectedBlockId) ?? null;
   /** A block handed in from the timeline stays fixed while creating. */
   const blockFixed = !event && blockId != null;
+  const atProjectLevel = !isDoc && isProjectLevelEventCategory(categoryId);
 
   const blocksForCategory = blocks
-    .filter((b) => !categoryId || b.categoryId === categoryId)
+    .filter((b) => !atProjectLevel && (!categoryId || b.categoryId === categoryId))
     .slice()
     .sort((a, b) => {
       if (a.role !== b.role) return a.role === "subcategory" ? -1 : 1;
       return (a.title || a.scope).localeCompare(b.title || b.scope);
     });
 
+  const switchKind = (next: ScheduleEventKind) => {
+    setKind(next);
+    setCategoryTouched(false);
+    setSelectedBlockId("");
+    if (next === "dokumentacyjne") {
+      const first = docCategories[0]?.id ?? "";
+      setCategoryId(first);
+      const acts =
+        docCategories.find((c) => c.id === first)?.activities ?? ["Inny"];
+      setActivity(acts[0] ?? "");
+      setCustomLabel("");
+      return;
+    }
+    const first =
+      blockCategory(blocks, blockId ?? "") || PROJECT_LEVEL_EVENT_CATEGORY;
+    setCategoryId(first);
+  };
+
   const onBlockChange = (id: string) => {
     setSelectedBlockId(id);
     const block = blocks.find((b) => b.id === id);
     if (block && !categoryTouched) {
       setCategoryId(block.categoryId);
-      const acts =
-        docCategories.find((c) => c.id === block.categoryId)?.activities ?? [
-          "Inny",
-        ];
-      setActivity(acts[0] ?? "");
-      setCustomLabel("");
     }
     if (dateTouched) return;
     if (block?.startDate) setDate(block.startDate);
@@ -144,13 +200,17 @@ export function ScheduleEventSheet({
   const onCategoryChange = (id: string) => {
     setCategoryTouched(true);
     setCategoryId(id);
-    const acts =
-      docCategories.find((c) => c.id === id)?.activities ?? ["Inny"];
-    setActivity(acts[0] ?? "");
-    setCustomLabel("");
+    if (kind === "dokumentacyjne") {
+      const acts =
+        docCategories.find((c) => c.id === id)?.activities ?? ["Inny"];
+      setActivity(acts[0] ?? "");
+      setCustomLabel("");
+      return;
+    }
     if (
-      selectedBlockId &&
-      blocks.find((b) => b.id === selectedBlockId)?.categoryId !== id
+      isProjectLevelEventCategory(id) ||
+      (selectedBlockId &&
+        blocks.find((b) => b.id === selectedBlockId)?.categoryId !== id)
     ) {
       setSelectedBlockId("");
     }
@@ -189,15 +249,16 @@ export function ScheduleEventSheet({
       alert("Podaj treść zdarzenia budowlanego.");
       return;
     }
+    const projectLevel = isProjectLevelEventCategory(categoryId);
     onSave({
       id: event?.id,
       projectId: selectedBlock?.projectId ?? projectId,
-      blockId: selectedBlockId || null,
+      blockId: projectLevel ? null : selectedBlockId || null,
       kind: "budowlane",
       title: title.trim(),
       date,
       note: note.trim(),
-      categoryId,
+      categoryId: projectLevel ? PROJECT_LEVEL_EVENT_CATEGORY : categoryId,
     });
   };
 
@@ -219,14 +280,14 @@ export function ScheduleEventSheet({
             {isDoc ? (
               <ClipboardList size={14} className="shrink-0 text-sky-300" />
             ) : (
-              <Zap size={14} className="shrink-0 text-amber-400" />
+              <Zap size={14} className="shrink-0 text-amber-300" />
             )}
             <span className="truncate">{heading}</span>
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-ink-faint hover:text-ink"
+            className="rounded-md p-1 text-ink-faint hover:bg-surface-raised hover:text-ink"
             aria-label="Zamknij"
           >
             <X size={18} />
@@ -241,7 +302,7 @@ export function ScheduleEventSheet({
                   <button
                     key={k}
                     type="button"
-                    onClick={() => setKind(k)}
+                    onClick={() => switchKind(k)}
                     aria-pressed={kind === k}
                     className={`flex-1 rounded-md px-2 py-1.5 text-[12px] font-medium transition ${
                       kind === k
@@ -259,7 +320,7 @@ export function ScheduleEventSheet({
           <p className="text-[11px] leading-relaxed text-ink-faint">
             {isDoc
               ? "Zdarzenie dokumentacyjne należy do inwestycji — katalog czynności nadzoru, osobno od harmonogramu kategorii. Na osi widać je w wierszu inwestycji / Dokumentacja."
-              : "Zdarzenie budowlane to punkt na osi w wierszu kategorii — nie robota i nie zadanie w kalendarzu."}
+              : "Zdarzenie budowlane to punkt na osi: kategoria z harmonogramu tej budowy albo wiersz inwestycji."}
           </p>
 
           {isDoc ? (
@@ -284,7 +345,10 @@ export function ScheduleEventSheet({
                   onChange={(e) => onCategoryChange(e.target.value)}
                   className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
                 >
-                  {placementCats.map((c) => (
+                  <option value={PROJECT_LEVEL_EVENT_CATEGORY}>
+                    {investmentLabel}
+                  </option>
+                  {scheduleCats.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.title}
                     </option>
@@ -292,7 +356,7 @@ export function ScheduleEventSheet({
                 </select>
               </Field>
 
-              {blockFixed && selectedBlock ? (
+              {atProjectLevel ? null : blockFixed && selectedBlock ? (
                 <Field label="Podkategoria / robota">
                   <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-light">
                     {blockOptionLabel(selectedBlock)}
@@ -405,7 +469,7 @@ export function ScheduleEventSheet({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-ink-light"
+              className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light hover:border-line-strong hover:text-ink"
             >
               Anuluj
             </button>
@@ -424,23 +488,34 @@ export function ScheduleEventSheet({
   );
 }
 
-function mergePlacementCategories(
-  schedule: ScheduleCatalogPreset,
-  doc: SupervisionCatalogPreset,
+/** Categories already present on this budowa's schedule (blocks / meta). */
+function scheduleCategoriesOnProject(
+  blocks: ScheduleBlock[],
+  categoryMeta: ScheduleCategoryMeta[],
+  scheduleCatalog: ScheduleCatalogPreset,
+  projectId: string,
 ): Array<{ id: string; title: string; sortOrder: number }> {
-  const map = new Map<string, { id: string; title: string; sortOrder: number }>();
-  for (const c of schedule.categories) {
-    map.set(c.id, { id: c.id, title: c.title, sortOrder: c.sortOrder });
+  const ids = new Set<string>();
+  for (const b of blocks) {
+    if (b.projectId === projectId && b.categoryId) ids.add(b.categoryId);
   }
-  for (const c of doc.categories) {
-    if (map.has(c.id)) continue;
-    map.set(c.id, {
-      id: c.id,
-      title: c.title,
-      sortOrder: 1000 + c.sortOrder,
+  for (const m of categoryMeta) {
+    if (m.projectId === projectId && m.categoryId) ids.add(m.categoryId);
+  }
+  const out: Array<{ id: string; title: string; sortOrder: number }> = [];
+  for (const id of ids) {
+    if (isProjectLevelEventCategory(id)) continue;
+    const meta = categoryMeta.find(
+      (m) => m.projectId === projectId && m.categoryId === id,
+    );
+    const cat = scheduleCatalog.categories.find((c) => c.id === id);
+    out.push({
+      id,
+      title: meta?.title?.trim() || cat?.title || id,
+      sortOrder: cat?.sortOrder ?? 999,
     });
   }
-  return [...map.values()].sort((a, b) => a.sortOrder - b.sortOrder);
+  return out.sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title));
 }
 
 function blockCategory(

@@ -37,7 +37,9 @@ import type {
   ScheduleEventKind,
 } from "./types";
 import {
+  PROJECT_LEVEL_EVENT_CATEGORY,
   compareProjectCodes,
+  isProjectLevelEventCategory,
   normalizeProjectCode,
   projectLabel,
   type SupervisionCatalogCategory,
@@ -840,10 +842,15 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
         // A stale blockId (deleted block) must not resurrect a broken link.
         blockId: block ? block.id : null,
         categoryId:
-          event.categoryId ||
-          block?.categoryId ||
-          previous?.categoryId ||
-          "stan-0",
+          event.kind === "dokumentacyjne"
+            ? event.categoryId ||
+              block?.categoryId ||
+              previous?.categoryId ||
+              "stan-0"
+            : event.categoryId ||
+              block?.categoryId ||
+              previous?.categoryId ||
+              PROJECT_LEVEL_EVENT_CATEGORY,
         note: event.note ?? "",
       },
       { me, previous },
@@ -1155,13 +1162,17 @@ function normalizeEvent(
   };
 
   if (e.kind !== "dokumentacyjne") {
+    const categoryId = isProjectLevelEventCategory(e.categoryId)
+      ? PROJECT_LEVEL_EVENT_CATEGORY
+      : e.categoryId
+        ? normalizeStageId(e.categoryId)
+        : PROJECT_LEVEL_EVENT_CATEGORY;
     return {
       ...base,
       kind: "budowlane",
       title: e.title?.trim() || "Zdarzenie budowlane",
-      categoryId: e.categoryId
-        ? normalizeStageId(e.categoryId)
-        : undefined,
+      categoryId,
+      blockId: isProjectLevelEventCategory(categoryId) ? null : base.blockId,
     };
   }
 

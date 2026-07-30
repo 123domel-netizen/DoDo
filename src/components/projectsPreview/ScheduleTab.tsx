@@ -32,6 +32,7 @@ import {
   DOC_EVENT_STATUS_LABEL,
   SCHEDULE_EVENT_KIND_LABEL,
   SCHEDULE_STATUS_LABEL,
+  isProjectLevelEventCategory,
   projectLabel,
   scheduleEventLabel,
   type PreviewCrew,
@@ -387,7 +388,14 @@ export function ScheduleTab({
       scheduleEvents,
       projectId ?? defaultEventProjectId,
       state.categoryMeta,
-      { includeDocLane: true },
+      {
+        includeDocLane: true,
+        investmentLabel: (() => {
+          const pid = projectId ?? defaultEventProjectId;
+          const p = state.projects.find((x) => x.id === pid);
+          return p ? projectLabel(p) : "Inwestycja";
+        })(),
+      },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- crewName derives from state.crews
   }, [
@@ -1051,8 +1059,14 @@ export function ScheduleTab({
             `new-event-${eventEdit.blockId ?? eventEdit.categoryId ?? "cat"}`
           }
           projectId={eventEdit.projectId}
+          project={
+            state.projects.find((p) => p.id === eventEdit.projectId) ?? null
+          }
           blocks={state.scheduleBlocks.filter(
             (b) => b.projectId === eventEdit.projectId,
+          )}
+          categoryMeta={state.categoryMeta.filter(
+            (m) => m.projectId === eventEdit.projectId,
           )}
           blockId={eventEdit.blockId}
           defaultCategoryId={eventEdit.categoryId}
@@ -1208,7 +1222,21 @@ function categoryEventsForLane(
       e.kind === "budowlane" &&
       e.projectId === projectId &&
       e.categoryId === categoryId &&
+      !isProjectLevelEventCategory(e.categoryId) &&
       (!e.blockId || !blockIds.has(e.blockId)),
+  );
+}
+
+/** Docs + budowlane pinned to the investment row (not a category lane). */
+function projectHeaderEvents(
+  events: ScheduleEvent[],
+  projectId: string,
+): ScheduleEvent[] {
+  return events.filter(
+    (e) =>
+      e.projectId === projectId &&
+      (e.kind === "dokumentacyjne" ||
+        (e.kind === "budowlane" && isProjectLevelEventCategory(e.categoryId))),
   );
 }
 
@@ -1218,6 +1246,18 @@ function projectDocEvents(
 ): ScheduleEvent[] {
   return events.filter(
     (e) => e.projectId === projectId && e.kind === "dokumentacyjne",
+  );
+}
+
+function projectLevelBudowlaneEvents(
+  events: ScheduleEvent[],
+  projectId: string,
+): ScheduleEvent[] {
+  return events.filter(
+    (e) =>
+      e.projectId === projectId &&
+      e.kind === "budowlane" &&
+      isProjectLevelEventCategory(e.categoryId),
   );
 }
 
@@ -1268,7 +1308,7 @@ function buildProjectScopeRows(
   events: ScheduleEvent[],
   projectId: string,
   categoryMeta: ScheduleCategoryMeta[] = [],
-  opts?: { includeDocLane?: boolean },
+  opts?: { includeDocLane?: boolean; investmentLabel?: string },
 ): TimelineRow[] {
   const cats = scheduleCatalog.categories
     .slice()
@@ -1294,7 +1334,10 @@ function buildProjectScopeRows(
       blockIds,
     );
     const allCatEvents = events.filter(
-      (e) => e.projectId === projectId && e.categoryId === catId,
+      (e) =>
+        e.projectId === projectId &&
+        e.categoryId === catId &&
+        !isProjectLevelEventCategory(e.categoryId),
     );
     const blockWindow = spanFromBlocks(list);
     const eventSpan = extendSpanWithEvents(null, allCatEvents);
@@ -1386,6 +1429,14 @@ function buildProjectScopeRows(
   const rows: TimelineRow[] = [];
   if (opts?.includeDocLane) {
     rows.push({
+      id: `inv-lane-${projectId}`,
+      label: opts.investmentLabel?.trim() || "Inwestycja",
+      section: true,
+      projectId,
+      blocks: [],
+      looseEvents: projectLevelBudowlaneEvents(events, projectId),
+    });
+    rows.push({
       id: `doc-lane-${projectId}`,
       label: "Dokumentacja",
       section: true,
@@ -1405,7 +1456,10 @@ function buildProjectScopeRows(
   const extraIds = new Set<string>([
     ...byCat.keys(),
     ...events
-      .filter((e) => e.kind === "budowlane")
+      .filter(
+        (e) =>
+          e.kind === "budowlane" && !isProjectLevelEventCategory(e.categoryId),
+      )
       .map((e) => e.categoryId)
       .filter((id): id is string => Boolean(id)),
     ...categoryMeta
@@ -1446,7 +1500,7 @@ function buildAllBuildsRows(
       section: true,
       projectId: p.id,
       blocks: [],
-      looseEvents: projectDocEvents(projectEvents, p.id),
+      looseEvents: projectHeaderEvents(projectEvents, p.id),
     });
     const catRows = buildProjectScopeRows(
       projectBlocks,

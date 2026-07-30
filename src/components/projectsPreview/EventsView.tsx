@@ -81,7 +81,11 @@ export function EventsView({ kind, projectIds = "all" }: EventsViewProps) {
       {edit ? (
         <ScheduleEventSheet
           projectId={edit.projectId}
+          project={projects.find((p) => p.id === edit.projectId) ?? null}
           blocks={blocks.filter((b) => b.projectId === edit.projectId)}
+          categoryMeta={state.categoryMeta.filter(
+            (m) => m.projectId === edit.projectId,
+          )}
           blockId={edit.event?.blockId ?? null}
           defaultCategoryId={edit.event?.categoryId}
           event={edit.event}
