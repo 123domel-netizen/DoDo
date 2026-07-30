@@ -1,9 +1,9 @@
 import { isProjectsPreviewEnabled } from "@/lib/projectsPreview/enabled";
 
 /**
- * Harmonogramy są zawsze w UI (produkcja, DEV, sandbox).
- * Dane: LocalAdapter, albo cloud gdy org ma `schedules_enabled`
- * (patrz getScheduleRepository).
+ * Harmonogramy są zawsze w UI.
+ * Dane: Supabase gdy jest sesja + org (patrz getScheduleRepository),
+ * inaczej LocalAdapter.
  */
 export function isSchedulesModuleEnabled(_schedulesEnabled?: boolean): boolean {
   return true;

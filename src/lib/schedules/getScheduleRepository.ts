@@ -4,6 +4,7 @@ import {
   LocalPreviewAdapter,
   type ProjectsPreviewRepository,
 } from "@/lib/projectsPreview/repository";
+import { cloudEnabled } from "@/lib/supabase";
 import type { ScheduleRepository } from "./scheduleRepositoryPort";
 import {
   getSupabaseScheduleRepo,
@@ -12,17 +13,18 @@ import {
 
 /**
  * Active schedule repository.
- * - Cloud when org has schedules_enabled + auth session (shared team data)
- * - Otherwise LocalAdapter (browser-local, empty + catalogs)
+ * - Cloud when logged in to an org (shared team data via Supabase)
+ * - LocalAdapter for DEV without session / preview sandbox / no cloud config
  */
 export function getScheduleRepository(opts?: {
   orgId?: string | null;
+  /** @deprecated Ignored — cloud is used whenever org + user session exist. */
   schedulesEnabled?: boolean;
   userId?: string | null;
 }): ScheduleRepository {
   if (
-    opts?.schedulesEnabled &&
-    opts.orgId &&
+    cloudEnabled &&
+    opts?.orgId &&
     opts.userId &&
     !isProjectsPreviewEnabled()
   ) {

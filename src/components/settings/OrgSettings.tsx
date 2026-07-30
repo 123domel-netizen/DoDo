@@ -8,7 +8,6 @@ import {
   removeOrgMember,
   renameOrg,
   setOrgMemberDisplayName,
-  setOrgSchedulesEnabled,
   transferOrgAdmin,
   type OrgDetail,
 } from "@/lib/orgs";
@@ -40,7 +39,6 @@ export function OrgSettings() {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [memberNameDraft, setMemberNameDraft] = useState("");
   const [savingMemberName, setSavingMemberName] = useState(false);
-  const [togglingSchedules, setTogglingSchedules] = useState(false);
 
   const orgId = activeOrgId ?? myOrgs[0]?.id ?? null;
   const isAdmin = detail?.myRole === "admin";
@@ -430,38 +428,6 @@ export function OrgSettings() {
               )}
             </div>
           )}
-
-          {isAdmin ? (
-            <div className="mb-3 rounded-lg border border-line bg-surface-raised/40 p-2.5">
-              <label className="flex items-start gap-2.5">
-                <input
-                  type="checkbox"
-                  checked={detail.schedulesEnabled}
-                  disabled={togglingSchedules}
-                  onChange={async (e) => {
-                    if (!orgId) return;
-                    setError(null);
-                    setTogglingSchedules(true);
-                    const res = await setOrgSchedulesEnabled(orgId, e.target.checked);
-                    setTogglingSchedules(false);
-                    if (res.error) setError(res.error);
-                    else await refresh();
-                  }}
-                  className="mt-0.5 accent-[var(--color-accent,#3b82f6)]"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-ink">
-                    Harmonogramy — sync w chmurze
-                  </span>
-                  <span className="mt-0.5 block text-[11px] leading-snug text-ink-faint">
-                    Zapis w chmurze dla całego zespołu (wspólna tablica, zdarzenia,
-                    brygady). Bez tego każdy ma lokalny harmonogram w przeglądarce.
-                    Wymaga migracji Supabase 0054.
-                  </span>
-                </span>
-              </label>
-            </div>
-          ) : null}
 
           <OrgStorageSettings orgId={orgId ?? detail.id} isAdmin={isAdmin} />
         </>

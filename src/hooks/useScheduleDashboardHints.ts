@@ -16,17 +16,9 @@ export function useScheduleDashboardHints(opts: {
 }): { today: ScheduleDashboardHint[]; upcoming: ScheduleDashboardHint[] } {
   const activeOrgId = useStore((s) => s.activeOrgId ?? s.myOrgs[0]?.id ?? null);
   const authUserId = useStore((s) => s.authUserId);
-  const schedulesEnabled = useStore((s) => {
-    const org = s.myOrgs.find(
-      (o) => o.id === (s.activeOrgId ?? s.myOrgs[0]?.id),
-    );
-    return org?.schedulesEnabled ?? false;
-  });
 
-  const enabled = isSchedulesModuleEnabled(schedulesEnabled);
-  const useCloud = Boolean(
-    schedulesEnabled && cloudEnabled && activeOrgId && authUserId,
-  );
+  const enabled = isSchedulesModuleEnabled();
+  const useCloud = Boolean(cloudEnabled && activeOrgId && authUserId);
   const [tick, setTick] = useState(0);
   const [cloudHints, setCloudHints] = useState<{
     today: ScheduleDashboardHint[];
@@ -37,11 +29,10 @@ export function useScheduleDashboardHints(opts: {
     if (!enabled) return;
     const repo = getScheduleRepository({
       orgId: activeOrgId,
-      schedulesEnabled,
       userId: authUserId,
     });
     return repo.subscribe(() => setTick((n) => n + 1));
-  }, [enabled, activeOrgId, schedulesEnabled, authUserId]);
+  }, [enabled, activeOrgId, authUserId]);
 
   useEffect(() => {
     if (!enabled || !useCloud || !supabase || !activeOrgId) {

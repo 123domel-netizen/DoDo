@@ -12,18 +12,12 @@ export function useScheduleRepo(): ScheduleRepository {
   const authUserId = useStore((s) => s.authUserId);
   const authUserEmail = useStore((s) => s.authUserEmail);
   const teamMembers = useStore((s) => s.teamMembers);
-  const schedulesEnabled = useStore((s) => {
-    const orgId = s.activeOrgId ?? s.myOrgs[0]?.id;
-    const org = s.myOrgs.find((o) => o.id === orgId);
-    return org?.schedulesEnabled ?? false;
-  });
   const profileName = useChatStore((s) =>
     authUserId ? s.profiles[authUserId]?.displayName ?? null : null,
   );
 
   const repo = getScheduleRepository({
     orgId: activeOrgId,
-    schedulesEnabled,
     userId: authUserId,
   });
 
@@ -75,9 +69,5 @@ export function useProjectsPreviewRepo(): ScheduleRepository {
 }
 
 export function useSchedulesAvailable(): boolean {
-  const schedulesEnabled = useStore((s) => {
-    const orgId = s.activeOrgId ?? s.myOrgs[0]?.id;
-    return s.myOrgs.find((o) => o.id === orgId)?.schedulesEnabled ?? false;
-  });
-  return isSchedulesModuleEnabled(schedulesEnabled);
+  return isSchedulesModuleEnabled();
 }
