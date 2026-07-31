@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode } from "react";
 import { isPast, isToday } from "date-fns";
 import {
   AlarmClock,
@@ -21,22 +21,8 @@ import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
 import { baseItemId } from "@/lib/itemId";
 import { deadlineIconDimmed } from "@/lib/deadlines";
 import { itemSupportsTodoDone } from "@/lib/items";
-import {
-  EVENTS_DISPLAY_TARGET,
-  useTodayDashboardData,
-} from "@/hooks/useTodayDashboardData";
-import { useScheduleDashboardHints } from "@/hooks/useScheduleDashboardHints";
-import { useScheduleRepo } from "@/hooks/useScheduleRepo";
-import type { ScheduleDashboardHint } from "@/lib/projectsPreview/dashboardScheduleHints";
-import type { ScheduleEvent } from "@/lib/projectsPreview/types";
-import {
-  ScheduleDashboardHintRow,
-  ScheduleDashboardHintSectionLabel,
-} from "@/components/dashboard/ScheduleDashboardHintRow";
-import {
-  ScheduleEventSheet,
-  type ScheduleEventDraft,
-} from "@/components/projectsPreview/ScheduleEventSheet";
+import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
+import { ScheduleDashboardWorksSection } from "@/components/dashboard/ScheduleDashboardWorkRow";
 
 const DASHBOARD_LEFT_COL =
   "flex w-14 shrink-0 justify-center xl:w-[3.75rem] 2xl:w-16";
@@ -49,88 +35,9 @@ export function TodayDashboardPanel() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
-  const addItem = useStore((s) => s.addItem);
-  const scheduleRepo = useScheduleRepo();
-  const scheduleState = scheduleRepo.getState();
-  const [editHint, setEditHint] = useState<{
-    event: ScheduleEvent;
-    hint: ScheduleDashboardHint;
-  } | null>(null);
 
-  const scheduleUpcomingBudget = Math.max(
-    0,
-    EVENTS_DISPLAY_TARGET - todayEvents.length - upcomingEvents.length,
-  );
-  const { today: scheduleToday, upcoming: scheduleUpcoming } =
-    useScheduleDashboardHints({
-      maxToday: 3,
-      maxUpcoming: scheduleUpcomingBudget,
-    });
-
-  const hasTodaySection =
-    todayEvents.length > 0 || scheduleToday.length > 0;
-  const hasUpcomingSection =
-    upcomingEvents.length > 0 || scheduleUpcoming.length > 0;
-
-  const isoFromHintDate = (date: string) =>
-    new Date(`${date}T12:00:00`).toISOString();
-
-  const openHintEvent = async (hint: ScheduleDashboardHint) => {
-    let event = scheduleRepo
-      .getState()
-      .scheduleEvents.find((e) => e.id === hint.id);
-    if (!event && scheduleRepo.reload) {
-      try {
-        await scheduleRepo.reload();
-      } catch (err) {
-        console.warn("[schedules] reload before open failed:", err);
-      }
-      event = scheduleRepo
-        .getState()
-        .scheduleEvents.find((e) => e.id === hint.id);
-    }
-    if (!event) {
-      alert("Nie udało się wczytać zdarzenia z harmonogramu.");
-      return;
-    }
-    setEditHint({ event, hint });
-  };
-
-  const saveHintEvent = (data: ScheduleEventDraft) => {
-    scheduleRepo.upsertScheduleEvent(data);
-    setEditHint(null);
-  };
-
-  const addTaskFromHint = (hint: ScheduleDashboardHint) => {
-    const due = isoFromHintDate(hint.date);
-    addItem({
-      type: "task",
-      title: `${hint.projectLabel}: ${hint.title}`,
-      showInTodo: true,
-      showInCalendar: false,
-      hasDueDate: true,
-      start: due,
-      end: due,
-      description: `Harmonogram (${hint.kind === "budowlane" ? "budowlane" : "dokumentacyjne"})`,
-    });
-  };
-
-  const addEventFromHint = (hint: ScheduleDashboardHint) => {
-    const due = isoFromHintDate(hint.date);
-    const { start, end } = calendarBlockFromDeadline(due, 60);
-    const item = addItem({
-      type: "event",
-      title: `${hint.projectLabel}: ${hint.title}`,
-      showInTodo: true,
-      showInCalendar: true,
-      hasDueDate: true,
-      allDay: true,
-      start,
-      end,
-      description: `Harmonogram (${hint.kind === "budowlane" ? "budowlane" : "dokumentacyjne"})`,
-    });
-    setEditing(item.id);
-  };
+  const hasTodaySection = todayEvents.length > 0;
+  const hasUpcomingSection = upcomingEvents.length > 0;
 
   const tagsForItem = (item: Item) => {
     const baseId = baseItemId(item.id);
@@ -138,79 +45,57 @@ export function TodayDashboardPanel() {
     return resolveItemTags(effectiveTagIds(source, myTagIdsByItem), tagsMap);
   };
 
-  /** Zadania już widoczne w sekcji wydarzeń — bez duplikatu na liście Zadania. */
-  const shownInEvents = useMemo(() => {
-    const ids = new Set<string>();
-    for (const it of todayEvents) ids.add(baseItemId(it.id));
-    for (const it of upcomingEvents) ids.add(baseItemId(it.id));
-    return ids;
-  }, [todayEvents, upcomingEvents]);
-
-  const tasksOnly = useMemo(
-    () => tasks.filter((it) => !shownInEvents.has(baseItemId(it.id))),
-    [tasks, shownInEvents],
-  );
-
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden thin-scrollbar">
+      <ScheduleDashboardWorksSection />
+
       <section className="border-b border-line p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
         <div
           className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
-            hasTodaySection ? "mb-2" : "mb-1"
+            hasTodaySection || hasUpcomingSection ? "mb-1.5" : "mb-1"
           }`}
         >
           <CalendarClock size={14} className="shrink-0" />
-          <span className="shrink-0">Wydarzenia dzisiaj</span>
-          {!hasTodaySection && (
+          <span className="shrink-0">Wydarzenia nadchodzące</span>
+          {!hasTodaySection && !hasUpcomingSection && (
             <span className="text-xs font-normal normal-case text-ink-faint">
-              Brak wydarzeń na dziś
+              Brak wydarzeń
             </span>
           )}
         </div>
-        {todayEvents.length > 0 && (
-          <div className="space-y-1">
-            {todayEvents.map((it) => (
-              <DashboardEventRow
-                key={it.id}
-                item={it}
-                group={it.groupId ? groups[it.groupId] : undefined}
-                itemTags={tagsForItem(it)}
-                onOpen={() => setEditing(it.id)}
-                onToggle={
-                  itemSupportsTodoDone(it)
-                    ? () => toggleTaskDone(baseItemId(it.id))
-                    : undefined
-                }
-              />
-            ))}
-          </div>
-        )}
-        {scheduleToday.length > 0 ? (
-          <div className={todayEvents.length > 0 ? "mt-1.5 space-y-1" : "space-y-1"}>
-            {todayEvents.length === 0 ? null : (
-              <ScheduleDashboardHintSectionLabel />
-            )}
-            {scheduleToday.map((hint) => (
-              <ScheduleDashboardHintRow
-                key={hint.id}
-                hint={hint}
-                onOpen={() => void openHintEvent(hint)}
-                onAddTask={() => addTaskFromHint(hint)}
-                onAddEvent={() => addEventFromHint(hint)}
-              />
-            ))}
-          </div>
+        {hasTodaySection ? (
+          <>
+            <div className="mb-0.5 text-[10px] font-medium text-ink-faint">
+              Dzisiaj
+            </div>
+            <div className="space-y-0.5">
+              {todayEvents.map((it) => (
+                <DashboardEventRow
+                  key={it.id}
+                  item={it}
+                  group={it.groupId ? groups[it.groupId] : undefined}
+                  itemTags={tagsForItem(it)}
+                  onOpen={() => setEditing(it.id)}
+                  onToggle={
+                    itemSupportsTodoDone(it)
+                      ? () => toggleTaskDone(baseItemId(it.id))
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          </>
         ) : null}
-        {hasUpcomingSection && (
+        {hasUpcomingSection ? (
           <>
             <div
-              className={`mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
-                hasTodaySection ? "mt-4" : "mt-1.5"
+              className={`mb-0.5 text-[10px] font-medium text-ink-faint ${
+                hasTodaySection ? "mt-2" : ""
               }`}
             >
-              Nadchodzące
+              Później
             </div>
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {upcomingEvents.map((it) => (
                 <DashboardEventRow
                   key={it.id}
@@ -226,66 +111,21 @@ export function TodayDashboardPanel() {
                   }
                 />
               ))}
-              {scheduleUpcoming.map((hint) => (
-                <ScheduleDashboardHintRow
-                  key={hint.id}
-                  hint={hint}
-                  showDate
-                  onOpen={() => void openHintEvent(hint)}
-                  onAddTask={() => addTaskFromHint(hint)}
-                  onAddEvent={() => addEventFromHint(hint)}
-                />
-              ))}
             </div>
           </>
-        )}
+        ) : null}
       </section>
 
-      {editHint ? (
-        <ScheduleEventSheet
-          key={editHint.event.id}
-          projectId={editHint.event.projectId}
-          project={
-            scheduleState.projects.find(
-              (p) => p.id === editHint.event.projectId,
-            ) ?? {
-              number: editHint.hint.projectNumber,
-              name: editHint.hint.projectName,
-            }
-          }
-          blocks={scheduleState.scheduleBlocks.filter(
-            (b) => b.projectId === editHint.event.projectId,
-          )}
-          categoryMeta={scheduleState.categoryMeta.filter(
-            (m) => m.projectId === editHint.event.projectId,
-          )}
-          blockId={editHint.event.blockId}
-          defaultCategoryId={editHint.event.categoryId}
-          event={editHint.event}
-          defaultKind={editHint.event.kind}
-          lockKind
-          catalog={scheduleState.catalog}
-          scheduleCatalog={scheduleState.scheduleCatalog}
-          users={scheduleState.users}
-          onClose={() => setEditHint(null)}
-          onSave={saveHintEvent}
-          onDelete={() => {
-            scheduleRepo.deleteScheduleEvent(editHint.event.id);
-            setEditHint(null);
-          }}
-        />
-      ) : null}
-
       <section className="flex-1 p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
-        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+        <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
           <ListChecks size={14} />
           Zadania
         </div>
-        {tasksOnly.length === 0 ? (
+        {tasks.length === 0 ? (
           <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak zadań</p>
         ) : (
-          <div className="space-y-1">
-            {tasksOnly.map((it) => (
+          <div className="space-y-px">
+            {tasks.map((it) => (
               <DashboardTodoRow
                 key={it.id}
                 item={it}
@@ -322,7 +162,7 @@ function DashboardMetaRow({ children }: { children: ReactNode }) {
   const visible = items.filter(Boolean);
   if (!visible.length) return null;
   return (
-    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-ink-faint xl:gap-x-2">
+    <div className="mt-px flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-tight text-ink-faint">
       {visible}
     </div>
   );
@@ -335,7 +175,7 @@ function DashboardMetaDeadline({ item }: { item: Item }) {
     <span
       className={`inline-flex shrink-0 items-center gap-0.5 ${dim ? "opacity-50" : ""}`}
     >
-      <AlarmClock size={11} className="shrink-0 text-red-500" aria-hidden />
+      <AlarmClock size={10} className="shrink-0 text-red-500" aria-hidden />
       <span>{fmt(new Date(item.deadlineAt), "EEE d MMM, HH:mm")}</span>
     </span>
   );
@@ -346,7 +186,7 @@ function DashboardMetaReminders({ item }: { item: Item }) {
   if (!count) return null;
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5">
-      <Bell size={11} className="shrink-0" aria-hidden />
+      <Bell size={10} className="shrink-0" aria-hidden />
       {count}
     </span>
   );
@@ -357,7 +197,7 @@ function DashboardMetaChecklist({ item }: { item: Item }) {
   const done = item.checklist.filter((c) => c.done).length;
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5">
-      <CheckSquare size={11} className="shrink-0" aria-hidden />
+      <CheckSquare size={10} className="shrink-0" aria-hidden />
       {done}/{item.checklist.length}
     </span>
   );
@@ -436,15 +276,15 @@ export function DashboardEventRow({
 
   const timeCol = (
     <div
-      className={`${DASHBOARD_LEFT_COL} flex-col items-center pt-0.5 text-[11px] font-medium tabular-nums text-ink-light`}
+      className={`${DASHBOARD_LEFT_COL} flex-col items-center text-[10px] font-medium tabular-nums leading-tight text-ink-light`}
     >
       {showEventDate && (
-        <div className="mb-0.5 whitespace-nowrap text-center text-[10px] leading-tight text-ink-faint">
+        <div className="whitespace-nowrap text-center text-[9px] leading-tight text-ink-faint">
           {fmt(item.start, "EEE d MMM")}
         </div>
       )}
       {item.allDay ? (
-        <span className="text-[10px] leading-tight text-ink-faint">Cały dzień</span>
+        <span className="text-[9px] leading-tight text-ink-faint">Cały dzień</span>
       ) : (
         <>
           <div>{fmt(item.start, "HH:mm")}</div>
@@ -457,14 +297,14 @@ export function DashboardEventRow({
   const body = (
     <div className="min-w-0 flex-1 overflow-hidden">
       <div
-        className={`truncate text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"} ${
+        className={`truncate text-[13px] font-medium leading-snug ${item.done ? "text-ink-faint line-through" : "text-ink"} ${
           canToggleDone ? "cursor-pointer" : ""
         }`}
         onClick={canToggleDone ? onOpen : undefined}
       >
         {item.title || "(bez tytułu)"}
         {shared && (
-          <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+          <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-ink-faint">
             SHARE
           </span>
         )}
@@ -488,7 +328,7 @@ export function DashboardEventRow({
       onChange={onToggle}
       disabled={shared}
       onClick={(e) => e.stopPropagation()}
-      className={`mt-0.5 h-4 w-4 shrink-0 self-start accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
+      className={`h-3.5 w-3.5 shrink-0 self-center accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
       title={item.done ? "Oznacz jako niewykonane" : "Oznacz jako wykonane"}
     />
   ) : null;
@@ -496,7 +336,7 @@ export function DashboardEventRow({
   if (canToggleDone) {
     return (
       <div
-        className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay xl:gap-2.5 xl:px-2.5 2xl:px-3 ${
+        className={`group flex w-full min-w-0 items-center gap-1.5 rounded-md border border-line/50 bg-surface-raised/30 px-1.5 py-1 text-left transition hover:bg-surface-overlay ${
           shared ? "opacity-[0.72]" : ""
         }`}
         style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
@@ -511,7 +351,7 @@ export function DashboardEventRow({
     <button
       type="button"
       onClick={onOpen}
-      className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay xl:gap-2.5 xl:px-2.5 2xl:px-3 ${
+      className={`group flex w-full min-w-0 items-center gap-1.5 rounded-md border border-line/50 bg-surface-raised/30 px-1.5 py-1 text-left transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       }`}
       style={{ borderLeft: `3px solid ${color}` }}
@@ -554,7 +394,7 @@ export function DashboardTodoRow({
 
   return (
     <div
-      className={`group relative flex min-w-0 gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay xl:gap-2.5 xl:px-2.5 2xl:px-3 ${
+      className={`group relative flex min-w-0 items-start gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 transition hover:bg-surface-overlay ${
         shared ? "opacity-[0.72]" : ""
       }`}
       style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
@@ -565,17 +405,17 @@ export function DashboardTodoRow({
           checked={item.done}
           onChange={onToggle}
           disabled={shared}
-          className={`h-4 w-4 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
+          className={`h-3.5 w-3.5 accent-accent ${shared ? "cursor-not-allowed opacity-50" : ""}`}
         />
       </div>
       <div className="min-w-0 flex-1 overflow-hidden">
         <div
-          className={`cursor-pointer truncate text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
+          className={`cursor-pointer truncate text-[13px] font-medium leading-snug ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
           onClick={onOpen}
         >
           {item.title || "(bez tytułu)"}
           {shared && (
-            <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-ink-faint">
               SHARE
             </span>
           )}
@@ -599,7 +439,7 @@ export function DashboardTodoRow({
         <button
           onClick={onConvert}
           title="Zmień na wydarzenie (pokaż w kalendarzu)"
-          className="absolute right-1.5 top-1.5 shrink-0 rounded-md px-1.5 py-0.5 text-[11px] text-ink-light opacity-0 transition hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
+          className="absolute right-1 top-0.5 shrink-0 rounded px-1 py-px text-[10px] text-ink-light opacity-0 transition hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
           style={{ background: tint(color, 0.12) }}
         >
           → kalendarz

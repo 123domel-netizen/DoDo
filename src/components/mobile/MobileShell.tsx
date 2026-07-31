@@ -28,6 +28,7 @@ import { useStore } from "@/state/store";
 import type { CalendarViewKind, Group } from "@/types";
 import { CalendarView } from "@/components/calendar/CalendarView";
 import { MobileDashboard } from "@/components/mobile/MobileDashboard";
+import { MobileRecentCorrespondences } from "@/components/mobile/MobileRecentCorrespondences";
 import { MobileTodayPanel } from "@/components/mobile/MobileTodayPanel";
 import { TodoPanel } from "@/components/todo/TodoPanel";
 import { ItemEditorPanel } from "@/components/item/ItemEditorPanel";
@@ -343,6 +344,9 @@ export function MobileShell() {
           <TodoPanel />
         )}
       </main>
+
+      {/* Ostatnie korespondencje — nad dolnymi belkami. */}
+      {!schedulesOpen && <MobileRecentCorrespondences />}
 
       {/* Skróty Kalendarz / Zadania — nad belką główną (Dashboard + te zakładki). */}
       {!schedulesOpen && tab !== "chat" && (

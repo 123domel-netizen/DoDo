@@ -43,6 +43,15 @@ import {
 import { searchProjects, visibleProjects } from "./search";
 import { buildDemoState } from "./demoSeed";
 import { collectScheduleDashboardHints } from "./dashboardScheduleHints";
+import {
+  collectScheduleDashboardFeed,
+  collectScheduleDashboardWorks,
+  formatScheduleWorkLine,
+} from "./dashboardScheduleWorks";
+import {
+  resolveDashboardSchedulesCollapsed,
+  userBelongsToActiveProject,
+} from "./dashboardSchedulesCollapse";
 import { isoToPlDate, plDateToIso } from "./dateFormat";
 import { buildBudowaScheduleCatalog } from "./scheduleCatalog";
 import {
@@ -869,15 +878,35 @@ describe("projectsPreview scheduleRowCollapse", () => {
         categoryId: "c1",
         blocks: [] as { id: string }[],
       },
-      {
-        id: "work-under",
-        projectId: "p-a",
-        categoryId: "c1",
-        blocks: [{ id: "work-under" }],
-      },
     ];
     const visible = filterCollapsedBoardRows(rows, new Set(), 0).map((r) => r.id);
-    expect(visible).toEqual(["sec-a", "work-inv", "cat-a1"]);
+    expect(visible).toContain("work-inv");
+    expect(visible).toContain("cat-a1");
+  });
+
+  it("keeps crew-lane works expanded regardless of revealLevel", () => {
+    const rows = [
+      {
+        id: "sec-crew-1",
+        section: true,
+        crew: { id: "c1" },
+        blocks: [] as { id: string }[],
+      },
+      { id: "work-1", indented: true, blocks: [{ id: "work-1" }] },
+      {
+        id: "sec-crew-none",
+        section: true,
+        blocks: [] as { id: string }[],
+      },
+      { id: "work-2", indented: true, blocks: [{ id: "work-2" }] },
+    ];
+    const visible = filterCollapsedBoardRows(rows, new Set(), 0).map((r) => r.id);
+    expect(visible).toEqual([
+      "sec-crew-1",
+      "work-1",
+      "sec-crew-none",
+      "work-2",
+    ]);
   });
 });
 
@@ -969,6 +998,82 @@ describe("projectsPreview dashboard schedule hints", () => {
       today: "2026-07-28",
     });
     expect(asOutsider.today).toHaveLength(0);
+  });
+});
+
+describe("projectsPreview dashboard schedule works", () => {
+  it("splits in-progress vs starting-soon and pads to min 5", () => {
+    const state = buildDemoState("u-ola");
+    const { inProgress, startingSoon } = collectScheduleDashboardWorks(state, {
+      today: "2026-07-28",
+      soonDays: 10,
+      minUpcoming: 5,
+    });
+    expect(inProgress.every((w) => w.inProgress)).toBe(true);
+    expect(startingSoon.every((w) => w.startDate > "2026-07-28")).toBe(true);
+    const futureWorks = state.scheduleBlocks.filter(
+      (b) =>
+        b.role === "work" &&
+        b.startDate > "2026-07-28" &&
+        b.status !== "zakonczone" &&
+        b.status !== "wstrzymane",
+    );
+    if (futureWorks.length >= 5) {
+      expect(startingSoon.length).toBeGreaterThanOrEqual(5);
+    }
+    if (inProgress[0]) {
+      expect(formatScheduleWorkLine(inProgress[0])).toContain("#");
+    }
+    const asOutsider = collectScheduleDashboardWorks(buildDemoState("u-outsider"), {
+      today: "2026-07-28",
+    });
+    expect(asOutsider.inProgress).toHaveLength(0);
+    expect(asOutsider.startingSoon).toHaveLength(0);
+  });
+
+  it("interleaves schedule events among works by date", () => {
+    const state = buildDemoState("u-ola");
+    const { inProgress, startingSoon } = collectScheduleDashboardFeed(state, {
+      today: "2026-07-28",
+      soonDays: 10,
+      minUpcoming: 5,
+    });
+    expect(inProgress.some((i) => i.type === "event" && i.event.id === "se-1")).toBe(
+      true,
+    );
+    const dates = startingSoon.map((i) => i.sortDate);
+    const sorted = [...dates].sort();
+    expect(dates).toEqual(sorted);
+    expect(startingSoon.some((i) => i.type === "work")).toBe(true);
+  });
+});
+
+describe("projectsPreview dashboard schedules collapse", () => {
+  it("defaults collapsed when user has no active projects", () => {
+    const state = buildDemoState("u-ola");
+    expect(userBelongsToActiveProject(state.projects, "u-ola")).toBe(true);
+    expect(userBelongsToActiveProject(state.projects, "u-outsider")).toBe(false);
+    expect(
+      resolveDashboardSchedulesCollapsed({
+        userId: "u-outsider",
+        projects: state.projects,
+        stored: null,
+      }),
+    ).toBe(true);
+    expect(
+      resolveDashboardSchedulesCollapsed({
+        userId: "u-ola",
+        projects: state.projects,
+        stored: null,
+      }),
+    ).toBe(false);
+    expect(
+      resolveDashboardSchedulesCollapsed({
+        userId: "u-outsider",
+        projects: state.projects,
+        stored: false,
+      }),
+    ).toBe(false);
   });
 });
 

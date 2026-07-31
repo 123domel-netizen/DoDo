@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { CalendarClock, ListChecks, Plus } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { Item } from "@/types";
@@ -9,6 +8,7 @@ import { baseItemId } from "@/lib/itemId";
 import { itemSupportsTodoDone } from "@/lib/items";
 import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
 import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
+import { ScheduleDashboardWorksSection } from "@/components/dashboard/ScheduleDashboardWorkRow";
 import {
   DashboardEventRow,
   DashboardTodoRow,
@@ -30,18 +30,6 @@ export function MainDashboardView() {
     const source = itemsMap[baseId] ?? item;
     return resolveItemTags(effectiveTagIds(source, myTagIdsByItem), tagsMap);
   };
-
-  const shownInEvents = useMemo(() => {
-    const ids = new Set<string>();
-    for (const it of todayEvents) ids.add(baseItemId(it.id));
-    for (const it of upcomingEvents) ids.add(baseItemId(it.id));
-    return ids;
-  }, [todayEvents, upcomingEvents]);
-
-  const tasksOnly = useMemo(
-    () => tasks.filter((it) => !shownInEvents.has(baseItemId(it.id))),
-    [tasks, shownInEvents],
-  );
 
   const todayLabel = fmt(new Date(), "EEEE, d MMMM yyyy");
 
@@ -96,11 +84,15 @@ export function MainDashboardView() {
           </div>
         </div>
 
+        <div className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface-raised/40 [&_section]:border-0">
+          <ScheduleDashboardWorksSection />
+        </div>
+
         <div className="grid gap-5 lg:grid-cols-2 lg:gap-6">
           <section className="rounded-2xl border border-line bg-surface-raised/40 p-4 sm:p-5">
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
               <CalendarClock size={15} className="shrink-0" />
-              Wydarzenia
+              Wydarzenia nadchodzące
             </div>
 
             {todayEvents.length === 0 && upcomingEvents.length === 0 ? (
@@ -126,7 +118,7 @@ export function MainDashboardView() {
                   {todayEvents.length === 0 ? (
                     <p className="px-1 py-2 text-sm text-ink-faint">Nic na dziś w kalendarzu</p>
                   ) : (
-                    <div className="space-y-1.5">
+                    <div className="space-y-0.5">
                       {todayEvents.map((it) => (
                         <DashboardEventRow
                           key={it.id}
@@ -148,10 +140,10 @@ export function MainDashboardView() {
                 {upcomingEvents.length > 0 && (
                   <div>
                     <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                      Nadchodzące
+                      Później
                       <span className="ml-1.5 font-normal opacity-70">{upcomingEvents.length}</span>
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-0.5">
                       {upcomingEvents.map((it) => (
                         <DashboardEventRow
                           key={it.id}
@@ -179,13 +171,13 @@ export function MainDashboardView() {
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
                 <ListChecks size={15} className="shrink-0" />
                 Zadania
-                {tasksOnly.length > 0 && (
-                  <span className="font-normal normal-case opacity-70">{tasksOnly.length}</span>
+                {tasks.length > 0 && (
+                  <span className="font-normal normal-case opacity-70">{tasks.length}</span>
                 )}
               </div>
             </div>
 
-            {tasksOnly.length === 0 ? (
+            {tasks.length === 0 ? (
               <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center">
                 <p className="text-sm text-ink-faint">Brak otwartych zadań</p>
                 <button
@@ -197,8 +189,8 @@ export function MainDashboardView() {
                 </button>
               </div>
             ) : (
-              <div className="space-y-1">
-                {tasksOnly.map((it) => (
+              <div className="space-y-px">
+                {tasks.map((it) => (
                   <DashboardTodoRow
                     key={it.id}
                     item={it}

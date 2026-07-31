@@ -8,7 +8,7 @@ import { expandItemsForRange } from "@/lib/recurrence";
 import { itemSupportsTodoDone } from "@/lib/items";
 
 /** Łączna liczba wydarzeń w sekcjach „dzisiaj” + „nadchodzące”. */
-export const EVENTS_DISPLAY_TARGET = 5;
+export const EVENTS_DISPLAY_TARGET = 7;
 
 function sortEventsByStart(a: Item, b: Item): number {
   if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;

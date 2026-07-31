@@ -179,6 +179,8 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
   let hideUnderProject = false;
   let hideUnderCategory = false;
   let hideUnderSubId: string | null = null;
+  /** Sekcja brygady — roboty zawsze widoczne (brak drzewa kategorii). */
+  let underCrewSection = false;
 
   for (const row of rows) {
     if (row.section) {
@@ -186,6 +188,7 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
         row.projectId && !row.crew && !row.docLane,
       );
       if (isProjectHeader) {
+        underCrewSection = false;
         hideUnderProject = collapsedKeys.has(
           projectCollapseKey(row.projectId!),
         );
@@ -194,7 +197,8 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
         out.push(row);
         continue;
       }
-      if (row.crew) {
+      if (row.crew || String(row.id).startsWith("sec-crew-")) {
+        underCrewSection = true;
         hideUnderProject = false;
         hideUnderCategory = false;
         hideUnderSubId = null;
@@ -202,6 +206,7 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
         continue;
       }
       // Dokumentacja / inne sekcje pod inwestycją
+      underCrewSection = false;
       if (hideUnderProject) continue;
       hideUnderCategory = false;
       hideUnderSubId = null;
@@ -219,6 +224,7 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
     }
 
     if (row.categoryLane && row.projectId && row.categoryId) {
+      underCrewSection = false;
       const key = categoryCollapseKey(row.projectId, row.categoryId);
       hideUnderCategory = revealLevel <= 0 || collapsedKeys.has(key);
       hideUnderSubId = null;
@@ -237,7 +243,11 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
       continue;
     }
 
-    // Zakresy (works) + placeholdery
+    // Zakresy (works) + placeholdery — pod brygadą zawsze widoczne.
+    if (underCrewSection) {
+      out.push(row);
+      continue;
+    }
     if (revealLevel < 2) continue;
     if (hideUnderSubId && row.parentId === hideUnderSubId) continue;
     out.push(row);

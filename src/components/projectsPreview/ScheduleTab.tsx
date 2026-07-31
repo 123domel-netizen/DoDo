@@ -495,8 +495,12 @@ export function ScheduleTab({
   }, [rows]);
 
   const boardRows = useMemo(
-    () => filterCollapsedBoardRows(rows, collapsedRowKeys, revealLevel),
-    [rows, collapsedRowKeys, revealLevel],
+    () =>
+      // Widok brygad: zawsze pełna lista robót pod sekcjami (bez drzewa kategorii).
+      mode === "byCrew"
+        ? rows
+        : filterCollapsedBoardRows(rows, collapsedRowKeys, revealLevel),
+    [mode, rows, collapsedRowKeys, revealLevel],
   );
 
   const toggleProjectCollapse = (projectId: string) => {
@@ -883,6 +887,7 @@ export function ScheduleTab({
           <ScheduleMobileList
             mode={mode}
             projects={scopeProjects}
+            crews={state.crews}
             blocks={blocks}
             events={scheduleEvents}
             catalog={state.scheduleCatalog}
@@ -898,6 +903,8 @@ export function ScheduleTab({
             onAddEvent={(pid) =>
               openEventSheet({ kind: "budowlane", projectId: pid })
             }
+            onAddCrew={() => setCrewEdit("new")}
+            onEditCrew={(crew) => setCrewEdit(crew)}
           />
         ) : (
           <TimelineBoard
@@ -928,16 +935,20 @@ export function ScheduleTab({
             onMoveCategory={(projectId, categoryId, start, end, opts) => {
               repo.moveCategoryWindow(projectId, categoryId, start, end, opts);
             }}
-            categoryCollapse={{
-              collapsedKeys: collapsedRowKeys,
-              revealLevel,
-              onToggleProject: toggleProjectCollapse,
-              onToggleCategory: toggleCategoryCollapse,
-              onToggleSubcategory: toggleSubcategoryCollapse,
-              onMinimizeAll: minimizeAllRows,
-              onExpandStep: expandRowsStep,
-              expandStepLabel: nextExpandStepLabel(revealLevel),
-            }}
+            categoryCollapse={
+              mode === "byCrew"
+                ? undefined
+                : {
+                    collapsedKeys: collapsedRowKeys,
+                    revealLevel,
+                    onToggleProject: toggleProjectCollapse,
+                    onToggleCategory: toggleCategoryCollapse,
+                    onToggleSubcategory: toggleSubcategoryCollapse,
+                    onMinimizeAll: minimizeAllRows,
+                    onExpandStep: expandRowsStep,
+                    expandStepLabel: nextExpandStepLabel(revealLevel),
+                  }
+            }
             onEditCrew={
               mode === "byCrew" ? (crew) => setCrewEdit(crew) : undefined
             }
@@ -1802,6 +1813,7 @@ function projectNumberLabel(
 function ScheduleMobileList({
   mode,
   projects,
+  crews,
   blocks,
   events,
   catalog,
@@ -1810,9 +1822,12 @@ function ScheduleMobileList({
   onEditBlock,
   onEditEvent,
   onAddEvent,
+  onAddCrew,
+  onEditCrew,
 }: {
   mode: ScheduleViewMode;
   projects: PreviewProject[];
+  crews: PreviewCrew[];
   blocks: ScheduleBlock[];
   events: ScheduleEvent[];
   catalog: ScheduleCatalogPreset;
@@ -1821,9 +1836,148 @@ function ScheduleMobileList({
   onEditBlock: (b: ScheduleBlock) => void;
   onEditEvent: (e: ScheduleEvent) => void;
   onAddEvent: (projectId: string) => void;
+  onAddCrew?: () => void;
+  onEditCrew?: (crew: PreviewCrew) => void;
 }) {
   const today = todayIso();
   const single = mode === "project" && projects.length === 1 ? projects[0] : null;
+
+  if (mode === "byCrew") {
+    const workBlocks = blocks
+      .filter((b) => b.role === "work")
+      .slice()
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const lanes: Array<{ crew: PreviewCrew | null; list: ScheduleBlock[] }> =
+      crews.map((crew) => ({
+        crew,
+        list: workBlocks.filter((b) => b.crewId === crew.id),
+      }));
+    const unassigned = workBlocks.filter((b) => !b.crewId);
+    if (unassigned.length > 0) lanes.push({ crew: null, list: unassigned });
+
+    const projectOf = (id: string) => projects.find((p) => p.id === id);
+
+    return (
+      <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface">
+        <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+          <p className="min-w-0 flex-1 text-[12px] text-ink-faint">
+            Brygady i ich prace
+          </p>
+          <button
+            type="button"
+            onClick={onOpenTimeline}
+            className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-lg border border-accent/40 bg-accent/10 px-2.5 text-[12px] font-semibold text-accent"
+          >
+            <GanttChart size={14} />
+            Oś
+          </button>
+          {onAddCrew ? (
+            <button
+              type="button"
+              onClick={onAddCrew}
+              className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-lg border border-line px-2.5 text-[12px] font-medium text-ink-light"
+            >
+              <Plus size={14} />
+              Brygada
+            </button>
+          ) : null}
+        </div>
+
+        {lanes.length === 0 ? (
+          <p className="px-3 py-10 text-center text-sm text-ink-faint">
+            Brak brygad. Dodaj brygadę albo przypisz roboty.
+          </p>
+        ) : (
+          <div className="space-y-3 p-3 pb-6">
+            {lanes.map((lane) => {
+              const key = lane.crew?.id ?? "none";
+              const color = lane.crew?.color ?? "#9b9a97";
+              return (
+                <section
+                  key={key}
+                  className="overflow-hidden rounded-2xl border border-line bg-surface-overlay/60"
+                >
+                  <div className="flex items-center gap-2 border-b border-line/70 px-3 py-2.5">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ background: color }}
+                      aria-hidden
+                    />
+                    <h3 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-ink">
+                      {lane.crew?.name ?? "Bez brygady"}
+                    </h3>
+                    <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+                      {lane.list.length}
+                    </span>
+                    {lane.crew && onEditCrew ? (
+                      <button
+                        type="button"
+                        onClick={() => onEditCrew(lane.crew!)}
+                        className="rounded-md p-1 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+                        title="Edytuj brygadę"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    ) : null}
+                  </div>
+                  {lane.list.length === 0 ? (
+                    <p className="px-3 py-3 text-[12px] text-ink-faint">
+                      Brak przypisanych prac
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-line/50">
+                      {lane.list.map((b) => {
+                        const p = projectOf(b.projectId);
+                        return (
+                          <li key={b.id}>
+                            <button
+                              type="button"
+                              onClick={() => onEditBlock(b)}
+                              className="flex w-full min-h-12 items-start gap-2 px-3 py-2.5 text-left transition active:bg-surface-raised"
+                            >
+                              <span
+                                className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+                                style={{ background: b.color || color }}
+                                aria-hidden
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-medium text-ink">
+                                  {b.title || b.scope || "Zakres"}
+                                </span>
+                                <span className="mt-0.5 block truncate text-[11px] text-ink-faint">
+                                  {p ? (
+                                    <>
+                                      <span className="text-ink-light">
+                                        #{p.number}
+                                      </span>{" "}
+                                      {p.name}
+                                    </>
+                                  ) : (
+                                    "Budowa"
+                                  )}
+                                  {" · "}
+                                  {formatDayShort(b.startDate)}
+                                  {b.endDate !== b.startDate
+                                    ? ` – ${formatDayShort(b.endDate)}`
+                                    : ""}
+                                  {" · "}
+                                  {SCHEDULE_STATUS_LABEL[b.status]}
+                                </span>
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (single) {
     const works = blocks
@@ -1949,9 +2103,7 @@ function ScheduleMobileList({
     <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface p-3 pb-6">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="text-[12px] text-ink-faint">
-          {mode === "byCrew"
-            ? "Wybierz budowę albo przełącz na oś czasu."
-            : "Budowy w zakresie — wejdź w szczegóły lub otwórz oś."}
+          Budowy w zakresie — wejdź w szczegóły lub otwórz oś.
         </p>
         <button
           type="button"
@@ -2173,6 +2325,32 @@ function TimelineBoard({
     return offset >= 0 && offset < range.days ? offset : null;
   }, [range.start, range.days]);
   const showMarkers = dayPx >= (compactMarkers ? 14 : MARKER_MIN_DAY_PX);
+  /** Lewa krawędź widocznego wykresu w px osi (nie całego scrollerа). */
+  const [chartScrollLeft, setChartScrollLeft] = useState(0);
+  const [chartViewWidth, setChartViewWidth] = useState(800);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const read = () => {
+      raf = 0;
+      setChartScrollLeft(el.scrollLeft);
+      setChartViewWidth(Math.max(120, el.clientWidth - labelPx));
+    };
+    const onScrollOrResize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(read);
+    };
+    read();
+    el.addEventListener("scroll", onScrollOrResize, { passive: true });
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      el.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [scrollerRef, labelPx, rows.length, dayPx]);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -2769,6 +2947,8 @@ function TimelineBoard({
                                 crews={crews}
                                 conflict={conflictIds.has(b.id)}
                                 label={barLabel?.(b) ?? b.title}
+                                chartScrollLeft={chartScrollLeft}
+                                chartViewWidth={chartViewWidth}
                                 parentWindow={parent ?? null}
                                 onEdit={() => onEdit(b)}
                                 onMove={onMove}
@@ -3271,6 +3451,8 @@ function DraggableBar({
   crews,
   conflict,
   label,
+  chartScrollLeft = 0,
+  chartViewWidth = 800,
   parentWindow,
   onEdit,
   onMove,
@@ -3282,6 +3464,9 @@ function DraggableBar({
   crews: PreviewCrew[];
   conflict: boolean;
   label: string;
+  /** scrollLeft scrollerа (= lewa krawędź widocznego wykresu w px osi). */
+  chartScrollLeft?: number;
+  chartViewWidth?: number;
   parentWindow: ScheduleBlock | null;
   onEdit: () => void;
   onMove: (id: string, start: string, end: string) => void;
@@ -3306,6 +3491,20 @@ function DraggableBar({
   const end = live?.end ?? block.endDate;
   const left = dayOffset(rangeStart, start) * dayPx;
   const width = Math.max(BAR_MIN_PX, (dayOffset(start, end) + 1) * dayPx);
+
+  // Przesuń etykietę w prawo, gdy początek paska jest poza lewym brzegiem widoku.
+  const handleW = 6;
+  const labelPad = Math.max(
+    0,
+    Math.min(
+      chartScrollLeft - left,
+      Math.max(0, width - handleW * 2 - 36),
+    ),
+  );
+  const visibleStart = Math.max(left, chartScrollLeft);
+  const visibleEnd = Math.min(left + width, chartScrollLeft + chartViewWidth);
+  const visibleW = Math.max(0, visibleEnd - visibleStart);
+  const showCrew = Boolean(crew?.name) && visibleW >= Math.max(56, dayPx * 2.5);
 
   const overflow = parentWindow
     ? scheduleOverflow({ startDate: start, endDate: end }, parentWindow)
@@ -3379,7 +3578,7 @@ function DraggableBar({
 
   return (
     <div
-      className={`absolute ${paused ? "opacity-70" : ""} ${
+      className={`absolute overflow-hidden rounded-md ${paused ? "opacity-70" : ""} ${
         done ? "opacity-60" : ""
       }`}
       style={{ left, width, top, height: barH }}
@@ -3424,7 +3623,7 @@ function DraggableBar({
           liveRef.current = null;
           setLive(null);
         }}
-        className={`absolute inset-0 flex cursor-grab items-stretch overflow-hidden rounded-md text-white active:cursor-grabbing ${
+        className={`absolute inset-0 flex cursor-grab items-stretch text-white active:cursor-grabbing ${
           conflict || overflow?.outside
             ? "ring-2 ring-amber-400"
             : "shadow-sm"
@@ -3440,18 +3639,24 @@ function DraggableBar({
           onPointerDown={(e) => onPointerDown(e, "resize-start")}
         />
         <div
-          className="min-w-0 flex-1 truncate px-1.5 text-left text-[10px] font-semibold leading-none"
-          style={{ display: "flex", alignItems: "center" }}
+          className="relative min-w-0 flex-1 self-stretch overflow-hidden"
           onPointerDown={(e) => onPointerDown(e, "move")}
         >
-          <div className="flex min-w-0 items-center gap-1 truncate">
+          <div
+            className="flex h-full min-w-0 items-center gap-1 truncate px-1.5 text-left text-[10px] font-semibold leading-none"
+            style={{
+              marginLeft: labelPad,
+              maxWidth: Math.max(40, visibleW - handleW - 2),
+              textShadow: "0 1px 2px rgba(0,0,0,0.55)",
+            }}
+          >
             {done ? (
               <CheckCircle2 size={9} className="shrink-0" aria-hidden />
             ) : null}
             <span className="truncate">{label}</span>
-            {width >= dayPx * 4 && crew?.name ? (
-              <span className="truncate font-normal opacity-80">
-                · {crew.name}
+            {showCrew ? (
+              <span className="truncate font-normal opacity-90">
+                · {crew!.name}
               </span>
             ) : null}
           </div>
