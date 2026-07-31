@@ -58,7 +58,7 @@ export interface ChatOverviewEntry {
   myPinnedAt: string | null;
   /** Wyciszenie do (ISO; "infinity" = na zawsze; null = brak). */
   myMutedUntil: string | null;
-  /** Zarchiwizowana dla mnie — tylko w folderze Archiwum. */
+  /** Zarchiwizowana dla mnie (DM) albo globalnie (kanał przez admina) — folder Archiwum. */
   myArchivedAt: string | null;
   /** Ręcznie oznaczona jako nieprzeczytana. */
   myMarkedUnread: boolean;

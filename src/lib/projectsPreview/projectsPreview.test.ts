@@ -34,6 +34,12 @@ import {
   tickLevelForDayPx,
   ticksForRange,
 } from "./scheduleZoom";
+import {
+  categoryCollapseKey,
+  filterCollapsedBoardRows,
+  projectCollapseKey,
+  subcategoryCollapseKey,
+} from "./scheduleRowCollapse";
 import { searchProjects, visibleProjects } from "./search";
 import { buildDemoState } from "./demoSeed";
 import { collectScheduleDashboardHints } from "./dashboardScheduleHints";
@@ -473,6 +479,30 @@ describe("projectsPreview schedule hierarchy", () => {
     expect(children[0]!.endDate).toBe(work!.endDate);
   });
 
+  it("allows work without category (investment row)", () => {
+    const row = repo.upsertScheduleBlock({
+      projectId: "p-121",
+      categoryId: "__project__",
+      scope: "Ogrodzenie tymczasowe",
+      title: "Ogrodzenie tymczasowe",
+      role: "work",
+      parentId: "sb-1",
+      crewId: "crew-1",
+      startDate: "2026-08-01",
+      endDate: "2026-08-10",
+      status: "planowane",
+      color: "#888",
+      note: "",
+    });
+    expect(row.categoryId).toBe("__project__");
+    expect(row.parentId).toBeNull();
+    expect(row.role).toBe("work");
+    expect(
+      repo.listSchedule("p-121").find((b) => b.id === row.id)?.categoryId,
+    ).toBe("__project__");
+    expect(repo.promoteToSubcategory(row.id)).toBeNull();
+  });
+
   it("allows upsert of work outside parent window", () => {
     const overflow = scheduleOverflow(
       { startDate: "2026-08-01", endDate: "2026-08-04" },
@@ -547,7 +577,8 @@ describe("projectsPreview schedule events", () => {
     expect(repo.listScheduleEvents("p-121", "sb-1").length).toBeGreaterThan(0);
     repo.deleteScheduleBlock("sb-1");
     expect(repo.listScheduleEvents("p-121", "sb-1")).toHaveLength(0);
-    // sb-1a was a child of sb-1 — its documentary event survives, unlinked.
+    // Cascade: child work sb-1a is removed; its documentary event survives unlinked.
+    expect(repo.listSchedule().some((b) => b.id === "sb-1a")).toBe(false);
     const doc = repo.listScheduleEvents("p-121").find((e) => e.id === "si-5");
     expect(doc?.blockId).toBe(null);
   });
@@ -577,6 +608,25 @@ describe("projectsPreview schedule events", () => {
     });
     expect(created.time).toBe("09:30");
     expect(created.reportedByUserId).toBe("u-admin");
+  });
+
+  it("removeProjectCategory deletes meta and all blocks in the category", () => {
+    const before = repo
+      .listSchedule("p-121")
+      .filter((b) => b.categoryId === "instalacje");
+    expect(before.length).toBeGreaterThan(0);
+    repo.upsertCategoryMeta({
+      projectId: "p-121",
+      categoryId: "instalacje",
+      title: "Instalacje custom",
+      note: "",
+    });
+    const { deletedBlockIds } = repo.removeProjectCategory("p-121", "instalacje");
+    expect(deletedBlockIds.length).toBe(before.length);
+    expect(
+      repo.listSchedule("p-121").every((b) => b.categoryId !== "instalacje"),
+    ).toBe(true);
+    expect(repo.getCategoryMeta("p-121", "instalacje")).toBe(null);
   });
 });
 
@@ -737,6 +787,60 @@ describe("projectsPreview production flag", () => {
     expect(isProjectsPreviewEnabled()).toBe(
       import.meta.env.VITE_PROJECTS_PREVIEW === "1",
     );
+  });
+});
+
+describe("projectsPreview scheduleRowCollapse", () => {
+  const sampleRows = [
+    { id: "sec-a", section: true, projectId: "p-a", blocks: [] as { id: string }[] },
+    {
+      id: "cat-a1",
+      categoryLane: true,
+      projectId: "p-a",
+      categoryId: "c1",
+      blocks: [] as { id: string }[],
+    },
+    {
+      id: "sub-a1",
+      subcategory: true,
+      projectId: "p-a",
+      categoryId: "c1",
+      blocks: [{ id: "sub-a1" }],
+    },
+    {
+      id: "work-a1",
+      parentId: "sub-a1",
+      projectId: "p-a",
+      categoryId: "c1",
+      blocks: [{ id: "work-a1" }],
+    },
+    { id: "sec-b", section: true, projectId: "p-b", blocks: [] as { id: string }[] },
+    {
+      id: "cat-b1",
+      categoryLane: true,
+      projectId: "p-b",
+      categoryId: "c1",
+      blocks: [] as { id: string }[],
+    },
+  ];
+
+  it("hides everything under a collapsed investment", () => {
+    const collapsed = new Set([projectCollapseKey("p-a")]);
+    const visible = filterCollapsedBoardRows(sampleRows, collapsed, 2).map(
+      (r) => r.id,
+    );
+    expect(visible).toEqual(["sec-a", "sec-b", "cat-b1"]);
+  });
+
+  it("keeps category / subcategory collapse under open investments", () => {
+    const collapsed = new Set([
+      categoryCollapseKey("p-a", "c1"),
+      subcategoryCollapseKey("sub-a1"),
+    ]);
+    const visible = filterCollapsedBoardRows(sampleRows, collapsed, 2).map(
+      (r) => r.id,
+    );
+    expect(visible).toEqual(["sec-a", "cat-a1", "sec-b", "cat-b1"]);
   });
 });
 

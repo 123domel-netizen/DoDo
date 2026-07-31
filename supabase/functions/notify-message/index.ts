@@ -100,10 +100,12 @@ Deno.serve(async (req) => {
 
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, kind, name, item_id, archived_at")
+    .select("id, kind, name, item_id, archived_at, channel_archived_at")
     .eq("id", msg.conversation_id)
     .maybeSingle();
-  if (!conv || conv.archived_at) return json({ ok: true, sent: 0 });
+  if (!conv || conv.archived_at || conv.channel_archived_at) {
+    return json({ ok: true, sent: 0 });
+  }
 
   // Odbiorcy: aktywni członkowie − autor − notify:none − wyciszeni (muted_until)
   // − (tryb „tylko wzmianki" bez wzmianki).

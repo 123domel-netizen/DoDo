@@ -31,8 +31,10 @@ import {
   categoryCollapseKey,
   collapseAllScheduleRows,
   expandScheduleRowsStep,
+  filterCollapsedBoardRows,
   loadScheduleCollapseState,
   nextExpandStepLabel,
+  projectCollapseKey,
   subcategoryCollapseKey,
   toggleCollapsedKey,
   type ScheduleRevealLevel,
@@ -40,6 +42,7 @@ import {
 import { softenScheduleColor } from "@/lib/projectsPreview/softenScheduleColor";
 import {
   DOC_EVENT_STATUS_LABEL,
+  PROJECT_LEVEL_EVENT_CATEGORY,
   SCHEDULE_EVENT_KIND_LABEL,
   SCHEDULE_STATUS_LABEL,
   isProjectLevelEventCategory,
@@ -116,6 +119,18 @@ const ROW_WORK = 28;
 /** Select „Inny” w arkuszu kategorii — własna nazwa. */
 const CATEGORY_INNY_VALUE = "__inny__";
 
+function newCustomCategoryId(title: string): string {
+  const slug = title
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `custom-${slug || "kategoria"}-${suffix}`;
+}
+
 /** Compact PL date range for labels/tooltips: 22.07–02.08 */
 function shortDateRange(start: string, end: string): string {
   const fmt = (iso: string) => {
@@ -161,7 +176,19 @@ export function ScheduleTab({
     projectId?: string;
     /** Toolbar „Dodaj pozycję” — wybór Kategoria / Podkategoria / Zakres. */
     pickPositionKind?: boolean;
+    /** Prefill po powrocie z tworzenia kategorii. */
+    scopePreset?: string;
+    customScope?: string;
+    startDate?: string;
+    endDate?: string;
+    crewId?: string;
+    status?: ScheduleBlockStatus;
+    note?: string;
+    color?: string;
   }>({});
+  /** Po zapisaniu nowej kategorii wróć do formularza zakresu/podkategorii. */
+  const [resumeBlockAfterCategory, setResumeBlockAfterCategory] = useState(false);
+  const [createNonce, setCreateNonce] = useState(0);
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [overflowHint, setOverflowHint] = useState<string | null>(null);
   const [eventEdit, setEventEdit] = useState<{
@@ -321,14 +348,21 @@ export function ScheduleTab({
     setCreating(false);
     setCreatingCategory(false);
     setCreateDefaults({});
+    setResumeBlockAfterCategory(false);
   };
 
-  const openNewCategory = (defaults?: { projectId?: string }) => {
+  const openNewCategory = (defaults?: {
+    projectId?: string;
+    resumeBlock?: boolean;
+    blockDraft?: typeof createDefaults;
+  }) => {
     setCreatingCategory(true);
     setCreating(false);
     setEditing(null);
+    setResumeBlockAfterCategory(Boolean(defaults?.resumeBlock));
     setCreateDefaults({
-      projectId: defaults?.projectId,
+      ...(defaults?.blockDraft ?? {}),
+      projectId: defaults?.projectId ?? defaults?.blockDraft?.projectId,
       pickPositionKind: true,
     });
   };
@@ -434,9 +468,18 @@ export function ScheduleTab({
 
   /** Wiele budów naraz → tylko kategorie; pojedyncza budowa → od razu rozwinięte. */
   const collapseInventory = useMemo(() => {
+    const projectKeys: string[] = [];
     const categoryKeys: string[] = [];
     const subcategoryKeys: string[] = [];
     for (const row of rows) {
+      if (
+        row.section &&
+        row.projectId &&
+        !row.crew &&
+        !row.docLane
+      ) {
+        projectKeys.push(projectCollapseKey(row.projectId));
+      }
       if (row.categoryLane && row.projectId && row.categoryId) {
         categoryKeys.push(categoryCollapseKey(row.projectId, row.categoryId));
       }
@@ -447,47 +490,18 @@ export function ScheduleTab({
         }
       }
     }
-    return { categoryKeys, subcategoryKeys };
+    return { projectKeys, categoryKeys, subcategoryKeys };
   }, [rows]);
 
-  const boardRows = useMemo(() => {
-    const out: TimelineRow[] = [];
-    let hideUnderCategory = false;
-    let hideUnderSubId: string | null = null;
-    for (const row of rows) {
-      if (row.section) {
-        hideUnderCategory = false;
-        hideUnderSubId = null;
-        out.push(row);
-        continue;
-      }
-      if (row.categoryLane && row.projectId && row.categoryId) {
-        const key = categoryCollapseKey(row.projectId, row.categoryId);
-        hideUnderCategory =
-          revealLevel <= 0 || collapsedRowKeys.has(key);
-        hideUnderSubId = null;
-        out.push(row);
-        continue;
-      }
-      if (hideUnderCategory) continue;
+  const boardRows = useMemo(
+    () => filterCollapsedBoardRows(rows, collapsedRowKeys, revealLevel),
+    [rows, collapsedRowKeys, revealLevel],
+  );
 
-      if (row.subcategory) {
-        if (revealLevel < 1) continue;
-        const subId = row.blocks[0]?.id ?? row.id;
-        const subKey = subcategoryCollapseKey(subId);
-        hideUnderSubId =
-          revealLevel < 2 || collapsedRowKeys.has(subKey) ? subId : null;
-        out.push(row);
-        continue;
-      }
-
-      // Zakresy (works)
-      if (revealLevel < 2) continue;
-      if (hideUnderSubId && row.parentId === hideUnderSubId) continue;
-      out.push(row);
-    }
-    return out;
-  }, [rows, collapsedRowKeys, revealLevel]);
+  const toggleProjectCollapse = (projectId: string) => {
+    const key = projectCollapseKey(projectId);
+    setCollapsedRowKeys((prev) => toggleCollapsedKey(prev, key, revealLevel));
+  };
 
   const toggleCategoryCollapse = (projectId: string, categoryId: string) => {
     const key = categoryCollapseKey(projectId, categoryId);
@@ -916,6 +930,7 @@ export function ScheduleTab({
             categoryCollapse={{
               collapsedKeys: collapsedRowKeys,
               revealLevel,
+              onToggleProject: toggleProjectCollapse,
               onToggleCategory: toggleCategoryCollapse,
               onToggleSubcategory: toggleSubcategoryCollapse,
               onMinimizeAll: minimizeAllRows,
@@ -972,8 +987,16 @@ export function ScheduleTab({
                 : undefined
             }
             onAddUnderProject={
-              mode === "allBuilds"
-                ? (pid) => openNewCategory({ projectId: pid })
+              mode === "allBuilds" || mode === "project"
+                ? (pid) =>
+                    openNewCategory({
+                      projectId: pid,
+                      // Z + przy inwestycji: zakres może od razu trafić na wiersz budowy.
+                      blockDraft: {
+                        categoryId: PROJECT_LEVEL_EVENT_CATEGORY,
+                        role: "work",
+                      },
+                    })
                 : undefined
             }
             onEditProject={
@@ -1006,7 +1029,7 @@ export function ScheduleTab({
         <BlockEditorSheet
           key={
             editing?.id ??
-            `new-${createDefaults.parentId ?? (createDefaults.pickPositionKind ? "pick" : "root")}`
+            `new-${createNonce}-${createDefaults.categoryId ?? "cat"}-${createDefaults.parentId ?? (createDefaults.pickPositionKind ? "pick" : "root")}`
           }
           block={editing}
           creating={creating}
@@ -1028,19 +1051,36 @@ export function ScheduleTab({
           }
           onClose={closeEditor}
           onSave={(data) => {
+            if (data.newCategoryTitle) {
+              repo.upsertCategoryMeta({
+                projectId: data.projectId,
+                categoryId: data.categoryId,
+                title: data.newCategoryTitle,
+                note: "",
+              });
+            }
             repo.upsertScheduleBlock(data);
             closeEditor();
           }}
-          onPickCategory={() => {
+          onPickCategory={(draft) => {
             openNewCategory({
               projectId:
+                draft?.projectId ??
                 createDefaults.projectId ??
                 projectId ??
                 scopeProjects[0]?.id,
+              resumeBlock: true,
+              blockDraft: {
+                ...createDefaults,
+                ...draft,
+                role: draft?.role ?? createDefaults.role ?? "work",
+              },
             });
           }}
           onPromote={
-            editing?.role === "work" && !editing.parentId
+            editing?.role === "work" &&
+            !editing.parentId &&
+            !isProjectLevelEventCategory(editing.categoryId)
               ? () => {
                   repo.promoteToSubcategory(editing.id);
                   closeEditor();
@@ -1064,6 +1104,29 @@ export function ScheduleTab({
           onDelete={
             editing
               ? () => {
+                  const children = state.scheduleBlocks.filter(
+                    (b) => b.parentId === editing.id,
+                  );
+                  if (editing.role === "subcategory" && children.length > 0) {
+                    const n = children.length;
+                    if (
+                      !confirm(
+                        `Ta podkategoria zawiera ${n} ${
+                          n === 1 ? "zakres" : n < 5 ? "zakresy" : "zakresów"
+                        }. Usunąć podkategorię wraz z zakresami?`,
+                      )
+                    ) {
+                      return;
+                    }
+                  } else if (
+                    !confirm(
+                      editing.role === "subcategory"
+                        ? "Usunąć tę podkategorię?"
+                        : "Usunąć ten zakres?",
+                    )
+                  ) {
+                    return;
+                  }
                   repo.deleteScheduleBlock(editing.id);
                   closeEditor();
                 }
@@ -1100,6 +1163,10 @@ export function ScheduleTab({
                 createDefaults.projectId ??
                 projectId ??
                 scopeProjects[0]?.id,
+              // Podkategoria wymaga kategorii katalogowej.
+              categoryId: isProjectLevelEventCategory(createDefaults.categoryId)
+                ? undefined
+                : createDefaults.categoryId,
             })
           }
           onAddWork={() =>
@@ -1110,6 +1177,7 @@ export function ScheduleTab({
                 createDefaults.projectId ??
                 projectId ??
                 scopeProjects[0]?.id,
+              categoryId: createDefaults.categoryId,
             })
           }
           onSave={(data) => {
@@ -1125,6 +1193,22 @@ export function ScheduleTab({
               title: data.title,
               note: data.note,
             });
+            if (resumeBlockAfterCategory) {
+              const draft = { ...createDefaults };
+              setCreatingCategory(false);
+              setResumeBlockAfterCategory(false);
+              setCreating(true);
+              setEditing(null);
+              setCreateNonce((n) => n + 1);
+              setCreateDefaults({
+                ...draft,
+                projectId: pid,
+                categoryId: data.categoryId,
+                role: draft.role ?? "work",
+                pickPositionKind: false,
+              });
+              return;
+            }
             closeEditor();
           }}
         />
@@ -1215,6 +1299,50 @@ export function ScheduleTab({
               categoryId: cid,
               role: "work",
             });
+          }}
+          onDelete={() => {
+            const { projectId: pid, categoryId: cid } = categoryEdit;
+            const inCat = state.scheduleBlocks.filter(
+              (b) => b.projectId === pid && b.categoryId === cid,
+            );
+            const subCount = inCat.filter((b) => b.role === "subcategory").length;
+            const workCount = inCat.filter((b) => b.role === "work").length;
+            if (inCat.length > 0) {
+              const parts: string[] = [];
+              if (subCount) {
+                parts.push(
+                  `${subCount} ${
+                    subCount === 1
+                      ? "podkategorię"
+                      : subCount < 5
+                        ? "podkategorie"
+                        : "podkategorii"
+                  }`,
+                );
+              }
+              if (workCount) {
+                parts.push(
+                  `${workCount} ${
+                    workCount === 1
+                      ? "zakres"
+                      : workCount < 5
+                        ? "zakresy"
+                        : "zakresów"
+                  }`,
+                );
+              }
+              if (
+                !confirm(
+                  `Kategoria zawiera ${parts.join(" i ")}. Usunąć kategorię wraz z całą zawartością?`,
+                )
+              ) {
+                return;
+              }
+            } else if (!confirm("Usunąć tę kategorię z harmonogramu budowy?")) {
+              return;
+            }
+            repo.removeProjectCategory(pid, cid);
+            setCategoryEdit(null);
           }}
         />
       ) : null}
@@ -1393,17 +1521,35 @@ function buildProjectScopeRows(
     .slice()
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const byCat = new Map<string, ScheduleBlock[]>();
+  const projectLevelWorks: ScheduleBlock[] = [];
   for (const b of blocks) {
+    if (isProjectLevelEventCategory(b.categoryId)) {
+      if (b.role === "work") projectLevelWorks.push(b);
+      continue;
+    }
     const key = b.categoryId || "stan-0";
     const list = byCat.get(key) ?? [];
     list.push(b);
     byCat.set(key, list);
   }
+  projectLevelWorks.sort((a, b) => a.startDate.localeCompare(b.startDate));
   const blockIds = new Set(blocks.map((b) => b.id));
   const metaFor = (catId: string) =>
     categoryMeta.find(
       (m) => m.projectId === projectId && m.categoryId === catId,
     );
+
+  const appendProjectLevelWorkRows = (): TimelineRow[] =>
+    projectLevelWorks.map((b) => ({
+      id: b.id,
+      label: b.title || b.scope,
+      meta: crewName(b.crewId),
+      color: b.color,
+      indented: true,
+      projectId,
+      categoryId: PROJECT_LEVEL_EVENT_CATEGORY,
+      blocks: [b],
+    }));
 
   const appendCatRows = (catId: string, catLabel: string, list: ScheduleBlock[]) => {
     const laneEvents = categoryEventsForLane(
@@ -1515,6 +1661,7 @@ function buildProjectScopeRows(
       blocks: [],
       looseEvents: projectLevelBudowlaneEvents(events, projectId),
     });
+    rows.push(...appendProjectLevelWorkRows());
     rows.push({
       id: `doc-lane-${projectId}`,
       label: "Dokumentacja",
@@ -1524,6 +1671,8 @@ function buildProjectScopeRows(
       blocks: [],
       looseEvents: projectDocEvents(events, projectId),
     });
+  } else {
+    rows.push(...appendProjectLevelWorkRows());
   }
   const seen = new Set<string>();
   for (const cat of cats) {
@@ -1542,11 +1691,15 @@ function buildProjectScopeRows(
       .map((e) => e.categoryId)
       .filter((id): id is string => Boolean(id)),
     ...categoryMeta
-      .filter((m) => m.projectId === projectId)
+      .filter(
+        (m) =>
+          m.projectId === projectId &&
+          !isProjectLevelEventCategory(m.categoryId),
+      )
       .map((m) => m.categoryId),
   ]);
   for (const catId of extraIds) {
-    if (seen.has(catId)) continue;
+    if (seen.has(catId) || isProjectLevelEventCategory(catId)) continue;
     seen.add(catId);
     rows.push(
       ...appendCatRows(
@@ -1988,6 +2141,7 @@ function TimelineBoard({
   categoryCollapse?: {
     collapsedKeys: Set<string>;
     revealLevel: ScheduleRevealLevel;
+    onToggleProject: (projectId: string) => void;
     onToggleCategory: (projectId: string, categoryId: string) => void;
     onToggleSubcategory: (subcategoryId: string) => void;
     onMinimizeAll: () => void;
@@ -2154,6 +2308,20 @@ function TimelineBoard({
 
           {rows.map((row) =>
             row.section ? (
+              (() => {
+                const isProjectHeader = Boolean(
+                  row.projectId && !row.crew && !row.docLane,
+                );
+                const projKey =
+                  isProjectHeader && row.projectId
+                    ? projectCollapseKey(row.projectId)
+                    : null;
+                const projCollapsed = projKey
+                  ? Boolean(categoryCollapse?.collapsedKeys.has(projKey))
+                  : false;
+                const showProjToggle =
+                  Boolean(categoryCollapse) && isProjectHeader;
+                return (
               <div
                 key={row.id}
                 className="flex border-b border-line bg-surface-raised"
@@ -2163,6 +2331,28 @@ function TimelineBoard({
                   className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-line bg-surface-raised px-2.5"
                   style={{ width: labelPx }}
                 >
+                  {showProjToggle ? (
+                    <button
+                      type="button"
+                      title={
+                        projCollapsed
+                          ? "Rozwiń inwestycję"
+                          : "Zwiń inwestycję"
+                      }
+                      aria-expanded={!projCollapsed}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        categoryCollapse!.onToggleProject(row.projectId!);
+                      }}
+                      className="shrink-0 rounded p-0.5 text-ink-faint hover:bg-surface-overlay hover:text-ink"
+                    >
+                      {projCollapsed ? (
+                        <ChevronRight size={13} />
+                      ) : (
+                        <ChevronDown size={13} />
+                      )}
+                    </button>
+                  ) : null}
                   {row.crew ? (
                     <span
                       className="h-2 w-2 shrink-0 rounded-full"
@@ -2187,7 +2377,7 @@ function TimelineBoard({
                   {row.projectId && onAddUnderProject && !row.crew && !row.docLane ? (
                     <button
                       type="button"
-                      title="Dodaj kategorię na budowie"
+                      title="Dodaj pozycję na budowie"
                       onClick={(e) => {
                         e.stopPropagation();
                         onAddUnderProject(row.projectId!);
@@ -2248,6 +2438,8 @@ function TimelineBoard({
                     : null}
                 </div>
               </div>
+                );
+              })()
             ) : (
               (() => {
                 const h = rowHeightOf(row);
@@ -3328,6 +3520,7 @@ function CategoryLaneSheet({
   onSave,
   onAddSubcategory,
   onAddWork,
+  onDelete,
   creating = false,
   showKindPicker = false,
   projectId: initialProjectId,
@@ -3348,6 +3541,7 @@ function CategoryLaneSheet({
   }) => void;
   onAddSubcategory?: () => void;
   onAddWork?: () => void;
+  onDelete?: () => void;
   creating?: boolean;
   /** Toolbar: Kategoria | Podkategoria | Zakres. */
   showKindPicker?: boolean;
@@ -3367,8 +3561,12 @@ function CategoryLaneSheet({
     startAsInny ? initialTitle.trim() || (known ? "" : catalogTitle) : "",
   );
   /** Przy edycji zachowaj id (np. stan-0 z własną nazwą / custom). */
-  const [innyCategoryId] = useState(
-    startAsInny ? (creating ? "inny" : categoryId || "inny") : "inny",
+  const [innyCategoryId] = useState(() =>
+    startAsInny
+      ? creating
+        ? "" // nadamy przy zapisie z tytułu
+        : categoryId || ""
+      : "",
   );
   const [note, setNote] = useState(initialNote);
   const [projectId, setProjectId] = useState(
@@ -3382,8 +3580,11 @@ function CategoryLaneSheet({
       alert("Podaj własną nazwę kategorii.");
       return;
     }
+    const resolvedId = isInny
+      ? innyCategoryId || newCustomCategoryId(customTitle.trim())
+      : preset;
     onSave({
-      categoryId: isInny ? innyCategoryId || "inny" : preset,
+      categoryId: resolvedId,
       title: isInny ? customTitle.trim() : "",
       note: note.trim(),
       projectId: projectId || undefined,
@@ -3539,21 +3740,34 @@ function CategoryLaneSheet({
           ) : null}
         </div>
 
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-3 py-1.5 text-sm text-ink-light"
-          >
-            Anuluj
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
-          >
-            Zapisz
-          </button>
+        <div className="mt-4 flex flex-wrap justify-between gap-2">
+          {onDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
+            >
+              Usuń
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg px-3 py-1.5 text-sm text-ink-light"
+            >
+              Anuluj
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
+            >
+              Zapisz
+            </button>
+          </div>
         </div>
       </div>
     </div>,
@@ -3586,6 +3800,14 @@ function BlockEditorSheet({
     categoryId?: string;
     projectId?: string;
     pickPositionKind?: boolean;
+    scopePreset?: string;
+    customScope?: string;
+    startDate?: string;
+    endDate?: string;
+    crewId?: string;
+    status?: ScheduleBlockStatus;
+    note?: string;
+    color?: string;
   };
   defaultProjectId: string;
   projects: PreviewProject[];
@@ -3593,12 +3815,29 @@ function BlockEditorSheet({
   scheduleCatalog: ScheduleCatalogPreset;
   allBlocks: ScheduleBlock[];
   onClose: () => void;
-  onSave: (data: Omit<ScheduleBlock, "id"> & { id?: string }) => void;
+  onSave: (
+    data: Omit<ScheduleBlock, "id"> & {
+      id?: string;
+      newCategoryTitle?: string;
+    },
+  ) => void;
   onPromote?: () => void;
   onDemote?: () => void;
   onDelete?: () => void;
   onAddCrew?: () => void;
-  onPickCategory?: () => void;
+  onPickCategory?: (draft?: {
+    role?: ScheduleBlockRole;
+    projectId?: string;
+    parentId?: string | null;
+    scopePreset?: string;
+    customScope?: string;
+    startDate?: string;
+    endDate?: string;
+    crewId?: string;
+    status?: ScheduleBlockStatus;
+    note?: string;
+    color?: string;
+  }) => void;
 }) {
   const categories = scheduleCatalog.categories
     .slice()
@@ -3609,44 +3848,79 @@ function BlockEditorSheet({
   const [projectId, setProjectId] = useState(
     block?.projectId ?? createDefaults.projectId ?? defaultProjectId,
   );
-  const [categoryId, setCategoryId] = useState(
+  const initialCategoryId =
     block?.categoryId ??
-      createDefaults.categoryId ??
-      categories[0]?.id ??
-      "stan-0",
+    createDefaults.categoryId ??
+    categories[0]?.id ??
+    "stan-0";
+  const knownCategory = categories.some((c) => c.id === initialCategoryId);
+  const startNoCategory = isProjectLevelEventCategory(initialCategoryId);
+  const [categoryPreset, setCategoryPreset] = useState(
+    startNoCategory
+      ? PROJECT_LEVEL_EVENT_CATEGORY
+      : knownCategory
+        ? initialCategoryId
+        : CATEGORY_INNY_VALUE,
+  );
+  const [customCategoryTitle, setCustomCategoryTitle] = useState("");
+  const [categoryId, setCategoryId] = useState(
+    startNoCategory ? PROJECT_LEVEL_EVENT_CATEGORY : initialCategoryId,
   );
   const scopes =
-    categories.find((c) => c.id === categoryId)?.scopes ?? ["Inny"];
+    categoryPreset === CATEGORY_INNY_VALUE ||
+    categoryPreset === PROJECT_LEVEL_EVENT_CATEGORY
+      ? ["Inny"]
+      : (categories.find((c) => c.id === categoryId)?.scopes ?? ["Inny"]);
   /** Nazwa pracy = zakres; stare bloki mogły mieć title ≠ scope. */
   const initialScope =
-    block?.title?.trim() || block?.scope || scopes[0] || "Inny";
+    createDefaults.customScope?.trim() ||
+    createDefaults.scopePreset ||
+    block?.title?.trim() ||
+    block?.scope ||
+    scopes[0] ||
+    "Inny";
   const scopeInList = scopes.includes(initialScope);
   const [scopePreset, setScopePreset] = useState(
-    scopeInList ? initialScope : "Inny",
+    createDefaults.scopePreset && scopes.includes(createDefaults.scopePreset)
+      ? createDefaults.scopePreset
+      : scopeInList
+        ? initialScope
+        : "Inny",
   );
   const [customScope, setCustomScope] = useState(
-    scopeInList ? "" : initialScope,
+    createDefaults.customScope ?? (scopeInList ? "" : initialScope),
   );
   const [parentId, setParentId] = useState<string | null>(
     block?.parentId ?? createDefaults.parentId ?? null,
   );
-  const [crewId, setCrewId] = useState(block?.crewId ?? "");
+  const [crewId, setCrewId] = useState(
+    block?.crewId ?? createDefaults.crewId ?? "",
+  );
   const initialParent =
     createDefaults.parentId
       ? allBlocks.find((b) => b.id === createDefaults.parentId)
       : undefined;
   const [startDate, setStartDate] = useState(
-    block?.startDate ?? initialParent?.startDate ?? todayIso(),
+    block?.startDate ??
+      createDefaults.startDate ??
+      initialParent?.startDate ??
+      todayIso(),
   );
   const [endDate, setEndDate] = useState(
-    block?.endDate ?? initialParent?.endDate ?? todayIso(),
+    block?.endDate ??
+      createDefaults.endDate ??
+      initialParent?.endDate ??
+      todayIso(),
   );
   const [status, setStatus] = useState<ScheduleBlockStatus>(
-    block?.status ?? "planowane",
+    block?.status ?? createDefaults.status ?? "planowane",
   );
-  const [note, setNote] = useState(block?.note ?? "");
+  const [note, setNote] = useState(block?.note ?? createDefaults.note ?? "");
   const [color, setColor] = useState(
-    block?.color ?? crews.find((c) => c.id === crewId)?.color ?? "#3b82f6",
+    block?.color ??
+      createDefaults.color ??
+      crews.find((c) => c.id === crewId)?.color ??
+      "#3b82f6",
   );
 
   const parentOptions = allBlocks.filter(
@@ -3671,8 +3945,40 @@ function BlockEditorSheet({
         )
       : null;
 
+  const onPickRole = (value: ScheduleBlockRole) => {
+    setRole(value);
+    if (value !== "subcategory") return;
+    setParentId(null);
+    if (categoryPreset !== PROJECT_LEVEL_EVENT_CATEGORY) return;
+    const first = categories[0]?.id ?? "stan-0";
+    setCategoryPreset(first);
+    setCategoryId(first);
+    const next = categories.find((c) => c.id === first)?.scopes[0] ?? "Inny";
+    setScopePreset(next);
+    setCustomScope("");
+  };
+
   const onCategoryChange = (id: string) => {
+    if (id === CATEGORY_INNY_VALUE) {
+      setCategoryPreset(CATEGORY_INNY_VALUE);
+      setParentId(null);
+      setScopePreset("Inny");
+      setCustomScope("");
+      return;
+    }
+    if (id === PROJECT_LEVEL_EVENT_CATEGORY) {
+      setCategoryPreset(PROJECT_LEVEL_EVENT_CATEGORY);
+      setCategoryId(PROJECT_LEVEL_EVENT_CATEGORY);
+      setCustomCategoryTitle("");
+      setParentId(null);
+      setScopePreset("Inny");
+      setCustomScope("");
+      if (role === "subcategory") setRole("work");
+      return;
+    }
+    setCategoryPreset(id);
     setCategoryId(id);
+    setCustomCategoryTitle("");
     const next = categories.find((c) => c.id === id)?.scopes[0] ?? "Inny";
     setScopePreset(next);
     setCustomScope("");
@@ -3682,26 +3988,57 @@ function BlockEditorSheet({
   const resolvedScope =
     scopePreset === "Inny" ? customScope.trim() || "Inny" : scopePreset;
 
+  const noCategory = categoryPreset === PROJECT_LEVEL_EVENT_CATEGORY;
+
+  const draftSnapshot = () => ({
+    role,
+    projectId,
+    parentId,
+    scopePreset,
+    customScope,
+    startDate,
+    endDate,
+    crewId,
+    status,
+    note,
+    color,
+  });
+
   const submit = () => {
     if (!projectId) return;
+    if (categoryPreset === CATEGORY_INNY_VALUE && !customCategoryTitle.trim()) {
+      alert("Podaj nazwę nowej kategorii.");
+      return;
+    }
     if (scopePreset === "Inny" && !customScope.trim()) {
       alert("Podaj własną nazwę.");
       return;
     }
+    if (role === "subcategory" && noCategory) {
+      alert("Podkategoria wymaga kategorii. Wybierz kategorię albo dodaj zakres bez kategorii.");
+      return;
+    }
+    const isNewCat = categoryPreset === CATEGORY_INNY_VALUE;
+    const resolvedCategoryId = noCategory
+      ? PROJECT_LEVEL_EVENT_CATEGORY
+      : isNewCat
+        ? newCustomCategoryId(customCategoryTitle.trim())
+        : categoryId;
     onSave({
       id: block?.id,
       projectId,
-      categoryId,
+      categoryId: resolvedCategoryId,
       scope: resolvedScope,
       title: resolvedScope,
-      role,
-      parentId: role === "work" ? parentId : null,
+      role: noCategory ? "work" : role,
+      parentId: role === "work" && !noCategory ? parentId : null,
       crewId: role === "subcategory" ? "" : crewId,
       startDate,
       endDate: endDate < startDate ? startDate : endDate,
       status: role === "subcategory" ? "planowane" : status,
       color,
       note,
+      newCategoryTitle: isNewCat ? customCategoryTitle.trim() : undefined,
     });
   };
 
@@ -3764,7 +4101,7 @@ function BlockEditorSheet({
             <div className="flex gap-1 rounded-lg bg-surface-raised/60 p-0.5">
               <button
                 type="button"
-                onClick={() => onPickCategory?.()}
+                onClick={() => onPickCategory?.(draftSnapshot())}
                 className="flex-1 rounded-md px-2 py-1.5 text-[12px] font-medium text-ink-faint transition hover:text-ink"
               >
                 Kategoria
@@ -3778,10 +4115,7 @@ function BlockEditorSheet({
                 <button
                   key={value}
                   type="button"
-                  onClick={() => {
-                    setRole(value);
-                    if (value === "subcategory") setParentId(null);
-                  }}
+                  onClick={() => onPickRole(value)}
                   aria-pressed={role === value}
                   className={`flex-1 rounded-md px-2 py-1.5 text-[12px] font-medium transition ${
                     role === value
@@ -3806,10 +4140,7 @@ function BlockEditorSheet({
                 <button
                   key={value}
                   type="button"
-                  onClick={() => {
-                    setRole(value);
-                    if (value === "subcategory") setParentId(null);
-                  }}
+                  onClick={() => onPickRole(value)}
                   aria-pressed={role === value}
                   className={`flex-1 rounded-md px-2 py-1.5 text-[12px] font-medium transition ${
                     role === value
@@ -3844,18 +4175,34 @@ function BlockEditorSheet({
             ) : null}
             <Field label="Kategoria">
               <select
-                value={categoryId}
+                value={categoryPreset}
                 onChange={(e) => onCategoryChange(e.target.value)}
                 className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
               >
+                {isWork ? (
+                  <option value={PROJECT_LEVEL_EVENT_CATEGORY}>
+                    Bez kategorii (inwestycja)
+                  </option>
+                ) : null}
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.title}
                   </option>
                 ))}
+                <option value={CATEGORY_INNY_VALUE}>Inna (nowa kategoria)</option>
               </select>
             </Field>
-            {isWork ? (
+            {categoryPreset === CATEGORY_INNY_VALUE ? (
+              <Field label="Nazwa kategorii">
+                <input
+                  value={customCategoryTitle}
+                  onChange={(e) => setCustomCategoryTitle(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
+                  placeholder="np. Słoneczne tarasy"
+                />
+              </Field>
+            ) : null}
+            {isWork && !noCategory ? (
               <Field label="Podkategoria">
                 <select
                   value={parentId ?? ""}
@@ -3878,6 +4225,11 @@ function BlockEditorSheet({
                   </p>
                 ) : null}
               </Field>
+            ) : null}
+            {isWork && noCategory ? (
+              <p className="text-[11px] text-ink-faint">
+                Zakres bez kategorii trafi na wiersz inwestycji.
+              </p>
             ) : null}
             <Field label={isWork ? "Zakres" : "Nazwa"}>
               <select

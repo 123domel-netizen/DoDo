@@ -329,6 +329,23 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     return row;
   }
 
+  removeProjectCategory(projectId: string, categoryId: string) {
+    const result = this.inner.removeProjectCategory(projectId, categoryId);
+    if (!supabase) return result;
+    if (result.deletedBlockIds.length) {
+      void supabase
+        .from("schedule_blocks")
+        .delete()
+        .in("id", result.deletedBlockIds);
+    }
+    void supabase
+      .from("schedule_category_meta")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("category_id", categoryId);
+    return result;
+  }
+
   moveCategoryWindow(
     projectId: string,
     categoryId: string,
@@ -398,11 +415,19 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   }
 
   upsertScheduleBlock(block: Omit<ScheduleBlock, "id"> & { id?: string }) {
+    const categoryId = block.categoryId || "stan-0";
+    const hadMeta = Boolean(
+      this.inner.getCategoryMeta(block.projectId, categoryId),
+    );
     const row = this.inner.upsertScheduleBlock({
       ...block,
       id: asCloudId(block.id),
     });
     void this.syncBlock(row);
+    if (!hadMeta) {
+      const meta = this.inner.getCategoryMeta(row.projectId, row.categoryId);
+      if (meta) void this.syncCategoryMeta(meta);
+    }
     return row;
   }
 
@@ -426,8 +451,20 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   }
 
   deleteScheduleBlock(id: string) {
+    const before = this.inner.getState().scheduleBlocks;
+    const target = before.find((b) => b.id === id);
+    const ids = [
+      id,
+      ...(target?.role === "subcategory"
+        ? before.filter((b) => b.parentId === id).map((b) => b.id)
+        : []),
+    ];
     this.inner.deleteScheduleBlock(id);
-    void supabase?.from("schedule_blocks").delete().eq("id", id);
+    if (ids.length === 1) {
+      void supabase?.from("schedule_blocks").delete().eq("id", id);
+      return;
+    }
+    void supabase?.from("schedule_blocks").delete().in("id", ids);
   }
 
   moveScheduleBlock(
@@ -635,6 +672,21 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   private async syncBlock(row: ScheduleBlock) {
     if (!supabase) return;
+    const parentId =
+      row.parentId && isUuid(row.parentId) ? row.parentId : null;
+    const crewId = row.crewId && isUuid(row.crewId) ? row.crewId : null;
+    // Lokalne id (crew-elew / sb-…) nie przejdą FK — wyzeruj przed upsertem,
+    // żeby sync nie failował i nie wywoływał reload() kasującego nowy blok.
+    if (
+      (row.parentId && !parentId) ||
+      (row.crewId && !crewId)
+    ) {
+      this.inner.upsertScheduleBlock({
+        ...row,
+        parentId,
+        crewId: crewId ?? "",
+      });
+    }
     const { error } = await supabase.from("schedule_blocks").upsert({
       id: row.id,
       project_id: row.projectId,
@@ -642,8 +694,8 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       category_id: row.categoryId,
       scope: row.scope,
       role: row.role,
-      parent_id: row.parentId || null,
-      crew_id: row.crewId || null,
+      parent_id: parentId,
+      crew_id: crewId,
       start_date: row.startDate,
       end_date: row.endDate,
       status: row.status,

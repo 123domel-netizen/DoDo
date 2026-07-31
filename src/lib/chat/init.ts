@@ -1347,14 +1347,17 @@ async function setupRealtime(userId: string) {
         // realnych zmianach (nazwa/archiwizacja/nowa rozmowa).
         if (payload.eventType === "UPDATE") {
           const row = payload.new as Record<string, unknown>;
+          const prev = (payload.old ?? null) as Record<string, unknown> | null;
           const entry = useChatStore
             .getState()
             .overview.find((c) => c.id === (row.id as string));
-          if (
-            entry &&
-            entry.name === ((row.name as string | null) ?? null) &&
-            !row.archived_at
-          ) {
+          const archivedChanged =
+            (row.archived_at ?? null) !== (prev?.archived_at ?? null) ||
+            (row.channel_archived_at ?? null) !== (prev?.channel_archived_at ?? null);
+          const nameChanged =
+            !entry || entry.name !== ((row.name as string | null) ?? null);
+          if (entry && !nameChanged && !archivedChanged && !row.archived_at) {
+            // Typowy bump last_message_at — lista i tak odświeża się z wiadomości.
             return;
           }
         }

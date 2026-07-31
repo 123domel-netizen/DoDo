@@ -963,11 +963,17 @@ export function ConversationView({
         {typingText && (
           <div className="px-3 pb-0.5 text-[11px] text-ink-faint">{typingText}</div>
         )}
-        <MessageComposer
-          onSend={handleSend}
-          placeholder="Odpowiedz w wątku…"
-          {...composerShared}
-        />
+        {entry?.kind === "channel" && entry.myArchivedAt ? (
+          <div className="border-t border-line px-3 py-2 text-center text-[12px] text-ink-faint">
+            Kanał zarchiwizowany — pisanie wyłączone.
+          </div>
+        ) : (
+          <MessageComposer
+            onSend={handleSend}
+            placeholder="Odpowiedz w wątku…"
+            {...composerShared}
+          />
+        )}
         <MessageActionsSheet
           msg={actionTarget?.msg ?? null}
           anchor={actionTarget?.anchor ?? null}
@@ -1190,28 +1196,41 @@ export function ConversationView({
                   <MailOpen size={14} /> Oznacz jako nieprzeczytane
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !entry.myArchivedAt;
-                    void archiveConversation(conversationId, next).then(({ error }) => {
-                      if (error) {
-                        alert(error);
-                        return;
+                {(entry.kind !== "channel" || isChannelAdmin) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !entry.myArchivedAt;
+                      if (entry.kind === "channel") {
+                        if (
+                          !confirm(
+                            next
+                              ? "Zarchiwizować kanał dla wszystkich? Trafi do Archiwum u każdego członka i nikt nie będzie mógł pisać."
+                              : "Przywrócić kanał z archiwum dla wszystkich członków?",
+                          )
+                        ) {
+                          return;
+                        }
                       }
-                      setMenuOpen(false);
-                      if (next) {
-                        useChatStore.getState().setActiveConversation(null);
-                        useChatStore.getState().setPanelMode("todo");
-                        onBack?.();
-                      }
-                    });
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
-                >
-                  <Archive size={14} />
-                  {entry.myArchivedAt ? "Przywróć z archiwum" : "Archiwizuj"}
-                </button>
+                      void archiveConversation(conversationId, next).then(({ error }) => {
+                        if (error) {
+                          alert(error);
+                          return;
+                        }
+                        setMenuOpen(false);
+                        if (next) {
+                          useChatStore.getState().setActiveConversation(null);
+                          useChatStore.getState().setPanelMode("todo");
+                          onBack?.();
+                        }
+                      });
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                  >
+                    <Archive size={14} />
+                    {entry.myArchivedAt ? "Przywróć z archiwum" : "Archiwizuj"}
+                  </button>
+                )}
 
                 {isChannelAdmin && (
                   <button
@@ -1310,21 +1329,27 @@ export function ConversationView({
         <div className="px-3 pb-0.5 text-[11px] text-ink-faint">{typingText}</div>
       )}
 
-      <MessageComposer
-        onSend={handleSend}
-        autoFocus={!embedded}
-        onSendPoll={(q, opts) => void sendPollMessage(conversationId, q, opts)}
-        onSendChecklist={(title, items) =>
-          void sendChecklistMessage(conversationId, title, items)
-        }
-        onCreateEvent={() => beginEventFromConversation(conversationId)}
-        onSendGif={(url) => {
-          returnToLatest(conversationId);
-          void sendGifMessage(conversationId, url);
-        }}
-        onOpenGallery={() => setGalleryCreateOpen(true)}
-        {...composerShared}
-      />
+      {entry?.kind === "channel" && entry.myArchivedAt ? (
+        <div className="border-t border-line px-3 py-2 text-center text-[12px] text-ink-faint">
+          Kanał zarchiwizowany — pisanie wyłączone.
+        </div>
+      ) : (
+        <MessageComposer
+          onSend={handleSend}
+          autoFocus={!embedded}
+          onSendPoll={(q, opts) => void sendPollMessage(conversationId, q, opts)}
+          onSendChecklist={(title, items) =>
+            void sendChecklistMessage(conversationId, title, items)
+          }
+          onCreateEvent={() => beginEventFromConversation(conversationId)}
+          onSendGif={(url) => {
+            returnToLatest(conversationId);
+            void sendGifMessage(conversationId, url);
+          }}
+          onOpenGallery={() => setGalleryCreateOpen(true)}
+          {...composerShared}
+        />
+      )}
 
       <MessageActionsSheet
         msg={actionTarget?.msg ?? null}

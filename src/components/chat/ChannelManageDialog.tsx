@@ -449,8 +449,8 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
               if (
                 !confirm(
                   entry.myArchivedAt
-                    ? "Przywrócić kanał z archiwum?"
-                    : "Zarchiwizować kanał? Będzie widoczny tylko w sekcji Archiwum.",
+                    ? "Przywrócić kanał z archiwum dla wszystkich członków?"
+                    : "Zarchiwizować kanał dla wszystkich? Trafi do Archiwum u każdego członka i nikt nie będzie mógł pisać.",
                 )
               ) {
                 return;

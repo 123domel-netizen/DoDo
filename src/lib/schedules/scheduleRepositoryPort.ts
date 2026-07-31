@@ -91,6 +91,12 @@ export interface ScheduleRepository {
     endDate?: string;
   }): ScheduleCategoryMeta;
 
+  /** Usuwa kategorię z budowy: meta + wszystkie bloki w kategorii. */
+  removeProjectCategory(
+    projectId: string,
+    categoryId: string,
+  ): { deletedBlockIds: string[] };
+
   moveCategoryWindow(
     projectId: string,
     categoryId: string,

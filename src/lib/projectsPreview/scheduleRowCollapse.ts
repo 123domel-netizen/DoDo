@@ -1,5 +1,9 @@
 const STORAGE_KEY = "dodo-schedule-row-collapse-v1";
 
+export function projectCollapseKey(projectId: string): string {
+  return `proj:${projectId}`;
+}
+
 export function categoryCollapseKey(
   projectId: string,
   categoryId: string,
@@ -12,6 +16,7 @@ export function subcategoryCollapseKey(subcategoryId: string): string {
 }
 
 export type ScheduleCollapseInventory = {
+  projectKeys: string[];
   categoryKeys: string[];
   subcategoryKeys: string[];
 };
@@ -100,11 +105,12 @@ export function toggleCollapsedKey(
   return next;
 }
 
-/** Zwiń wszystko do nagłówków kategorii. */
+/** Zwiń wszystko do nagłówków inwestycji / kategorii. */
 export function collapseAllScheduleRows(
   inventory: ScheduleCollapseInventory,
 ): { collapsed: Set<string>; revealLevel: ScheduleRevealLevel } {
   const collapsed = new Set<string>([
+    ...inventory.projectKeys,
     ...inventory.categoryKeys,
     ...inventory.subcategoryKeys,
   ]);
@@ -115,6 +121,7 @@ export function collapseAllScheduleRows(
 
 /**
  * Kolejne kliknięcie rozwijania: 0→1 podkategorie, 1→2 zakresy.
+ * Czyści też ręczne zwinięcia inwestycji (żeby rozwinąć drzewo).
  */
 export function expandScheduleRowsStep(
   inventory: ScheduleCollapseInventory,
@@ -141,6 +148,92 @@ export function nextExpandStepLabel(level: ScheduleRevealLevel): string {
   if (level <= 0) return "Rozwiń podkategorie";
   if (level === 1) return "Rozwiń zakresy";
   return "Wszystko rozwinięte";
+}
+
+/** Minimal shape used by board collapse filtering. */
+export type CollapseFilterRow = {
+  id: string;
+  section?: boolean;
+  docLane?: boolean;
+  categoryLane?: boolean;
+  subcategory?: boolean;
+  categoryId?: string;
+  projectId?: string;
+  parentId?: string | null;
+  crew?: unknown;
+  blocks?: Array<{ id: string }>;
+};
+
+/**
+ * Filters timeline rows according to project / category / subcategory
+ * collapse keys and revealLevel.
+ */
+export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
+  rows: T[],
+  collapsedKeys: Set<string>,
+  revealLevel: ScheduleRevealLevel,
+): T[] {
+  const out: T[] = [];
+  let hideUnderProject = false;
+  let hideUnderCategory = false;
+  let hideUnderSubId: string | null = null;
+
+  for (const row of rows) {
+    if (row.section) {
+      const isProjectHeader = Boolean(
+        row.projectId && !row.crew && !row.docLane,
+      );
+      if (isProjectHeader) {
+        hideUnderProject = collapsedKeys.has(
+          projectCollapseKey(row.projectId!),
+        );
+        hideUnderCategory = false;
+        hideUnderSubId = null;
+        out.push(row);
+        continue;
+      }
+      if (row.crew) {
+        hideUnderProject = false;
+        hideUnderCategory = false;
+        hideUnderSubId = null;
+        out.push(row);
+        continue;
+      }
+      // Dokumentacja / inne sekcje pod inwestycją
+      if (hideUnderProject) continue;
+      hideUnderCategory = false;
+      hideUnderSubId = null;
+      out.push(row);
+      continue;
+    }
+
+    if (hideUnderProject) continue;
+
+    if (row.categoryLane && row.projectId && row.categoryId) {
+      const key = categoryCollapseKey(row.projectId, row.categoryId);
+      hideUnderCategory = revealLevel <= 0 || collapsedKeys.has(key);
+      hideUnderSubId = null;
+      out.push(row);
+      continue;
+    }
+    if (hideUnderCategory) continue;
+
+    if (row.subcategory) {
+      if (revealLevel < 1) continue;
+      const subId = row.blocks?.[0]?.id ?? row.id;
+      const subKey = subcategoryCollapseKey(subId);
+      hideUnderSubId =
+        revealLevel < 2 || collapsedKeys.has(subKey) ? subId : null;
+      out.push(row);
+      continue;
+    }
+
+    // Zakresy (works) + placeholdery
+    if (revealLevel < 2) continue;
+    if (hideUnderSubId && row.parentId === hideUnderSubId) continue;
+    out.push(row);
+  }
+  return out;
 }
 
 /** @deprecated kept for older imports */

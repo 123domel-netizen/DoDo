@@ -477,6 +477,46 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
     return row;
   }
 
+  /**
+   * Usuwa kategorię z budowy: meta, wszystkie podkategorie/zakresy w niej
+   * oraz odłącza zdarzenia od usuniętych bloków.
+   */
+  removeProjectCategory(
+    projectId: string,
+    categoryId: string,
+  ): { deletedBlockIds: string[] } {
+    const cid = normalizeStageId(categoryId);
+    const deletedBlockIds = this.state.scheduleBlocks
+      .filter((b) => b.projectId === projectId && b.categoryId === cid)
+      .map((b) => b.id);
+    const idSet = new Set(deletedBlockIds);
+    const scheduleBlocks = this.state.scheduleBlocks.filter((b) => !idSet.has(b.id));
+    const categoryMeta = this.state.categoryMeta.filter(
+      (m) => !(m.projectId === projectId && m.categoryId === cid),
+    );
+    const scheduleEvents = detachEventsFromBlocks(
+      this.state.scheduleEvents.map((e) => {
+        if (
+          e.projectId === projectId &&
+          e.kind === "budowlane" &&
+          e.categoryId === cid &&
+          !e.blockId
+        ) {
+          return { ...e, categoryId: PROJECT_LEVEL_EVENT_CATEGORY };
+        }
+        return e;
+      }),
+      idSet,
+    );
+    this.commit({
+      ...this.state,
+      scheduleBlocks,
+      categoryMeta,
+      scheduleEvents,
+    });
+    return { deletedBlockIds };
+  }
+
   moveCategoryWindow(
     projectId: string,
     categoryId: string,
@@ -665,12 +705,15 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
       }
     }
 
+    const categoryId = isProjectLevelEventCategory(block.categoryId)
+      ? PROJECT_LEVEL_EVENT_CATEGORY
+      : normalizeStageId(block.categoryId || "stan-0");
     const row: ScheduleBlock = {
       ...block,
       id,
       role,
-      parentId,
-      categoryId: block.categoryId || "stan-0",
+      parentId: isProjectLevelEventCategory(categoryId) ? null : parentId,
+      categoryId,
       scope: block.scope?.trim() || block.title.trim() || "Inny",
       title: block.title.trim() || block.scope?.trim() || "Robota",
       crewId: role === "subcategory" ? "" : (block.crewId ?? ""),
@@ -679,7 +722,29 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
     const scheduleBlocks = exists
       ? this.state.scheduleBlocks.map((x) => (x.id === id ? row : x))
       : [...this.state.scheduleBlocks, row];
-    this.commit({ ...this.state, scheduleBlocks });
+
+    // Pierwszy blok w kategorii → upewnij się, że wiersz kategorii istnieje w meta.
+    let categoryMeta = this.state.categoryMeta;
+    if (!isProjectLevelEventCategory(categoryId)) {
+      const hasMeta = categoryMeta.some(
+        (m) => m.projectId === row.projectId && m.categoryId === categoryId,
+      );
+      if (!hasMeta) {
+        categoryMeta = [
+          ...categoryMeta,
+          {
+            projectId: row.projectId,
+            categoryId,
+            title: "",
+            note: "",
+            startDate: "",
+            endDate: "",
+          },
+        ];
+      }
+    }
+
+    this.commit({ ...this.state, scheduleBlocks, categoryMeta });
     return row;
   }
 
@@ -689,7 +754,14 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
    */
   promoteToSubcategory(blockId: string): ScheduleBlock | null {
     const src = this.state.scheduleBlocks.find((b) => b.id === blockId);
-    if (!src || src.role !== "work" || src.parentId) return null;
+    if (
+      !src ||
+      src.role !== "work" ||
+      src.parentId ||
+      isProjectLevelEventCategory(src.categoryId)
+    ) {
+      return null;
+    }
     const childId = uid("sb");
     const parent: ScheduleBlock = {
       ...src,
@@ -753,25 +825,21 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
 
   deleteScheduleBlock(id: string) {
     const target = this.state.scheduleBlocks.find((b) => b.id === id);
-    let scheduleBlocks = this.state.scheduleBlocks.filter((b) => b.id !== id);
-    if (target?.role === "subcategory") {
-      scheduleBlocks = scheduleBlocks.map((b) =>
-        b.parentId === id ? { ...b, parentId: null } : b,
-      );
-    }
-    const orphanIds = new Set<string>([id]);
-    // Children of a deleted subcategory also become orphans for events
+    const toDelete = new Set<string>([id]);
     if (target?.role === "subcategory") {
       for (const b of this.state.scheduleBlocks) {
-        if (b.parentId === id) orphanIds.add(b.id);
+        if (b.parentId === id) toDelete.add(b.id);
       }
     }
+    const scheduleBlocks = this.state.scheduleBlocks.filter(
+      (b) => !toDelete.has(b.id),
+    );
     this.commit({
       ...this.state,
       scheduleBlocks,
       scheduleEvents: detachEventsFromBlocks(
         this.state.scheduleEvents,
-        orphanIds,
+        toDelete,
       ),
     });
   }
