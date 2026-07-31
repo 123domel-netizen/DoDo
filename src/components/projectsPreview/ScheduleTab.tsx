@@ -35,6 +35,7 @@ import {
   loadScheduleCollapseState,
   nextExpandStepLabel,
   projectCollapseKey,
+  saveScheduleCollapseState,
   subcategoryCollapseKey,
   toggleCollapsedKey,
   type ScheduleRevealLevel,
@@ -1060,6 +1061,30 @@ export function ScheduleTab({
               });
             }
             repo.upsertScheduleBlock(data);
+            // Zakres mógł być niewidoczny przy zwiniętej inwestycji / poziomie „tylko kategorie”.
+            if (data.role === "work") {
+              const projectLevel = isProjectLevelEventCategory(data.categoryId);
+              const nextLvl: ScheduleRevealLevel = projectLevel
+                ? revealLevel
+                : revealLevel < 2
+                  ? 2
+                  : revealLevel;
+              setCollapsedRowKeys((prev) => {
+                const next = new Set(prev);
+                next.delete(projectCollapseKey(data.projectId));
+                if (!projectLevel) {
+                  next.delete(
+                    categoryCollapseKey(data.projectId, data.categoryId),
+                  );
+                  if (data.parentId) {
+                    next.delete(subcategoryCollapseKey(data.parentId));
+                  }
+                }
+                saveScheduleCollapseState(next, nextLvl);
+                return next;
+              });
+              if (nextLvl !== revealLevel) setRevealLevel(nextLvl);
+            }
             closeEditor();
           }}
           onPickCategory={(draft) => {
@@ -1352,6 +1377,8 @@ type TimelineRow = {
   docLane?: boolean;
   /** Category lane — chart track for category-level events. */
   categoryLane?: boolean;
+  /** Zakres na wierszu inwestycji (Bez kategorii). */
+  projectLevel?: boolean;
   categoryId?: string;
   projectId?: string;
   /** Subcategory container row. */
@@ -1507,6 +1534,7 @@ function buildProjectScopeRows(
       meta: crewName(b.crewId),
       color: b.color,
       indented: true,
+      projectLevel: true,
       projectId,
       categoryId: PROJECT_LEVEL_EVENT_CATEGORY,
       blocks: [b],

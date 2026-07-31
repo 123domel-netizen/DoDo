@@ -851,6 +851,34 @@ describe("projectsPreview scheduleRowCollapse", () => {
     );
     expect(visible).toEqual(["sec-a", "cat-a1", "sec-b", "cat-b1"]);
   });
+
+  it("shows project-level works even when revealLevel is categories-only", () => {
+    const rows = [
+      { id: "sec-a", section: true, projectId: "p-a", blocks: [] as { id: string }[] },
+      {
+        id: "work-inv",
+        projectLevel: true,
+        projectId: "p-a",
+        categoryId: "__project__",
+        blocks: [{ id: "work-inv" }],
+      },
+      {
+        id: "cat-a1",
+        categoryLane: true,
+        projectId: "p-a",
+        categoryId: "c1",
+        blocks: [] as { id: string }[],
+      },
+      {
+        id: "work-under",
+        projectId: "p-a",
+        categoryId: "c1",
+        blocks: [{ id: "work-under" }],
+      },
+    ];
+    const visible = filterCollapsedBoardRows(rows, new Set(), 0).map((r) => r.id);
+    expect(visible).toEqual(["sec-a", "work-inv", "cat-a1"]);
+  });
 });
 
 describe("projectsPreview scheduleZoom", () => {

@@ -157,6 +157,8 @@ export type CollapseFilterRow = {
   docLane?: boolean;
   categoryLane?: boolean;
   subcategory?: boolean;
+  /** Zakres przypięty do wiersza inwestycji (nie pod kategorią). */
+  projectLevel?: boolean;
   categoryId?: string;
   projectId?: string;
   parentId?: string | null;
@@ -208,6 +210,13 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
     }
 
     if (hideUnderProject) continue;
+
+    // Zakresy „Bez kategorii” — widać od razu pod inwestycją, niezależnie
+    // od poziomu zwinięcia kategorii/podkategorii.
+    if (row.projectLevel) {
+      out.push(row);
+      continue;
+    }
 
     if (row.categoryLane && row.projectId && row.categoryId) {
       const key = categoryCollapseKey(row.projectId, row.categoryId);
