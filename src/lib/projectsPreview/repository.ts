@@ -1148,16 +1148,32 @@ function coerceStoredEvent(e: LooseEvent): ScheduleEvent | null {
   });
 }
 
+function normalizeEventTime(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const t = String(raw).trim();
+  const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) {
+    return null;
+  }
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
 function normalizeEvent(
   e: Omit<ScheduleEvent, "note"> & { note?: string },
   ctx?: { me?: string; previous?: ScheduleEvent },
 ): ScheduleEvent {
+  const me = ctx?.me ?? null;
+  const previous = ctx?.previous;
   const base = {
     id: e.id,
     projectId: e.projectId,
     blockId: e.blockId ?? null,
     kind: e.kind,
     date: e.date,
+    time: normalizeEventTime(e.time ?? previous?.time),
     note: e.note?.trim() ?? "",
   };
 
@@ -1173,14 +1189,13 @@ function normalizeEvent(
       title: e.title?.trim() || "Zdarzenie budowlane",
       categoryId,
       blockId: isProjectLevelEventCategory(categoryId) ? null : base.blockId,
+      reportedByUserId: e.reportedByUserId ?? previous?.reportedByUserId ?? me,
     };
   }
 
   const customLabel = e.customLabel?.trim() || undefined;
   const activity = e.activity?.trim() ?? "";
   const status: DocEventStatus = e.status ?? "do_wpisania";
-  const me = ctx?.me ?? null;
-  const previous = ctx?.previous;
   const written = status === "wpisane";
   return {
     ...base,

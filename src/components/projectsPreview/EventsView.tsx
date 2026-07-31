@@ -93,6 +93,7 @@ export function EventsView({ kind, projectIds = "all" }: EventsViewProps) {
           lockKind
           catalog={state.catalog}
           scheduleCatalog={state.scheduleCatalog}
+          users={state.users}
           onClose={() => setEdit(null)}
           onSave={save}
           onDelete={

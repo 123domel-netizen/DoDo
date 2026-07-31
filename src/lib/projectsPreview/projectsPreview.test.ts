@@ -565,6 +565,19 @@ describe("projectsPreview schedule events", () => {
       true,
     );
   });
+
+  it("stores optional time and sets reportedBy on budowlane create", () => {
+    const created = repo.upsertScheduleEvent({
+      projectId: "p-114",
+      blockId: null,
+      kind: "budowlane",
+      title: "Dostawa stali",
+      date: "2026-08-03",
+      time: "09:30",
+    });
+    expect(created.time).toBe("09:30");
+    expect(created.reportedByUserId).toBe("u-admin");
+  });
 });
 
 describe("projectsPreview project feed (chronologia budowy)", () => {

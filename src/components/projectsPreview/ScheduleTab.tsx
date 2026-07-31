@@ -10,13 +10,23 @@ import {
   ChevronRight,
   FoldVertical,
   UnfoldVertical,
+  GanttChart,
+  List,
   Users,
   X,
   Zap,
 } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import { scheduleOverflow } from "@/lib/projectsPreview/scheduleOverflow";
+import {
+  formatDayShort,
+} from "@/lib/projectsPreview/projectLastEvent";
+import {
+  projectStageLabel,
+  todayIso,
+} from "@/lib/projectsPreview/projectMetrics";
 import {
   categoryCollapseKey,
   collapseAllScheduleRows,
@@ -87,6 +97,8 @@ interface ScheduleTabProps {
   /** Controlled board mode. Left out → the board keeps its own mode. */
   mode?: ScheduleViewMode;
   onModeChange?: (mode: ScheduleViewMode) => void;
+  /** Mobile list: open a single budowa on the board. */
+  onFocusProject?: (projectId: string) => void;
 }
 
 const STATUSES = Object.keys(SCHEDULE_STATUS_LABEL) as ScheduleBlockStatus[];
@@ -122,9 +134,16 @@ export function ScheduleTab({
   highlightDate = null,
   mode: modeProp,
   onModeChange,
+  onFocusProject,
 }: ScheduleTabProps) {
+  const isMobile = useIsMobile();
   const repo = useProjectsPreviewRepo();
   const state = repo.getState();
+  const [mobileSurface, setMobileSurface] = useState<"list" | "timeline">(
+    "list",
+  );
+  const showMobileList = isMobile && mobileSurface === "list";
+  const labelPx = isMobile ? 132 : LABEL_PX;
   const [ownMode, setOwnMode] = useState<ScheduleViewMode>(
     modeProp ?? (projectId ? "project" : "allBuilds"),
   );
@@ -168,7 +187,7 @@ export function ScheduleTab({
     dayPxForVisibleDays(1100, DEFAULT_VISIBLE_DAYS),
   );
   const [rangeMinDays, setRangeMinDays] = useState<number | null>(null);
-  const [activeZoomId, setActiveZoomId] = useState<ZoomPresetId | null>("fit");
+  const [activeZoomId, setActiveZoomId] = useState<ZoomPresetId | null>("1m");
   /** Zwijanie wierszy — localStorage (poziom + pojedyncze klucze). */
   const [collapsedRowKeys, setCollapsedRowKeys] = useState(
     () => loadScheduleCollapseState().collapsed,
@@ -536,7 +555,7 @@ export function ScheduleTab({
     const px = opts?.dayPx ?? dayPx;
     const start = opts?.rangeStart ?? range.start;
     const target =
-      LABEL_PX + dayOffset(start, iso) * px - el.clientWidth / 2;
+      labelPx + dayOffset(start, iso) * px - el.clientWidth / 2;
     el.scrollTo({
       left: Math.max(0, target),
       behavior: opts?.smooth === false ? "auto" : "smooth",
@@ -545,7 +564,7 @@ export function ScheduleTab({
 
   const applyZoomPreset = (preset: (typeof ZOOM_PRESETS)[number]) => {
     const el = scrollerRef.current;
-    const avail = Math.max(200, (el?.clientWidth ?? 900) - LABEL_PX);
+    const avail = Math.max(200, (el?.clientWidth ?? 900) - labelPx);
     const nextMin =
       preset.visibleDays === null ? null : preset.minRangeDays;
     const nextPx =
@@ -602,26 +621,26 @@ export function ScheduleTab({
     }
     if (didInitView.current) return;
 
-    const avail = Math.max(200, el.clientWidth - LABEL_PX);
-    const nextPx = dayPxForVisibleDays(avail, contentRange.days);
+    const avail = Math.max(200, el.clientWidth - labelPx);
+    const nextPx = dayPxForVisibleDays(avail, DEFAULT_VISIBLE_DAYS);
     if (Math.abs(nextPx - dayPx) > 0.5) {
       setDayPx(nextPx);
-      setActiveZoomId("fit");
+      setActiveZoomId("1m");
       // Wait for the next paint with the real dayPx before scrolling.
       return;
     }
 
     const today = todayIso();
-    let anchor = addDaysIso(today, -FIT_LOOKBACK_DAYS);
-    if (anchor < range.start) anchor = range.start;
-    if (anchor > range.end) anchor = range.start;
+    let weekStart = startOfWeekIso(today);
+    if (weekStart < range.start) weekStart = range.start;
+    if (weekStart > range.end) weekStart = startOfWeekIso(range.end);
     el.scrollLeft = scrollLeftForDayStart({
       rangeStart: range.start,
       dayPx,
-      iso: anchor,
+      iso: weekStart,
     });
     didInitView.current = true;
-    setActiveZoomId("fit");
+    setActiveZoomId("1m");
   }, [
     scopeKey,
     showEmptyPanel,
@@ -729,56 +748,93 @@ export function ScheduleTab({
         </span>
       ) : null}
 
-      <div
-        className="flex shrink-0 items-center gap-0.5"
-        title="Ctrl+scroll — zoom osi"
-      >
-        {ZOOM_PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            onClick={() => applyZoomPreset(preset)}
-            aria-pressed={activeZoomId === preset.id}
-            className={`rounded-md border px-1.5 py-1 text-[10px] font-medium transition ${
-              activeZoomId === preset.id
-                ? "border-accent/40 bg-accent/15 text-accent"
-                : "border-line text-ink-light hover:border-line-strong hover:text-ink"
-            }`}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
+      {!showMobileList ? (
+        <div
+          className="flex shrink-0 items-center gap-0.5"
+          title="Ctrl+scroll — zoom osi"
+        >
+          {(isMobile
+            ? ZOOM_PRESETS.filter((p) => p.id === "1m" || p.id === "1q")
+            : ZOOM_PRESETS
+          ).map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => applyZoomPreset(preset)}
+              aria-pressed={activeZoomId === preset.id}
+              className={`rounded-md border px-1.5 py-1 text-[10px] font-medium transition ${
+                activeZoomId === preset.id
+                  ? "border-accent/40 bg-accent/15 text-accent"
+                  : "border-line text-ink-light hover:border-line-strong hover:text-ink"
+              }`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          onClick={() => scrollToWeekStart(todayIso())}
-          className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light transition hover:border-line-strong hover:text-ink"
-          title="Przewiń do bieżącego tygodnia"
-        >
-          Dziś
-        </button>
+        {isMobile ? (
+          <button
+            type="button"
+            onClick={() =>
+              setMobileSurface((s) => (s === "list" ? "timeline" : "list"))
+            }
+            className={`inline-flex min-h-8 items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition ${
+              showMobileList
+                ? "border-line text-ink-light"
+                : "border-accent/40 bg-accent/15 text-accent"
+            }`}
+            title={showMobileList ? "Pokaż oś czasu" : "Pokaż listę"}
+          >
+            {showMobileList ? <GanttChart size={13} /> : <List size={13} />}
+            {showMobileList ? "Oś czasu" : "Lista"}
+          </button>
+        ) : null}
+        {!showMobileList ? (
+          <button
+            type="button"
+            onClick={() => scrollToWeekStart(todayIso())}
+            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light transition hover:border-line-strong hover:text-ink"
+            title="Przewiń do bieżącego tygodnia"
+          >
+            Dziś
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => openEventSheet({ kind: "budowlane" })}
-          className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white"
+          className="inline-flex min-h-8 items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white"
           title="Dodaj zdarzenie"
         >
           <Zap size={13} />
           <span className="hidden sm:inline">Zdarzenie</span>
         </button>
-        <button
-          type="button"
-          onClick={() =>
-            openEditor(null, { pickPositionKind: true, role: "work" })
-          }
-          className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white"
-          title="Dodaj pozycję harmonogramu"
-        >
-          <Plus size={13} />
-          Dodaj pozycję harmonogramu
-        </button>
+        {!isMobile ? (
+          <button
+            type="button"
+            onClick={() =>
+              openEditor(null, { pickPositionKind: true, role: "work" })
+            }
+            className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white"
+            title="Dodaj pozycję harmonogramu"
+          >
+            <Plus size={13} />
+            Dodaj pozycję harmonogramu
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() =>
+              openEditor(null, { pickPositionKind: true, role: "work" })
+            }
+            className="inline-flex min-h-8 items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light"
+            title="Dodaj pozycję"
+          >
+            <Plus size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -808,6 +864,26 @@ export function ScheduleTab({
                 : undefined
             }
           />
+        ) : showMobileList ? (
+          <ScheduleMobileList
+            mode={mode}
+            projects={scopeProjects}
+            blocks={blocks}
+            events={scheduleEvents}
+            catalog={state.scheduleCatalog}
+            onOpenProject={(id) => {
+              onFocusProject?.(id);
+              setMobileSurface("list");
+            }}
+            onOpenTimeline={() => setMobileSurface("timeline")}
+            onEditBlock={(b) => openEditor(b)}
+            onEditEvent={(event) =>
+              openEventSheet({ event, kind: event.kind })
+            }
+            onAddEvent={(pid) =>
+              openEventSheet({ kind: "budowlane", projectId: pid })
+            }
+          />
         ) : (
           <TimelineBoard
             rows={boardRows}
@@ -819,6 +895,8 @@ export function ScheduleTab({
             highlightBlockId={highlightBlockId}
             scrollerRef={scrollerRef}
             dayPx={dayPx}
+            labelPx={labelPx}
+            compactMarkers={isMobile}
             onDayPxChange={(next) => {
               setActiveZoomId(null);
               setDayPx(next);
@@ -1076,6 +1154,7 @@ export function ScheduleTab({
           defaultDate={todayIso()}
           catalog={state.catalog}
           scheduleCatalog={state.scheduleCatalog}
+          users={state.users}
           onClose={() => setEventEdit(null)}
           onSave={(data) => {
             repo.upsertScheduleEvent(data);
@@ -1578,6 +1657,215 @@ function projectNumberLabel(
   return p ? `#${p.number}` : "#?";
 }
 
+function ScheduleMobileList({
+  mode,
+  projects,
+  blocks,
+  events,
+  catalog,
+  onOpenProject,
+  onOpenTimeline,
+  onEditBlock,
+  onEditEvent,
+  onAddEvent,
+}: {
+  mode: ScheduleViewMode;
+  projects: PreviewProject[];
+  blocks: ScheduleBlock[];
+  events: ScheduleEvent[];
+  catalog: ScheduleCatalogPreset;
+  onOpenProject: (projectId: string) => void;
+  onOpenTimeline: () => void;
+  onEditBlock: (b: ScheduleBlock) => void;
+  onEditEvent: (e: ScheduleEvent) => void;
+  onAddEvent: (projectId: string) => void;
+}) {
+  const today = todayIso();
+  const single = mode === "project" && projects.length === 1 ? projects[0] : null;
+
+  if (single) {
+    const works = blocks
+      .filter((b) => b.projectId === single.id && b.role === "work")
+      .slice()
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const projectEvents = events
+      .filter((e) => e.projectId === single.id)
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const upcoming = projectEvents.filter((e) => e.date >= today).slice(0, 12);
+    const past = projectEvents.filter((e) => e.date < today).slice(-4).reverse();
+
+    return (
+      <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface">
+        <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+          <button
+            type="button"
+            onClick={onOpenTimeline}
+            className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 text-sm font-semibold text-accent"
+          >
+            <GanttChart size={16} />
+            Oś czasu
+          </button>
+          <button
+            type="button"
+            onClick={() => onAddEvent(single.id)}
+            className="inline-flex min-h-10 items-center gap-1 rounded-xl bg-accent px-3 text-sm font-semibold text-white"
+          >
+            <Zap size={15} />
+            Zdarzenie
+          </button>
+        </div>
+
+        <section className="border-b border-line p-3">
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            Pozycje harmonogramu
+          </h3>
+          {works.length === 0 ? (
+            <p className="text-sm text-ink-faint">Brak pozycji w planie.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {works.map((b) => (
+                <li key={b.id}>
+                  <button
+                    type="button"
+                    onClick={() => onEditBlock(b)}
+                    className="flex w-full min-h-12 flex-col gap-0.5 rounded-xl border border-line/70 bg-surface-raised/30 px-3 py-2.5 text-left transition active:bg-surface-raised"
+                  >
+                    <span className="truncate text-sm font-medium text-ink">
+                      {b.title || b.scope || "Pozycja"}
+                    </span>
+                    <span className="text-[11px] text-ink-faint">
+                      {formatDayShort(b.startDate)}
+                      {b.startDate !== b.endDate
+                        ? ` – ${formatDayShort(b.endDate)}`
+                        : ""}
+                      {" · "}
+                      {SCHEDULE_STATUS_LABEL[b.status]}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="p-3 pb-6">
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            Zdarzenia
+          </h3>
+          {upcoming.length === 0 && past.length === 0 ? (
+            <p className="text-sm text-ink-faint">Brak zdarzeń.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {upcoming.map((e) => (
+                <li key={e.id}>
+                  <button
+                    type="button"
+                    onClick={() => onEditEvent(e)}
+                    className="flex w-full min-h-12 items-start gap-2 rounded-xl border border-dashed border-line/60 bg-surface-raised/20 px-3 py-2.5 text-left"
+                  >
+                    <span className="w-14 shrink-0 pt-0.5 text-[11px] text-ink-faint">
+                      {formatDayShort(e.date)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1 truncate text-sm text-ink">
+                        {e.kind === "budowlane" ? (
+                          <Zap size={12} className="shrink-0 text-amber-400" />
+                        ) : (
+                          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+                        )}
+                        {scheduleEventLabel(e)}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {past.map((e) => (
+                <li key={e.id}>
+                  <button
+                    type="button"
+                    onClick={() => onEditEvent(e)}
+                    className="flex w-full min-h-11 items-start gap-2 rounded-xl px-3 py-2 text-left opacity-70"
+                  >
+                    <span className="w-14 shrink-0 text-[11px] text-ink-faint">
+                      {formatDayShort(e.date)}
+                    </span>
+                    <span className="truncate text-sm text-ink-light">
+                      {scheduleEventLabel(e)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface p-3 pb-6">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-[12px] text-ink-faint">
+          {mode === "byCrew"
+            ? "Wybierz budowę albo przełącz na oś czasu."
+            : "Budowy w zakresie — wejdź w szczegóły lub otwórz oś."}
+        </p>
+        <button
+          type="button"
+          onClick={onOpenTimeline}
+          className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-lg border border-accent/40 bg-accent/10 px-2.5 text-[12px] font-semibold text-accent"
+        >
+          <GanttChart size={14} />
+          Oś
+        </button>
+      </div>
+      {projects.length === 0 ? (
+        <p className="py-8 text-center text-sm text-ink-faint">Brak budów.</p>
+      ) : (
+        <ul className="space-y-2">
+          {projects.map((p) => {
+            const stage = projectStageLabel(p.id, blocks, catalog);
+            const nextEvent = events
+              .filter((e) => e.projectId === p.id && e.date >= today)
+              .sort((a, b) => a.date.localeCompare(b.date))[0];
+            const works = blocks.filter(
+              (b) => b.projectId === p.id && b.role === "work",
+            ).length;
+            return (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpenProject(p.id)}
+                  className="flex w-full min-h-[4.25rem] flex-col gap-1 rounded-2xl border border-line bg-surface-overlay px-3.5 py-3 text-left transition active:bg-surface-raised"
+                >
+                  <span className="truncate text-[15px] font-semibold text-ink">
+                    <span className="text-accent">#{p.number}</span> {p.name}
+                  </span>
+                  <span className="text-[12px] text-ink-faint">
+                    {stage ?? "Bez etapu"}
+                    {works > 0 ? ` · ${works} poz.` : ""}
+                  </span>
+                  {nextEvent ? (
+                    <span className="truncate text-[12px] text-ink-light">
+                      {formatDayShort(nextEvent.date)} ·{" "}
+                      {scheduleEventLabel(nextEvent)}
+                    </span>
+                  ) : (
+                    <span className="text-[12px] text-ink-faint">
+                      Brak nadchodzących zdarzeń
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** Cold start: nothing planned yet — offer both ways in. */
 function ScheduleEmptyPanel({
   mode,
@@ -1651,6 +1939,8 @@ function TimelineBoard({
   scrollerRef,
   dayPx,
   onDayPxChange,
+  labelPx = LABEL_PX,
+  compactMarkers = false,
   labelHeader = "Czynność",
   onEdit,
   onMove,
@@ -1677,6 +1967,8 @@ function TimelineBoard({
   scrollerRef: React.RefObject<HTMLDivElement>;
   dayPx: number;
   onDayPxChange?: (next: number) => void;
+  labelPx?: number;
+  compactMarkers?: boolean;
   labelHeader?: string;
   onEdit: (b: ScheduleBlock) => void;
   onMove: (
@@ -1737,7 +2029,7 @@ function TimelineBoard({
     const offset = dayOffset(range.start, todayIso());
     return offset >= 0 && offset < range.days ? offset : null;
   }, [range.start, range.days]);
-  const showMarkers = dayPx >= MARKER_MIN_DAY_PX;
+  const showMarkers = dayPx >= (compactMarkers ? 14 : MARKER_MIN_DAY_PX);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -1747,7 +2039,7 @@ function TimelineBoard({
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const viewportX = e.clientX - rect.left;
-      const chartX = el.scrollLeft + viewportX - LABEL_PX;
+      const chartX = el.scrollLeft + viewportX - labelPx;
       const iso = isoAtChartX(
         range.start,
         range.days,
@@ -1759,7 +2051,7 @@ function TimelineBoard({
       onDayPxChange?.(next);
       requestAnimationFrame(() => {
         el.scrollLeft = scrollLeftForAnchor({
-          labelPx: LABEL_PX,
+          labelPx,
           rangeStart: range.start,
           dayPx: next,
           iso,
@@ -1769,7 +2061,7 @@ function TimelineBoard({
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [dayPx, range.start, range.days, onDayPxChange, scrollerRef]);
+  }, [dayPx, range.start, range.days, onDayPxChange, scrollerRef, labelPx]);
 
   if (rows.length === 0) {
     return (
@@ -1789,12 +2081,12 @@ function TimelineBoard({
       >
         <div
           className="relative"
-          style={{ minWidth: LABEL_PX + chartW, width: LABEL_PX + chartW }}
+          style={{ minWidth: labelPx + chartW, width: labelPx + chartW }}
         >
           <div className="sticky top-0 z-20 flex border-b border-line bg-surface">
             <div
               className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-line bg-surface px-1.5 py-1 text-[11px] font-medium text-ink-faint"
-              style={{ width: LABEL_PX }}
+              style={{ width: labelPx }}
             >
               <span className="min-w-0 flex-1 truncate px-1">{labelHeader}</span>
               {categoryCollapse ? (
@@ -1869,7 +2161,7 @@ function TimelineBoard({
               >
                 <div
                   className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-line bg-surface-raised px-2.5"
-                  style={{ width: LABEL_PX }}
+                  style={{ width: labelPx }}
                 >
                   {row.crew ? (
                     <span
@@ -2062,7 +2354,7 @@ function TimelineBoard({
                           ? "sched-row-interactive cursor-pointer"
                           : ""
                       }`}
-                      style={{ width: LABEL_PX }}
+                      style={{ width: labelPx }}
                       title={tip}
                     >
                       {showCatToggle ? (
@@ -3808,10 +4100,6 @@ function Field({
       {children}
     </label>
   );
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function parseDay(iso: string) {

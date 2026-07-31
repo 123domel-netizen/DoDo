@@ -136,7 +136,7 @@ function defaultSettings(): Settings {
     hourHeightAuto: true,
     theme: "dark",
     mainAreaMode: "calendar",
-    settingsVersion: 16,
+    settingsVersion: 17,
   };
 }
 
@@ -289,6 +289,10 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
       settings.mainAreaMode = "calendar";
     }
     settings.settingsVersion = 16;
+  }
+  if ((settings.settingsVersion ?? 0) < 17) {
+    settings.view = "eleven";
+    settings.settingsVersion = 17;
   }
   return { settings, groups, items, activeGroupFilter, tags, myTagIdsByItem };
 }

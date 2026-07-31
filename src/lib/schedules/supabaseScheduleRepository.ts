@@ -50,6 +50,19 @@ function asCloudId(id: string | undefined): string {
   return id && isUuid(id) ? id : crypto.randomUUID();
 }
 
+function normalizeLoadedEventTime(raw: unknown): string | null {
+  if (raw == null || raw === "") return null;
+  const t = String(raw).trim();
+  const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) {
+    return null;
+  }
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
 export function getSupabaseScheduleRepo(
   orgId: string,
   userId: string,
@@ -656,6 +669,7 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       kind: row.kind,
       title: row.title,
       event_date: row.date,
+      event_time: row.time ? `${row.time}:00` : null,
       note: row.note,
       category_id: row.categoryId ?? null,
       status: row.status ?? null,
@@ -827,6 +841,7 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
     kind: e.kind as ScheduleEvent["kind"],
     title: e.title,
     date: e.event_date,
+    time: normalizeLoadedEventTime(e.event_time),
     note: e.note ?? "",
     categoryId: e.category_id ?? undefined,
     status: e.status as ScheduleEvent["status"],

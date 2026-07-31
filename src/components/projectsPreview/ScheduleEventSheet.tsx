@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { ClipboardList, X, Zap } from "lucide-react";
+import { ClipboardList, Pencil, X, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
+import { isoToPlDate } from "@/lib/projectsPreview/dateFormat";
 import { todayIso } from "@/lib/projectsPreview/projectMetrics";
 import type { ScheduleCatalogPreset } from "@/lib/projectsPreview/scheduleCatalog";
 import {
@@ -12,6 +13,7 @@ import {
   projectLabel,
   type DocEventStatus,
   type PreviewProject,
+  type PreviewUser,
   type ScheduleBlock,
   type ScheduleCategoryMeta,
   type ScheduleEvent,
@@ -48,6 +50,8 @@ interface ScheduleEventSheetProps {
   catalog: SupervisionCatalogPreset;
   /** Katalog kategorii / zakresów harmonogramu — tytuły kategorii na osi. */
   scheduleCatalog: ScheduleCatalogPreset;
+  /** Org users — resolve „kto dodał”. */
+  users?: PreviewUser[];
   onClose: () => void;
   onSave: (data: ScheduleEventDraft) => void;
   onDelete?: () => void;
@@ -56,9 +60,8 @@ interface ScheduleEventSheetProps {
 const KINDS: ScheduleEventKind[] = ["budowlane", "dokumentacyjne"];
 
 /**
- * Single add/edit sheet for both kinds of zdarzenie.
- * Budowlane: categories present on this budowa's schedule (+ investment row).
- * Dokumentacyjne: supervision catalog stages + activities.
+ * Add / preview / edit sheet for schedule events.
+ * Opening an existing event starts in preview; create starts in edit.
  */
 export function ScheduleEventSheet({
   projectId,
@@ -73,13 +76,12 @@ export function ScheduleEventSheet({
   defaultDate,
   catalog,
   scheduleCatalog,
+  users = [],
   onClose,
   onSave,
   onDelete,
 }: ScheduleEventSheetProps) {
-  const investmentLabel = project
-    ? projectLabel(project)
-    : "Inwestycja";
+  const investmentLabel = project ? projectLabel(project) : "Inwestycja";
   const scheduleCats = (() => {
     const base = scheduleCategoriesOnProject(
       blocks,
@@ -87,7 +89,6 @@ export function ScheduleEventSheet({
       scheduleCatalog,
       projectId,
     );
-    // Keep a legacy / removed category selectable while editing.
     const current =
       event?.kind === "budowlane" &&
       event.categoryId &&
@@ -108,6 +109,8 @@ export function ScheduleEventSheet({
   const docCategories = catalog.categories
     .slice()
     .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const [mode, setMode] = useState<"view" | "edit">(event ? "view" : "edit");
 
   const [kind, setKind] = useState<ScheduleEventKind>(
     event?.kind ?? defaultKind,
@@ -143,6 +146,7 @@ export function ScheduleEventSheet({
       todayIso(),
   );
   const [dateTouched, setDateTouched] = useState(false);
+  const [time, setTime] = useState(event?.time ?? "");
   const [note, setNote] = useState(event?.note ?? "");
 
   const docActivities =
@@ -221,6 +225,7 @@ export function ScheduleEventSheet({
       alert("Wybierz kategorię.");
       return;
     }
+    const normalizedTime = normalizeTimeInput(time);
     if (isDoc) {
       if (!activity) {
         alert("Wybierz czynność z katalogu.");
@@ -237,11 +242,13 @@ export function ScheduleEventSheet({
         kind: "dokumentacyjne",
         title: activity === "Inny" ? customLabel.trim() : activity,
         date,
+        time: normalizedTime,
         note: note.trim(),
         status,
         categoryId,
         activity,
         customLabel: activity === "Inny" ? customLabel.trim() : undefined,
+        reportedByUserId: event?.reportedByUserId,
       });
       return;
     }
@@ -257,14 +264,51 @@ export function ScheduleEventSheet({
       kind: "budowlane",
       title: title.trim(),
       date,
+      time: normalizedTime,
       note: note.trim(),
       categoryId: projectLevel ? PROJECT_LEVEL_EVENT_CATEGORY : categoryId,
+      reportedByUserId: event?.reportedByUserId,
     });
   };
 
-  const heading = event
-    ? `Edycja zdarzenia — ${SCHEDULE_EVENT_KIND_LABEL[kind].toLowerCase()}`
-    : "Nowe zdarzenie";
+  const viewing = mode === "view" && event;
+  const heading = viewing
+    ? `Zdarzenie — ${SCHEDULE_EVENT_KIND_LABEL[event.kind].toLowerCase()}`
+    : event
+      ? `Edycja zdarzenia — ${SCHEDULE_EVENT_KIND_LABEL[kind].toLowerCase()}`
+      : "Nowe zdarzenie";
+
+  const categoryTitleForView = (() => {
+    if (!event) return "—";
+    if (event.kind === "dokumentacyjne") {
+      return (
+        catalog.categories.find((c) => c.id === event.categoryId)?.title ??
+        event.categoryId ??
+        "—"
+      );
+    }
+    if (isProjectLevelEventCategory(event.categoryId)) return investmentLabel;
+    const meta = categoryMeta.find(
+      (m) => m.projectId === projectId && m.categoryId === event.categoryId,
+    );
+    return (
+      meta?.title?.trim() ||
+      scheduleCatalog.categories.find((c) => c.id === event.categoryId)?.title ||
+      event.categoryId ||
+      "—"
+    );
+  })();
+
+  const whatHappened =
+    event?.kind === "dokumentacyjne"
+      ? event.customLabel?.trim() ||
+        event.activity ||
+        event.title ||
+        "—"
+      : event?.title || "—";
+
+  const dateTimeLabel = formatEventDateTime(event?.date, event?.time);
+  const authorLabel = resolveUserName(users, event?.reportedByUserId);
 
   return createPortal(
     <div className="fixed inset-0 z-[9200] flex items-end justify-center bg-black/50 sm:items-center sm:px-4">
@@ -275,212 +319,287 @@ export function ScheduleEventSheet({
         onClick={onClose}
       />
       <div className="relative z-10 max-h-[90vh] w-full overflow-y-auto thin-scrollbar rounded-t-2xl border border-line bg-surface-overlay p-4 shadow-pop sm:max-w-md sm:rounded-2xl">
-        <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="mb-3 flex items-start justify-between gap-2">
           <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-ink">
-            {isDoc ? (
+            {isDoc || event?.kind === "dokumentacyjne" ? (
               <ClipboardList size={14} className="shrink-0 text-sky-300" />
             ) : (
               <Zap size={14} className="shrink-0 text-amber-300" />
             )}
             <span className="truncate">{heading}</span>
           </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1 text-ink-faint hover:bg-surface-raised hover:text-ink"
-            aria-label="Zamknij"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {viewing ? (
+              <button
+                type="button"
+                onClick={() => setMode("edit")}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-accent hover:bg-accent/10"
+              >
+                <Pencil size={13} />
+                Edytuj
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-1 text-ink-faint hover:bg-surface-raised hover:text-ink"
+              aria-label="Zamknij"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
-        <div className="space-y-2.5">
-          {!kindLocked ? (
-            <Field label="Rodzaj zdarzenia">
-              <div className="flex gap-1 rounded-lg bg-surface-raised/60 p-0.5">
-                {KINDS.map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => switchKind(k)}
-                    aria-pressed={kind === k}
-                    className={`flex-1 rounded-md px-2 py-1.5 text-[12px] font-medium transition ${
-                      kind === k
-                        ? "bg-accent/15 text-accent"
-                        : "text-ink-faint hover:text-ink"
-                    }`}
-                  >
-                    {SCHEDULE_EVENT_KIND_LABEL[k]}
-                  </button>
-                ))}
-              </div>
-            </Field>
-          ) : null}
+        {viewing && event ? (
+          <div className="space-y-3">
+            <ViewRow label="Inwestycja" value={investmentLabel} />
+            <ViewRow
+              label={event.kind === "dokumentacyjne" ? "Etap katalogu" : "Kategoria"}
+              value={categoryTitleForView}
+            />
+            <ViewRow
+              label={
+                event.kind === "dokumentacyjne" ? "Czynność" : "Co się wydarzy"
+              }
+              value={whatHappened}
+            />
+            {event.kind === "dokumentacyjne" ? (
+              <ViewRow
+                label="Stan"
+                value={DOC_EVENT_STATUS_LABEL[event.status ?? "do_wpisania"]}
+              />
+            ) : null}
+            <ViewRow label="Data i godzina" value={dateTimeLabel} />
+            <ViewRow
+              label="Notatka"
+              value={event.note.trim() ? event.note : "—"}
+            />
+            <ViewRow label="Kto dodał" value={authorLabel} />
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {!kindLocked ? (
+              <Field label="Rodzaj zdarzenia">
+                <div className="flex gap-1 rounded-lg bg-surface-raised/60 p-0.5">
+                  {KINDS.map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => switchKind(k)}
+                      aria-pressed={kind === k}
+                      className={`flex-1 rounded-md px-2 py-1.5 text-[12px] font-medium transition ${
+                        kind === k
+                          ? "bg-accent/15 text-accent"
+                          : "text-ink-faint hover:text-ink"
+                      }`}
+                    >
+                      {SCHEDULE_EVENT_KIND_LABEL[k]}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            ) : null}
 
-          <p className="text-[11px] leading-relaxed text-ink-faint">
-            {isDoc
-              ? "Zdarzenie dokumentacyjne należy do inwestycji — katalog czynności nadzoru, osobno od harmonogramu kategorii. Na osi widać je w wierszu inwestycji / Dokumentacja."
-              : "Zdarzenie budowlane to punkt na osi: kategoria z harmonogramu tej budowy albo wiersz inwestycji."}
-          </p>
+            <p className="text-[11px] leading-relaxed text-ink-faint">
+              {isDoc
+                ? "Zdarzenie dokumentacyjne należy do inwestycji — katalog czynności nadzoru, osobno od harmonogramu kategorii. Na osi widać je w wierszu inwestycji / Dokumentacja."
+                : "Zdarzenie budowlane to punkt na osi: kategoria z harmonogramu tej budowy albo wiersz inwestycji."}
+            </p>
 
-          {isDoc ? (
-            <Field label="Etap katalogu (czynności)">
-              <select
-                value={categoryId}
-                onChange={(e) => onCategoryChange(e.target.value)}
-                className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
-              >
-                {docCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : (
-            <>
-              <Field label="Kategoria">
+            {isDoc ? (
+              <Field label="Etap katalogu (czynności)">
                 <select
                   value={categoryId}
                   onChange={(e) => onCategoryChange(e.target.value)}
                   className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
                 >
-                  <option value={PROJECT_LEVEL_EVENT_CATEGORY}>
-                    {investmentLabel}
-                  </option>
-                  {scheduleCats.map((c) => (
+                  {docCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.title}
                     </option>
                   ))}
                 </select>
               </Field>
-
-              {atProjectLevel ? null : blockFixed && selectedBlock ? (
-                <Field label="Podkategoria / robota">
-                  <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-light">
-                    {blockOptionLabel(selectedBlock)}
-                  </p>
-                </Field>
-              ) : (
-                <Field label="Podkategoria / robota (opcjonalnie)">
+            ) : (
+              <>
+                <Field label="Kategoria">
                   <select
-                    value={selectedBlockId}
-                    onChange={(e) => onBlockChange(e.target.value)}
+                    value={categoryId}
+                    onChange={(e) => onCategoryChange(e.target.value)}
                     className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
                   >
-                    <option value="">Tylko kategoria</option>
-                    {blocksForCategory.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {blockOptionLabel(b)}
+                    <option value={PROJECT_LEVEL_EVENT_CATEGORY}>
+                      {investmentLabel}
+                    </option>
+                    {scheduleCats.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
                       </option>
                     ))}
                   </select>
                 </Field>
-              )}
-            </>
-          )}
 
-          {isDoc ? (
-            <>
-              <Field label="Czynność">
-                <select
-                  value={activity}
-                  onChange={(e) => setActivity(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
-                >
-                  {docActivities.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              {activity === "Inny" ? (
-                <Field label="Opis">
-                  <input
-                    value={customLabel}
-                    onChange={(e) => setCustomLabel(e.target.value)}
+                {atProjectLevel ? null : blockFixed && selectedBlock ? (
+                  <Field label="Podkategoria / robota">
+                    <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-light">
+                      {blockOptionLabel(selectedBlock)}
+                    </p>
+                  </Field>
+                ) : (
+                  <Field label="Podkategoria / robota (opcjonalnie)">
+                    <select
+                      value={selectedBlockId}
+                      onChange={(e) => onBlockChange(e.target.value)}
+                      className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
+                    >
+                      <option value="">Tylko kategoria</option>
+                      {blocksForCategory.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {blockOptionLabel(b)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+              </>
+            )}
+
+            {isDoc ? (
+              <>
+                <Field label="Czynność">
+                  <select
+                    value={activity}
+                    onChange={(e) => setActivity(e.target.value)}
                     className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
-                    placeholder="Własna czynność…"
-                  />
+                  >
+                    {docActivities.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
                 </Field>
-              ) : null}
-              <Field label="Stan">
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as DocEventStatus)}
+                {activity === "Inny" ? (
+                  <Field label="Opis">
+                    <input
+                      value={customLabel}
+                      onChange={(e) => setCustomLabel(e.target.value)}
+                      className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
+                      placeholder="Własna czynność…"
+                    />
+                  </Field>
+                ) : null}
+                <Field label="Stan">
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as DocEventStatus)}
+                    className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
+                  >
+                    {DOC_EVENT_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {DOC_EVENT_STATUS_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </>
+            ) : (
+              <Field label="Co się wydarzy">
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
                   className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
-                >
-                  {DOC_EVENT_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {DOC_EVENT_STATUS_LABEL[s]}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="np. Przyjedzie dźwig do układania stropu"
+                  autoFocus
+                />
               </Field>
-            </>
-          ) : (
-            <Field label="Co się wydarzy">
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
-                placeholder="np. Przyjedzie dźwig do układania stropu"
-                autoFocus
+            )}
+
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <Field label="Data">
+                <IsoDateInput
+                  value={date}
+                  onChange={(iso) => {
+                    setDateTouched(true);
+                    setDate(iso);
+                  }}
+                  className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 pr-9 text-sm text-ink outline-none focus:border-line-strong"
+                />
+              </Field>
+              <Field label="Godzina (opcjonalnie)">
+                <input
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
+                />
+              </Field>
+            </div>
+            <Field label="Notatka">
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                className="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
+                placeholder="Krótki opis sytuacji…"
               />
             </Field>
-          )}
-
-          <Field label="Data">
-            <IsoDateInput
-              value={date}
-              onChange={(iso) => {
-                setDateTouched(true);
-                setDate(iso);
-              }}
-              className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 pr-9 text-sm text-ink outline-none focus:border-line-strong"
-            />
-          </Field>
-          <Field label="Notatka">
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={2}
-              className="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
-              placeholder="Krótki opis sytuacji…"
-            />
-          </Field>
-        </div>
+          </div>
+        )}
 
         <div className="mt-4 flex flex-wrap justify-between gap-2">
-          {onDelete ? (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
-            >
-              Usuń
-            </button>
+          {viewing ? (
+            <>
+              <span />
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light hover:border-line-strong hover:text-ink"
+              >
+                Zamknij
+              </button>
+            </>
           ) : (
-            <span />
+            <>
+              {onDelete ? (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
+                >
+                  Usuń
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                {event ? (
+                  <button
+                    type="button"
+                    onClick={() => setMode("view")}
+                    className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light hover:border-line-strong hover:text-ink"
+                  >
+                    Anuluj
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light hover:border-line-strong hover:text-ink"
+                  >
+                    Anuluj
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={submit}
+                  className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
+                >
+                  Zapisz
+                </button>
+              </div>
+            </>
           )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light hover:border-line-strong hover:text-ink"
-            >
-              Anuluj
-            </button>
-            <button
-              type="button"
-              onClick={submit}
-              className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
-            >
-              Zapisz
-            </button>
-          </div>
         </div>
       </div>
     </div>,
@@ -539,4 +658,46 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </label>
   );
+}
+
+function ViewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+        {label}
+      </div>
+      <p className="whitespace-pre-wrap text-sm text-ink">{value}</p>
+    </div>
+  );
+}
+
+function formatEventDateTime(
+  date: string | undefined,
+  time: string | null | undefined,
+): string {
+  if (!date) return "—";
+  const d = isoToPlDate(date) || date;
+  if (time) return `${d}, ${time}`;
+  return d;
+}
+
+function resolveUserName(
+  users: PreviewUser[],
+  userId: string | null | undefined,
+): string {
+  if (!userId) return "—";
+  return users.find((u) => u.id === userId)?.displayName ?? "—";
+}
+
+function normalizeTimeInput(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) {
+    return null;
+  }
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }

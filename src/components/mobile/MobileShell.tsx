@@ -31,7 +31,7 @@ import { MobileDashboard } from "@/components/mobile/MobileDashboard";
 import { MobileTodayPanel } from "@/components/mobile/MobileTodayPanel";
 import { TodoPanel } from "@/components/todo/TodoPanel";
 import { ItemEditorPanel } from "@/components/item/ItemEditorPanel";
-import { ProjectsPreviewNavButton } from "@/components/projectsPreview/ProjectsPreviewNavButton";
+import { ProjectsPreviewNavButton, ProjectsPreviewMobileHost } from "@/components/projectsPreview/ProjectsPreviewNavButton";
 import { Logo } from "@/components/brand/Logo";
 import { ViewSettings } from "@/components/settings/ViewSettings";
 import { GroupsModal } from "@/components/groups/GroupsModal";
@@ -94,7 +94,8 @@ export function MobileShell() {
   const addGroup = useStore((s) => s.addGroup);
 
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [mobileView, setMobileView] = useState<MobileCalendarMode>("day");
+  const [schedulesOpen, setSchedulesOpen] = useState(false);
+  const [mobileView, setMobileView] = useState<MobileCalendarMode>("today");
   const [sheet, setSheet] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<
     "view" | "org" | "contacts" | "tags" | "sync" | "admin"
@@ -109,15 +110,35 @@ export function MobileShell() {
 
   // Deep-link (push / chip „→ rozmowa") otwiera rozmowę → przełącz na zakładkę czatu.
   useEffect(() => {
-    if (activeConversationId) setTab("chat");
+    if (activeConversationId) {
+      setSchedulesOpen(false);
+      setTab("chat");
+    }
   }, [activeConversationId]);
 
   const goChatHome = () => {
+    setSchedulesOpen(false);
     setTab("chat");
     if (activeConversationId) {
       setActiveConversation(null);
       setRouteHash({ view: "chat" });
     }
+  };
+
+  const goDashboard = () => {
+    setSchedulesOpen(false);
+    setTab("dashboard");
+  };
+
+  const goCalendar = () => {
+    setSchedulesOpen(false);
+    setMobileView("today");
+    setTab("calendar");
+  };
+
+  const goTasks = () => {
+    setSchedulesOpen(false);
+    setTab("tasks");
   };
 
   const anchor = new Date(settings.anchorDate);
@@ -135,7 +156,7 @@ export function MobileShell() {
   const goToday = () => setSettings({ anchorDate: startOfDay(new Date()).toISOString() });
 
   const addEvent = () => {
-    setTab("calendar");
+    goCalendar();
     const start = new Date();
     start.setMinutes(Math.round(start.getMinutes() / 30) * 30, 0, 0);
     startDraft({
@@ -147,7 +168,7 @@ export function MobileShell() {
   };
 
   const addTask = () => {
-    setTab("tasks");
+    goTasks();
     startDraft({
       type: "task",
       hasDueDate: false,
@@ -176,16 +197,25 @@ export function MobileShell() {
         <Logo size={24} />
 
         <div className="ml-auto flex items-center gap-1">
-          {(tab === "calendar" || tab === "tasks") && (
-            <button
-              type="button"
-              onClick={tab === "calendar" ? addEvent : addTask}
-              aria-label={tab === "calendar" ? "Dodaj wydarzenie" : "Dodaj zadanie"}
-              title={tab === "calendar" ? "Dodaj wydarzenie" : "Dodaj zadanie"}
-              className="flex items-center justify-center rounded-lg bg-accent-grad p-2 text-white shadow-glow transition hover:brightness-110"
-            >
-              <Plus size={18} />
-            </button>
+          {(tab === "calendar" || tab === "tasks") && !schedulesOpen && (
+            <>
+              <button
+                type="button"
+                onClick={goDashboard}
+                className="rounded-lg px-2 py-1.5 text-[12px] font-medium text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+              >
+                Dashboard
+              </button>
+              <button
+                type="button"
+                onClick={tab === "calendar" ? addEvent : addTask}
+                aria-label={tab === "calendar" ? "Dodaj wydarzenie" : "Dodaj zadanie"}
+                title={tab === "calendar" ? "Dodaj wydarzenie" : "Dodaj zadanie"}
+                className="flex items-center justify-center rounded-lg bg-accent-grad p-2 text-white shadow-glow transition hover:brightness-110"
+              >
+                <Plus size={18} />
+              </button>
+            </>
           )}
           <button
             onClick={enableNotifications}
@@ -206,8 +236,8 @@ export function MobileShell() {
         </div>
       </header>
 
-      {/* Chipsy filtra grup (nie dotyczą czatu) — nad belką kalendarza */}
-      {tab !== "chat" && (
+      {/* Chipsy filtra grup (nie dotyczą czatu / Harmonogramów) — nad belką kalendarza */}
+      {tab !== "chat" && !schedulesOpen && (
         <GroupFilterBar
           userGroups={userGroups}
           share={share}
@@ -220,7 +250,7 @@ export function MobileShell() {
       )}
 
       {/* Pasek nawigacji daty + przełącznik widoku (kalendarz) */}
-      {tab === "calendar" && (
+      {tab === "calendar" && !schedulesOpen && (
         <div className="flex flex-col border-b border-line">
           {mobileView !== "today" ? (
             <div className="relative flex h-9 items-center px-2">
@@ -283,7 +313,9 @@ export function MobileShell() {
 
       {/* Treść */}
       <main className="min-h-0 flex-1 overflow-hidden">
-        {tab === "chat" ? (
+        {schedulesOpen ? (
+          <ProjectsPreviewMobileHost onClose={() => setSchedulesOpen(false)} />
+        ) : tab === "chat" ? (
           <Suspense
             fallback={
               <div className="flex h-full items-center justify-center text-xs text-ink-faint">
@@ -312,39 +344,74 @@ export function MobileShell() {
         )}
       </main>
 
-      {/* Dolne menu: Kalendarz · Zadania · Dashboard · Harmonogramy · Czat */}
+      {/* Skróty Kalendarz / Zadania — nad belką główną (Dashboard + te zakładki). */}
+      {!schedulesOpen && tab !== "chat" && (
+        <div className="shrink-0 border-t border-line bg-surface-raised/80 p-2">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={goCalendar}
+              aria-pressed={tab === "calendar"}
+              className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition active:bg-surface-raised ${
+                tab === "calendar"
+                  ? "border-accent/40 bg-accent/15 text-accent"
+                  : "border-line bg-surface-overlay text-ink"
+              }`}
+            >
+              <CalendarDays size={18} className="shrink-0" />
+              Kalendarz
+            </button>
+            <button
+              type="button"
+              onClick={goTasks}
+              aria-pressed={tab === "tasks"}
+              className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition active:bg-surface-raised ${
+                tab === "tasks"
+                  ? "border-accent/40 bg-accent/15 text-accent"
+                  : "border-line bg-surface-overlay text-ink"
+              }`}
+            >
+              <ListChecks size={18} className="shrink-0" />
+              Zadania
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Dolne menu: Harmonogramy · Dashboard · Czat */}
       <nav
         className="z-30 flex shrink-0 items-stretch border-t border-line bg-surface"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         aria-label="Menu główne"
       >
-        <BottomTab
-          active={tab === "calendar"}
-          onSelect={() => setTab("calendar")}
-          icon={<CalendarDays size={22} strokeWidth={tab === "calendar" ? 2.25 : 1.75} />}
-          label="Kalendarz"
+        <ProjectsPreviewNavButton
+          variant="mobileTab"
+          open={schedulesOpen}
+          onOpenChange={setSchedulesOpen}
         />
         <BottomTab
-          active={tab === "tasks"}
-          onSelect={() => setTab("tasks")}
-          icon={<ListChecks size={22} strokeWidth={tab === "tasks" ? 2.25 : 1.75} />}
-          label="Zadania"
-        />
-        <BottomTab
-          active={tab === "dashboard"}
-          onSelect={() => setTab("dashboard")}
-          icon={<LayoutDashboard size={22} strokeWidth={tab === "dashboard" ? 2.25 : 1.75} />}
+          active={tab === "dashboard" && !schedulesOpen}
+          onSelect={goDashboard}
+          icon={
+            <LayoutDashboard
+              size={22}
+              strokeWidth={tab === "dashboard" && !schedulesOpen ? 2.25 : 1.75}
+            />
+          }
           label="Dashboard"
         />
-        <ProjectsPreviewNavButton variant="mobileTab" />
         {cloudEnabled && (
           <BottomTab
-            active={tab === "chat"}
+            active={tab === "chat" && !schedulesOpen}
             onSelect={goChatHome}
             icon={
               <MessageCircle
                 size={22}
-                strokeWidth={tab === "chat" || chatUnread > 0 ? 2.25 : 1.75}
+                strokeWidth={
+                  (tab === "chat" && !schedulesOpen) || chatUnread > 0
+                    ? 2.25
+                    : 1.75
+                }
                 fill={chatUnread > 0 ? "currentColor" : "none"}
               />
             }

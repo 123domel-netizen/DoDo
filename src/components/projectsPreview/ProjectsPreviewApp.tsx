@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import type { ScheduleEventKind } from "@/lib/projectsPreview/types";
 import { CatalogView } from "./CatalogView";
@@ -93,6 +94,7 @@ export function ProjectsPreviewApp({
   onClose,
   embedded = false,
 }: ProjectsPreviewAppProps) {
+  const isMobile = useIsMobile();
   const repo = useProjectsPreviewRepo();
   const [view, setView] = useState<ProjectsPreviewView>({
     name: "board",
@@ -240,6 +242,9 @@ export function ProjectsPreviewApp({
 
   const crewCount = repo.getState().crews.length;
 
+  const sectionLabel =
+    PRIMARY_SECTIONS.find((s) => s.id === primary)?.label ?? "Harmonogramy";
+
   const shell = (
     <div
       className={
@@ -250,209 +255,389 @@ export function ProjectsPreviewApp({
       role={embedded ? "region" : "dialog"}
       aria-modal={embedded ? undefined : true}
       aria-label="Harmonogramy"
+      style={
+        embedded
+          ? undefined
+          : { paddingTop: "env(safe-area-inset-top)" }
+      }
     >
       <header className="shrink-0 border-b border-line bg-surface-raised/50">
-        <div className="flex h-9 items-center gap-1 px-1.5 sm:px-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
-            aria-label={embedded ? "Wróć do kalendarza" : "Zamknij"}
-            title={embedded ? "Wróć do kalendarza" : "Zamknij"}
-          >
-            <X size={16} />
-          </button>
-
-          <BuildsFilterControl
-            projects={activeProjects}
-            value={buildsFilter}
-            onChange={setBuildsFilter}
-            disabled={Boolean(focusedProject)}
-          />
-
-          <nav
-            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto thin-scrollbar"
-            aria-label="Sekcje Harmonogramów"
-          >
-            {PRIMARY_SECTIONS.map((s) => {
-              const active = primary === s.id;
-              // Focused budowa / catalog live under a section — mark the trail.
-              const ancestor = active && canGoBack;
-              return (
+        {isMobile ? (
+          <>
+            <div className="flex h-11 items-center gap-1 px-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="shrink-0 rounded-lg p-2 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+                aria-label={embedded ? "Wróć do kalendarza" : "Zamknij"}
+              >
+                <X size={18} />
+              </button>
+              {canGoBack ? (
                 <button
-                  key={s.id}
                   type="button"
-                  onClick={() => goToSection(s.id)}
-                  aria-current={active ? "page" : undefined}
-                  className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12px] font-medium transition ${
-                    active
-                      ? ancestor
-                        ? "bg-accent/[0.07] text-accent/80"
-                        : "bg-accent/15 text-accent"
-                      : "text-ink-faint hover:bg-surface-raised hover:text-ink"
-                  }`}
+                  onClick={goBack}
+                  className="shrink-0 rounded-lg p-2 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+                  aria-label="Wróć"
                 >
-                  {s.icon}
-                  {s.label}
+                  <ArrowLeft size={18} />
                 </button>
-              );
-            })}
-          </nav>
-
-          <div className="relative shrink-0" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setMenuOpen((o) => !o)}
-              className="rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
-              aria-label="Narzędzia Harmonogramów"
-              aria-expanded={menuOpen}
-            >
-              <MoreVertical size={16} />
-            </button>
-            {menuOpen ? (
-              <div className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-line bg-surface-overlay py-1 shadow-pop">
-                {focusedProject && isAdmin ? (
+              ) : null}
+              <div className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
+                {focusedProject ? (
                   <>
-                    <MenuItem
-                      icon={<Pencil size={14} />}
-                      label="Edytuj budowę"
-                      onClick={() => {
-                        setEditOpen(true);
-                        setMenuOpen(false);
-                      }}
-                    />
-                    <div className="my-1 border-t border-line" />
+                    <span className="text-accent">#{focusedProject.number}</span>{" "}
+                    {focusedProject.name}
                   </>
-                ) : null}
-                <MenuItem
-                  icon={<BookOpen size={14} />}
-                  label="Katalog czynności"
-                  onClick={openCatalog}
+                ) : (
+                  sectionLabel
+                )}
+              </div>
+              {!focusedProject ? (
+                <BuildsFilterControl
+                  projects={activeProjects}
+                  value={buildsFilter}
+                  onChange={setBuildsFilter}
+                  disabled={false}
                 />
+              ) : null}
+              <div className="relative shrink-0" ref={menuRef}>
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((o) => !o)}
+                  className="rounded-lg p-2 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+                  aria-label="Narzędzia Harmonogramów"
+                  aria-expanded={menuOpen}
+                >
+                  <MoreVertical size={18} />
+                </button>
+                {menuOpen ? (
+                  <div className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-line bg-surface-overlay py-1 shadow-pop">
+                    {PRIMARY_SECTIONS.map((s) => (
+                      <MenuItem
+                        key={s.id}
+                        icon={s.icon}
+                        label={s.label}
+                        onClick={() => {
+                          goToSection(s.id);
+                          setMenuOpen(false);
+                        }}
+                      />
+                    ))}
+                    <div className="my-1 border-t border-line" />
+                    {focusedProject && isAdmin ? (
+                      <MenuItem
+                        icon={<Pencil size={14} />}
+                        label="Edytuj budowę"
+                        onClick={() => {
+                          setEditOpen(true);
+                          setMenuOpen(false);
+                        }}
+                      />
+                    ) : null}
+                    <MenuItem
+                      icon={<BookOpen size={14} />}
+                      label="Katalog czynności"
+                      onClick={openCatalog}
+                    />
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="flex h-8 items-center gap-1 overflow-x-auto thin-scrollbar border-t border-line/60 px-1.5 sm:px-2">
-          {canGoBack ? (
-            <button
-              type="button"
-              onClick={goBack}
-              className="shrink-0 rounded-md p-1 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
-              aria-label="Wróć"
-              title="Wróć"
+            </div>
+            <div
+              className="flex gap-1 overflow-x-auto thin-scrollbar px-2 pb-2"
+              aria-label="Sekcje Harmonogramów"
             >
-              <ArrowLeft size={15} />
-            </button>
-          ) : null}
-
-          {view.name === "events" ? (
-            <Segmented
-              options={EVENT_KINDS}
-              value={view.kind}
-              onChange={(id) => setEventsKind(id)}
-            />
-          ) : null}
-
-          {view.name === "list" ? (
-            <>
-              <Segmented
-                options={[
-                  { id: "active", label: "Aktywne" },
-                  { id: "archived", label: "Archiwum" },
-                ]}
-                value={view.archived ? "archived" : "active"}
-                onChange={(id) => setListArchived(id === "archived")}
+              {PRIMARY_SECTIONS.map((s) => {
+                const active = primary === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => goToSection(s.id)}
+                    aria-current={active ? "page" : undefined}
+                    className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium transition ${
+                      active
+                        ? "bg-accent/15 text-accent"
+                        : "bg-surface-raised/60 text-ink-faint"
+                    }`}
+                  >
+                    {s.icon}
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex min-h-9 items-center gap-1 overflow-x-auto thin-scrollbar border-t border-line/60 px-2 py-1.5">
+              {view.name === "events" ? (
+                <Segmented
+                  options={EVENT_KINDS}
+                  value={view.kind}
+                  onChange={(id) => setEventsKind(id)}
+                />
+              ) : null}
+              {view.name === "list" ? (
+                <>
+                  <Segmented
+                    options={[
+                      { id: "active", label: "Aktywne" },
+                      { id: "archived", label: "Archiwum" },
+                    ]}
+                    value={view.archived ? "archived" : "active"}
+                    onChange={(id) => setListArchived(id === "archived")}
+                  />
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setBulkOpen(true)}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-line px-2.5 text-[12px] font-medium text-ink-light"
+                    >
+                      <Upload size={14} />
+                      Import
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormOpen(true)}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-accent px-2.5 text-[12px] font-semibold text-white"
+                    >
+                      <Plus size={14} />
+                      Budowa
+                    </button>
+                  </div>
+                </>
+              ) : null}
+              {view.name === "crews" ? (
+                <div className="ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => setCrewFormOpen(true)}
+                    className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-accent px-2.5 text-[12px] font-semibold text-white"
+                  >
+                    <Plus size={14} />
+                    Brygada
+                  </button>
+                </div>
+              ) : null}
+              {view.name === "board" && !focusedProject ? (
+                <Segmented
+                  options={BOARD_MODES}
+                  value={view.mode}
+                  onChange={(id) => setBoardMode(id)}
+                />
+              ) : null}
+              <div
+                id={SCHEDULE_TOOLBAR_SLOT_ID}
+                className={
+                  view.name === "board"
+                    ? "flex min-w-0 flex-1 items-center"
+                    : "hidden"
+                }
               />
-              <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
-                {listCount} {pluralBudowy(listCount)}
-              </span>
-              <div className="ml-auto flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setBulkOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light transition hover:border-line-strong hover:text-ink"
-                  title="Import zbiorczy"
-                >
-                  <Upload size={12} />
-                  Import
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:brightness-110"
-                  title="Dodaj budowę"
-                >
-                  <Plus size={12} />
-                  Budowa
-                </button>
-              </div>
-            </>
-          ) : null}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex h-9 items-center gap-1 px-1.5 sm:px-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="shrink-0 rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+                aria-label={embedded ? "Wróć do kalendarza" : "Zamknij"}
+                title={embedded ? "Wróć do kalendarza" : "Zamknij"}
+              >
+                <X size={16} />
+              </button>
 
-          {view.name === "crews" ? (
-            <>
-              <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
-                {crewCount} {pluralBrygady(crewCount)}
-              </span>
-              <div className="ml-auto flex shrink-0 items-center gap-1">
+              <BuildsFilterControl
+                projects={activeProjects}
+                value={buildsFilter}
+                onChange={setBuildsFilter}
+                disabled={Boolean(focusedProject)}
+              />
+
+              <nav
+                className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto thin-scrollbar"
+                aria-label="Sekcje Harmonogramów"
+              >
+                {PRIMARY_SECTIONS.map((s) => {
+                  const active = primary === s.id;
+                  const ancestor = active && canGoBack;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => goToSection(s.id)}
+                      aria-current={active ? "page" : undefined}
+                      className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12px] font-medium transition ${
+                        active
+                          ? ancestor
+                            ? "bg-accent/[0.07] text-accent/80"
+                            : "bg-accent/15 text-accent"
+                          : "text-ink-faint hover:bg-surface-raised hover:text-ink"
+                      }`}
+                    >
+                      {s.icon}
+                      {s.label}
+                    </button>
+                  );
+                })}
+              </nav>
+
+              <div className="relative shrink-0" ref={menuRef}>
                 <button
                   type="button"
-                  onClick={() => setCrewFormOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:brightness-110"
-                  title="Dodaj brygadę"
+                  onClick={() => setMenuOpen((o) => !o)}
+                  className="rounded-md p-1.5 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+                  aria-label="Narzędzia Harmonogramów"
+                  aria-expanded={menuOpen}
                 >
-                  <Plus size={12} />
-                  Brygada
+                  <MoreVertical size={16} />
                 </button>
+                {menuOpen ? (
+                  <div className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-line bg-surface-overlay py-1 shadow-pop">
+                    {focusedProject && isAdmin ? (
+                      <>
+                        <MenuItem
+                          icon={<Pencil size={14} />}
+                          label="Edytuj budowę"
+                          onClick={() => {
+                            setEditOpen(true);
+                            setMenuOpen(false);
+                          }}
+                        />
+                        <div className="my-1 border-t border-line" />
+                      </>
+                    ) : null}
+                    <MenuItem
+                      icon={<BookOpen size={14} />}
+                      label="Katalog czynności"
+                      onClick={openCatalog}
+                    />
+                  </div>
+                ) : null}
               </div>
-            </>
-          ) : null}
+            </div>
 
-          {view.name === "board" && focusedProject ? (
-            <button
-              type="button"
-              onClick={() => isAdmin && setEditOpen(true)}
-              className="min-w-0 shrink truncate text-left text-[12px] font-semibold text-ink transition hover:text-accent"
-              title={isAdmin ? "Edytuj budowę" : projectTitle(focusedProject)}
-            >
-              <span className="tabular-nums text-accent">
-                #{focusedProject.number}
-              </span>{" "}
-              {focusedProject.name}
-              {focusedProject.status === "archived" ? (
-                <span className="ml-1 text-[10px] font-normal text-ink-faint">
-                  archiwum
+            <div className="flex h-8 items-center gap-1 overflow-x-auto thin-scrollbar border-t border-line/60 px-1.5 sm:px-2">
+              {canGoBack ? (
+                <button
+                  type="button"
+                  onClick={goBack}
+                  className="shrink-0 rounded-md p-1 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+                  aria-label="Wróć"
+                  title="Wróć"
+                >
+                  <ArrowLeft size={15} />
+                </button>
+              ) : null}
+
+              {view.name === "events" ? (
+                <Segmented
+                  options={EVENT_KINDS}
+                  value={view.kind}
+                  onChange={(id) => setEventsKind(id)}
+                />
+              ) : null}
+
+              {view.name === "list" ? (
+                <>
+                  <Segmented
+                    options={[
+                      { id: "active", label: "Aktywne" },
+                      { id: "archived", label: "Archiwum" },
+                    ]}
+                    value={view.archived ? "archived" : "active"}
+                    onChange={(id) => setListArchived(id === "archived")}
+                  />
+                  <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+                    {listCount} {pluralBudowy(listCount)}
+                  </span>
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setBulkOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light transition hover:border-line-strong hover:text-ink"
+                      title="Import zbiorczy"
+                    >
+                      <Upload size={12} />
+                      Import
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:brightness-110"
+                      title="Dodaj budowę"
+                    >
+                      <Plus size={12} />
+                      Budowa
+                    </button>
+                  </div>
+                </>
+              ) : null}
+
+              {view.name === "crews" ? (
+                <>
+                  <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+                    {crewCount} {pluralBrygady(crewCount)}
+                  </span>
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setCrewFormOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:brightness-110"
+                      title="Dodaj brygadę"
+                    >
+                      <Plus size={12} />
+                      Brygada
+                    </button>
+                  </div>
+                </>
+              ) : null}
+
+              {view.name === "board" && focusedProject ? (
+                <button
+                  type="button"
+                  onClick={() => isAdmin && setEditOpen(true)}
+                  className="min-w-0 shrink truncate text-left text-[12px] font-semibold text-ink transition hover:text-accent"
+                  title={isAdmin ? "Edytuj budowę" : projectTitle(focusedProject)}
+                >
+                  <span className="tabular-nums text-accent">
+                    #{focusedProject.number}
+                  </span>{" "}
+                  {focusedProject.name}
+                  {focusedProject.status === "archived" ? (
+                    <span className="ml-1 text-[10px] font-normal text-ink-faint">
+                      archiwum
+                    </span>
+                  ) : null}
+                </button>
+              ) : null}
+
+              {view.name === "board" && !focusedProject ? (
+                <Segmented
+                  options={BOARD_MODES}
+                  value={view.mode}
+                  onChange={(id) => setBoardMode(id)}
+                />
+              ) : null}
+
+              {view.name === "catalog" ? (
+                <span className="shrink-0 text-[12px] font-semibold text-ink">
+                  Katalog czynności
                 </span>
               ) : null}
-            </button>
-          ) : null}
 
-          {view.name === "board" && !focusedProject ? (
-            <Segmented
-              options={BOARD_MODES}
-              value={view.mode}
-              onChange={(id) => setBoardMode(id)}
-            />
-          ) : null}
-
-          {view.name === "catalog" ? (
-            <span className="shrink-0 text-[12px] font-semibold text-ink">
-              Katalog czynności
-            </span>
-          ) : null}
-
-          {/* Always mounted: ScheduleTab portals its toolbar here on mount. */}
-          <div
-            id={SCHEDULE_TOOLBAR_SLOT_ID}
-            className={
-              view.name === "board"
-                ? "flex min-w-0 flex-1 items-center"
-                : "hidden"
-            }
-          />
-        </div>
+              <div
+                id={SCHEDULE_TOOLBAR_SLOT_ID}
+                className={
+                  view.name === "board"
+                    ? "flex min-w-0 flex-1 items-center"
+                    : "hidden"
+                }
+              />
+            </div>
+          </>
+        )}
       </header>
 
       <main className="relative min-h-0 flex-1 overflow-hidden">
@@ -465,6 +650,7 @@ export function ProjectsPreviewApp({
             mode={view.focusProjectId ? "project" : view.mode}
             highlightBlockId={highlight.blockId}
             highlightDate={highlight.date}
+            onFocusProject={(id) => _focusProject(id)}
             onModeChange={(mode) => {
               if (mode === "project") return;
               setBoardMode(mode);

@@ -138,6 +138,8 @@ export interface ScheduleEvent {
   kind: ScheduleEventKind;
   title: string;
   date: string; // YYYY-MM-DD
+  /** Optional local time HH:mm (null / empty = bez godziny). */
+  time?: string | null;
   note: string;
   /** Kategoria z katalogu budów — główne miejsce na osi. */
   categoryId?: string;
@@ -147,6 +149,7 @@ export interface ScheduleEvent {
   /** Custom description when activity is "Inny". */
   customLabel?: string;
   writtenAt?: string | null;
+  /** Kto dodał / zgłosił zdarzenie. */
   reportedByUserId?: string | null;
   writtenByUserId?: string | null;
 }

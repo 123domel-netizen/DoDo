@@ -120,7 +120,7 @@ export default function App() {
               )}
             </main>
             {panelOpen && (
-              <aside className="relative w-full max-w-[400px] shrink-0 border-l border-accent/20 bg-gradient-to-b from-sidebar/70 to-surface shadow-panel md:w-[380px] lg:w-[400px]">
+              <aside className="relative w-full max-w-[520px] shrink-0 border-l border-accent/20 bg-gradient-to-b from-sidebar/70 to-surface shadow-panel md:w-[380px] lg:w-[400px] xl:w-[460px] 2xl:w-[520px]">
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-accent/35 via-accent/10 to-transparent" />
                 <SidePanel />
               </aside>

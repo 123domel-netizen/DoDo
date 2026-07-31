@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { addDays, addMonths, isPast, isToday, startOfDay } from "date-fns";
 import {
   AlarmClock,
@@ -36,6 +36,18 @@ import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { dmPeerMember } from "@/lib/avatar";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
+import { useScheduleDashboardHints } from "@/hooks/useScheduleDashboardHints";
+import { useScheduleRepo } from "@/hooks/useScheduleRepo";
+import type { ScheduleDashboardHint } from "@/lib/projectsPreview/dashboardScheduleHints";
+import type { ScheduleEvent } from "@/lib/projectsPreview/types";
+import {
+  ScheduleDashboardHintRow,
+  ScheduleDashboardHintSectionLabel,
+} from "@/components/dashboard/ScheduleDashboardHintRow";
+import {
+  ScheduleEventSheet,
+  type ScheduleEventDraft,
+} from "@/components/projectsPreview/ScheduleEventSheet";
 
 /** Łączna liczba wydarzeń w sekcjach „dzisiaj” + „nadchodzące”. */
 const EVENTS_DISPLAY_TARGET = 5;
@@ -58,6 +70,13 @@ export function MobileDashboard() {
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
   const startDraft = useStore((s) => s.startDraft);
+  const addItem = useStore((s) => s.addItem);
+  const scheduleRepo = useScheduleRepo();
+  const scheduleState = scheduleRepo.getState();
+  const [editHint, setEditHint] = useState<{
+    event: ScheduleEvent;
+    hint: ScheduleDashboardHint;
+  } | null>(null);
 
   const addTask = () => {
     startDraft({
@@ -155,116 +174,254 @@ export function MobileDashboard() {
     return resolveItemTags(effectiveTagIds(source, myTagIdsByItem), tagsMap);
   };
 
-  return (
-    <div className="flex h-full flex-col overflow-y-auto thin-scrollbar bg-surface">
-      {cloudEnabled && <DashboardChatSection />}
+  const scheduleUpcomingBudget = Math.max(
+    0,
+    EVENTS_DISPLAY_TARGET - todayEvents.length - upcomingEvents.length,
+  );
+  const { today: scheduleToday, upcoming: scheduleUpcoming } =
+    useScheduleDashboardHints({
+      maxToday: 3,
+      maxUpcoming: Math.max(3, scheduleUpcomingBudget),
+    });
 
-      <section className="border-b border-line p-3">
-        <div
-          className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
-            todayEvents.length === 0 ? "mb-1" : "mb-2"
-          }`}
-        >
-          <CalendarClock size={14} className="shrink-0" />
-          <span className="shrink-0">Wydarzenia dzisiaj</span>
-          {todayEvents.length === 0 && (
-            <span className="min-w-0 flex-1 truncate text-xs font-normal normal-case text-ink-faint">
-              Brak wydarzeń na dziś
-            </span>
-          )}
-          {todayEvents.length > 0 && <span className="min-w-0 flex-1" />}
-          <button
-            type="button"
-            onClick={addEvent}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
+  const hasTodaySection =
+    todayEvents.length > 0 || scheduleToday.length > 0;
+  const hasUpcomingSection =
+    upcomingEvents.length > 0 || scheduleUpcoming.length > 0;
+
+  const isoFromHintDate = (date: string) =>
+    new Date(`${date}T12:00:00`).toISOString();
+
+  const openHintEvent = async (hint: ScheduleDashboardHint) => {
+    let event = scheduleRepo
+      .getState()
+      .scheduleEvents.find((e) => e.id === hint.id);
+    if (!event && scheduleRepo.reload) {
+      try {
+        await scheduleRepo.reload();
+      } catch (err) {
+        console.warn("[schedules] reload before open failed:", err);
+      }
+      event = scheduleRepo
+        .getState()
+        .scheduleEvents.find((e) => e.id === hint.id);
+    }
+    if (!event) {
+      alert("Nie udało się wczytać zdarzenia z harmonogramu.");
+      return;
+    }
+    setEditHint({ event, hint });
+  };
+
+  const saveHintEvent = (data: ScheduleEventDraft) => {
+    scheduleRepo.upsertScheduleEvent(data);
+    setEditHint(null);
+  };
+
+  const addTaskFromHint = (hint: ScheduleDashboardHint) => {
+    const due = isoFromHintDate(hint.date);
+    addItem({
+      type: "task",
+      title: `${hint.projectLabel}: ${hint.title}`,
+      showInTodo: true,
+      showInCalendar: false,
+      hasDueDate: true,
+      start: due,
+      end: due,
+      description: `Harmonogram (${hint.kind === "budowlane" ? "budowlane" : "dokumentacyjne"})`,
+    });
+  };
+
+  const addEventFromHint = (hint: ScheduleDashboardHint) => {
+    const due = isoFromHintDate(hint.date);
+    const { start, end } = calendarBlockFromDeadline(due, 60);
+    const item = addItem({
+      type: "event",
+      title: `${hint.projectLabel}: ${hint.title}`,
+      showInTodo: true,
+      showInCalendar: true,
+      hasDueDate: true,
+      allDay: true,
+      start,
+      end,
+      description: `Harmonogram (${hint.kind === "budowlane" ? "budowlane" : "dokumentacyjne"})`,
+    });
+    setEditing(item.id);
+  };
+
+  return (
+    <div className="flex h-full flex-col bg-surface">
+      <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar">
+        {cloudEnabled && <DashboardChatSection />}
+
+        <section className="border-b border-line p-3">
+          <div
+            className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+              hasTodaySection ? "mb-2" : "mb-1"
+            }`}
           >
-            <Plus size={12} strokeWidth={2.5} />
-            Dodaj wydarzenie
-          </button>
-        </div>
-        {todayEvents.length > 0 && (
-          <div className="space-y-1">
-            {todayEvents.map((it) => (
-              <DashboardEventRow
-                key={it.id}
-                item={it}
-                group={it.groupId ? groups[it.groupId] : undefined}
-                itemTags={tagsForItem(it)}
-                onOpen={() => setEditing(it.id)}
-              />
-            ))}
-          </div>
-        )}
-        {upcomingEvents.length > 0 && (
-          <>
-            <div
-              className={`mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
-                todayEvents.length === 0 ? "mt-1.5" : "mt-4"
-              }`}
+            <CalendarClock size={14} className="shrink-0" />
+            <span className="shrink-0">Wydarzenia dzisiaj</span>
+            {!hasTodaySection && (
+              <span className="min-w-0 flex-1 truncate text-xs font-normal normal-case text-ink-faint">
+                Brak wydarzeń na dziś
+              </span>
+            )}
+            {hasTodaySection && <span className="min-w-0 flex-1" />}
+            <button
+              type="button"
+              onClick={addEvent}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
             >
-              Nadchodzące
-            </div>
+              <Plus size={12} strokeWidth={2.5} />
+              Dodaj wydarzenie
+            </button>
+          </div>
+          {todayEvents.length > 0 && (
             <div className="space-y-1">
-              {upcomingEvents.map((it) => (
+              {todayEvents.map((it) => (
                 <DashboardEventRow
                   key={it.id}
                   item={it}
                   group={it.groupId ? groups[it.groupId] : undefined}
                   itemTags={tagsForItem(it)}
-                  showEventDate
                   onOpen={() => setEditing(it.id)}
                 />
               ))}
             </div>
-          </>
-        )}
-      </section>
+          )}
+          {scheduleToday.length > 0 ? (
+            <div className={todayEvents.length > 0 ? "mt-1.5 space-y-1" : "space-y-1"}>
+              {todayEvents.length === 0 ? null : (
+                <ScheduleDashboardHintSectionLabel />
+              )}
+              {scheduleToday.map((hint) => (
+                <ScheduleDashboardHintRow
+                  key={hint.id}
+                  hint={hint}
+                  onOpen={() => void openHintEvent(hint)}
+                  onAddTask={() => addTaskFromHint(hint)}
+                  onAddEvent={() => addEventFromHint(hint)}
+                />
+              ))}
+            </div>
+          ) : null}
+          {hasUpcomingSection && (
+            <>
+              <div
+                className={`mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+                  hasTodaySection ? "mt-4" : "mt-1.5"
+                }`}
+              >
+                Nadchodzące
+              </div>
+              <div className="space-y-1">
+                {upcomingEvents.map((it) => (
+                  <DashboardEventRow
+                    key={it.id}
+                    item={it}
+                    group={it.groupId ? groups[it.groupId] : undefined}
+                    itemTags={tagsForItem(it)}
+                    showEventDate
+                    onOpen={() => setEditing(it.id)}
+                  />
+                ))}
+                {scheduleUpcoming.map((hint) => (
+                  <ScheduleDashboardHintRow
+                    key={hint.id}
+                    hint={hint}
+                    showDate
+                    onOpen={() => void openHintEvent(hint)}
+                    onAddTask={() => addTaskFromHint(hint)}
+                    onAddEvent={() => addEventFromHint(hint)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </section>
 
-      <section className="flex-1 p-3">
-        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-          <ListChecks size={14} />
-          <span className="min-w-0 flex-1">Zadania</span>
-          <button
-            type="button"
-            onClick={addTask}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
-          >
-            <Plus size={12} strokeWidth={2.5} />
-            Dodaj zadanie
-          </button>
-        </div>
-        {tasks.length === 0 ? (
-          <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak zadań</p>
-        ) : (
-          <div className="space-y-1">
-            {tasks.map((it) => (
-              <DashboardTodoRow
-                key={it.id}
-                item={it}
-                group={it.groupId ? groups[it.groupId] : undefined}
-                itemTags={tagsForItem(it)}
-                onToggle={() => toggleTaskDone(baseItemId(it.id))}
-                onOpen={() => setEditing(it.id)}
-                onConvert={() => {
-                  const id = baseItemId(it.id);
-                  const patch: Partial<Item> = {
-                    type: "event",
-                    showInCalendar: true,
-                    hasDueDate: true,
-                  };
-                  if (!it.hasDueDate) {
-                    const { end } = defaultTaskDueRange();
-                    Object.assign(patch, calendarBlockFromDeadline(end, 60));
-                  } else if (itemDurationMinutes(it.start, it.end) < 60) {
-                    Object.assign(patch, calendarBlockFromDeadline(it.end, 60));
-                  }
-                  patchItem(id, patch);
-                }}
-              />
-            ))}
+        <section className="p-3 pb-4">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+            <ListChecks size={14} />
+            <span className="min-w-0 flex-1">Zadania</span>
+            <button
+              type="button"
+              onClick={addTask}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
+            >
+              <Plus size={12} strokeWidth={2.5} />
+              Dodaj zadanie
+            </button>
           </div>
-        )}
-      </section>
+          {tasks.length === 0 ? (
+            <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak zadań</p>
+          ) : (
+            <div className="space-y-1">
+              {tasks.map((it) => (
+                <DashboardTodoRow
+                  key={it.id}
+                  item={it}
+                  group={it.groupId ? groups[it.groupId] : undefined}
+                  itemTags={tagsForItem(it)}
+                  onToggle={() => toggleTaskDone(baseItemId(it.id))}
+                  onOpen={() => setEditing(it.id)}
+                  onConvert={() => {
+                    const id = baseItemId(it.id);
+                    const patch: Partial<Item> = {
+                      type: "event",
+                      showInCalendar: true,
+                      hasDueDate: true,
+                    };
+                    if (!it.hasDueDate) {
+                      const { end } = defaultTaskDueRange();
+                      Object.assign(patch, calendarBlockFromDeadline(end, 60));
+                    } else if (itemDurationMinutes(it.start, it.end) < 60) {
+                      Object.assign(patch, calendarBlockFromDeadline(it.end, 60));
+                    }
+                    patchItem(id, patch);
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {editHint ? (
+        <ScheduleEventSheet
+          key={editHint.event.id}
+          projectId={editHint.event.projectId}
+          project={
+            scheduleState.projects.find(
+              (p) => p.id === editHint.event.projectId,
+            ) ?? {
+              number: editHint.hint.projectNumber,
+              name: editHint.hint.projectName,
+            }
+          }
+          blocks={scheduleState.scheduleBlocks.filter(
+            (b) => b.projectId === editHint.event.projectId,
+          )}
+          categoryMeta={scheduleState.categoryMeta.filter(
+            (m) => m.projectId === editHint.event.projectId,
+          )}
+          blockId={editHint.event.blockId}
+          defaultCategoryId={editHint.event.categoryId}
+          event={editHint.event}
+          defaultKind={editHint.event.kind}
+          lockKind
+          catalog={scheduleState.catalog}
+          scheduleCatalog={scheduleState.scheduleCatalog}
+          users={scheduleState.users}
+          onClose={() => setEditHint(null)}
+          onSave={saveHintEvent}
+          onDelete={() => {
+            scheduleRepo.deleteScheduleEvent(editHint.event.id);
+            setEditHint(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

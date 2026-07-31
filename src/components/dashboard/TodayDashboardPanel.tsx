@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { isPast, isToday } from "date-fns";
 import {
   AlarmClock,
@@ -26,13 +26,21 @@ import {
   useTodayDashboardData,
 } from "@/hooks/useTodayDashboardData";
 import { useScheduleDashboardHints } from "@/hooks/useScheduleDashboardHints";
+import { useScheduleRepo } from "@/hooks/useScheduleRepo";
 import type { ScheduleDashboardHint } from "@/lib/projectsPreview/dashboardScheduleHints";
+import type { ScheduleEvent } from "@/lib/projectsPreview/types";
 import {
   ScheduleDashboardHintRow,
   ScheduleDashboardHintSectionLabel,
 } from "@/components/dashboard/ScheduleDashboardHintRow";
+import {
+  ScheduleEventSheet,
+  type ScheduleEventDraft,
+} from "@/components/projectsPreview/ScheduleEventSheet";
 
-const DASHBOARD_LEFT_COL = "flex w-14 shrink-0 justify-center";
+const DASHBOARD_LEFT_COL =
+  "flex w-14 shrink-0 justify-center xl:w-[3.75rem] 2xl:w-16";
+const DASHBOARD_CHECK_COL = "flex w-8 shrink-0 justify-center xl:w-9";
 
 /** Desktop side-panel „Dziś” — ta sama logika co MobileDashboard. */
 export function TodayDashboardPanel() {
@@ -42,6 +50,12 @@ export function TodayDashboardPanel() {
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
   const addItem = useStore((s) => s.addItem);
+  const scheduleRepo = useScheduleRepo();
+  const scheduleState = scheduleRepo.getState();
+  const [editHint, setEditHint] = useState<{
+    event: ScheduleEvent;
+    hint: ScheduleDashboardHint;
+  } | null>(null);
 
   const scheduleUpcomingBudget = Math.max(
     0,
@@ -60,6 +74,32 @@ export function TodayDashboardPanel() {
 
   const isoFromHintDate = (date: string) =>
     new Date(`${date}T12:00:00`).toISOString();
+
+  const openHintEvent = async (hint: ScheduleDashboardHint) => {
+    let event = scheduleRepo
+      .getState()
+      .scheduleEvents.find((e) => e.id === hint.id);
+    if (!event && scheduleRepo.reload) {
+      try {
+        await scheduleRepo.reload();
+      } catch (err) {
+        console.warn("[schedules] reload before open failed:", err);
+      }
+      event = scheduleRepo
+        .getState()
+        .scheduleEvents.find((e) => e.id === hint.id);
+    }
+    if (!event) {
+      alert("Nie udało się wczytać zdarzenia z harmonogramu.");
+      return;
+    }
+    setEditHint({ event, hint });
+  };
+
+  const saveHintEvent = (data: ScheduleEventDraft) => {
+    scheduleRepo.upsertScheduleEvent(data);
+    setEditHint(null);
+  };
 
   const addTaskFromHint = (hint: ScheduleDashboardHint) => {
     const due = isoFromHintDate(hint.date);
@@ -112,8 +152,8 @@ export function TodayDashboardPanel() {
   );
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto overflow-x-hidden thin-scrollbar">
-      <section className="border-b border-line p-3">
+    <div className="flex h-full w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden thin-scrollbar">
+      <section className="border-b border-line p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
         <div
           className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
             hasTodaySection ? "mb-2" : "mb-1"
@@ -154,6 +194,7 @@ export function TodayDashboardPanel() {
               <ScheduleDashboardHintRow
                 key={hint.id}
                 hint={hint}
+                onOpen={() => void openHintEvent(hint)}
                 onAddTask={() => addTaskFromHint(hint)}
                 onAddEvent={() => addEventFromHint(hint)}
               />
@@ -190,6 +231,7 @@ export function TodayDashboardPanel() {
                   key={hint.id}
                   hint={hint}
                   showDate
+                  onOpen={() => void openHintEvent(hint)}
                   onAddTask={() => addTaskFromHint(hint)}
                   onAddEvent={() => addEventFromHint(hint)}
                 />
@@ -199,7 +241,42 @@ export function TodayDashboardPanel() {
         )}
       </section>
 
-      <section className="flex-1 p-3">
+      {editHint ? (
+        <ScheduleEventSheet
+          key={editHint.event.id}
+          projectId={editHint.event.projectId}
+          project={
+            scheduleState.projects.find(
+              (p) => p.id === editHint.event.projectId,
+            ) ?? {
+              number: editHint.hint.projectNumber,
+              name: editHint.hint.projectName,
+            }
+          }
+          blocks={scheduleState.scheduleBlocks.filter(
+            (b) => b.projectId === editHint.event.projectId,
+          )}
+          categoryMeta={scheduleState.categoryMeta.filter(
+            (m) => m.projectId === editHint.event.projectId,
+          )}
+          blockId={editHint.event.blockId}
+          defaultCategoryId={editHint.event.categoryId}
+          event={editHint.event}
+          defaultKind={editHint.event.kind}
+          lockKind
+          catalog={scheduleState.catalog}
+          scheduleCatalog={scheduleState.scheduleCatalog}
+          users={scheduleState.users}
+          onClose={() => setEditHint(null)}
+          onSave={saveHintEvent}
+          onDelete={() => {
+            scheduleRepo.deleteScheduleEvent(editHint.event.id);
+            setEditHint(null);
+          }}
+        />
+      ) : null}
+
+      <section className="flex-1 p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
         <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
           <ListChecks size={14} />
           Zadania
@@ -245,7 +322,7 @@ function DashboardMetaRow({ children }: { children: ReactNode }) {
   const visible = items.filter(Boolean);
   if (!visible.length) return null;
   return (
-    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-ink-faint">
+    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-ink-faint xl:gap-x-2">
       {visible}
     </div>
   );
@@ -300,7 +377,7 @@ function DashboardMetaGroup({
   }
   if (!group) return null;
   return (
-    <span className="inline-flex min-w-0 max-w-[9rem] items-center gap-1">
+    <span className="inline-flex min-w-0 max-w-[9rem] items-center gap-1 xl:max-w-[14rem] 2xl:max-w-[18rem]">
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
       <span className="truncate">{group.name}</span>
     </span>
@@ -314,7 +391,7 @@ function DashboardMetaTags({ tags }: { tags: UserTag[] }) {
       {tags.map((tag) => (
         <span
           key={tag.id}
-          className="inline-flex max-w-[5.5rem] shrink-0 items-center truncate rounded-full px-1.5 py-px text-[10px] font-medium"
+          className="inline-flex max-w-[5.5rem] shrink-0 items-center truncate rounded-full px-1.5 py-px text-[10px] font-medium xl:max-w-[9rem] 2xl:max-w-[11rem]"
           style={{
             color: tag.color,
             background: `${tag.color}22`,
@@ -380,7 +457,7 @@ export function DashboardEventRow({
   const body = (
     <div className="min-w-0 flex-1 overflow-hidden">
       <div
-        className={`text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"} ${
+        className={`truncate text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"} ${
           canToggleDone ? "cursor-pointer" : ""
         }`}
         onClick={canToggleDone ? onOpen : undefined}
@@ -419,7 +496,7 @@ export function DashboardEventRow({
   if (canToggleDone) {
     return (
       <div
-        className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay ${
+        className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay xl:gap-2.5 xl:px-2.5 2xl:px-3 ${
           shared ? "opacity-[0.72]" : ""
         }`}
         style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
@@ -434,7 +511,7 @@ export function DashboardEventRow({
     <button
       type="button"
       onClick={onOpen}
-      className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay ${
+      className={`group flex w-full min-w-0 gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-2 py-2 text-left transition hover:bg-surface-overlay xl:gap-2.5 xl:px-2.5 2xl:px-3 ${
         shared ? "opacity-[0.72]" : ""
       }`}
       style={{ borderLeft: `3px solid ${color}` }}
@@ -477,12 +554,12 @@ export function DashboardTodoRow({
 
   return (
     <div
-      className={`group flex min-w-0 gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay ${
+      className={`group relative flex min-w-0 gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:bg-surface-overlay xl:gap-2.5 xl:px-2.5 2xl:px-3 ${
         shared ? "opacity-[0.72]" : ""
       }`}
       style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
     >
-      <div className={`${DASHBOARD_LEFT_COL} items-center pt-0.5`}>
+      <div className={`${DASHBOARD_CHECK_COL} items-center pt-0.5`}>
         <input
           type="checkbox"
           checked={item.done}
@@ -493,7 +570,7 @@ export function DashboardTodoRow({
       </div>
       <div className="min-w-0 flex-1 overflow-hidden">
         <div
-          className={`cursor-pointer text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
+          className={`cursor-pointer truncate text-sm font-medium ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
           onClick={onOpen}
         >
           {item.title || "(bez tytułu)"}
@@ -522,7 +599,7 @@ export function DashboardTodoRow({
         <button
           onClick={onConvert}
           title="Zmień na wydarzenie (pokaż w kalendarzu)"
-          className="shrink-0 self-start rounded-md px-1.5 py-0.5 text-[11px] text-ink-light opacity-0 transition hover:text-ink group-hover:opacity-100"
+          className="absolute right-1.5 top-1.5 shrink-0 rounded-md px-1.5 py-0.5 text-[11px] text-ink-light opacity-0 transition hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
           style={{ background: tint(color, 0.12) }}
         >
           → kalendarz

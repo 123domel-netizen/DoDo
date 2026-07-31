@@ -211,11 +211,11 @@ export function TodoPanel() {
       )}
 
       {activeTab === "today" ? (
-        <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
           <TodayDashboardPanel />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden thin-scrollbar p-2">
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden thin-scrollbar p-2 xl:p-2.5 2xl:p-3">
           {activeTab === "tasks" ? (
           <>
             {todos.length === 0 && (
