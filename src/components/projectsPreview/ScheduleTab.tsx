@@ -1302,45 +1302,6 @@ export function ScheduleTab({
           }}
           onDelete={() => {
             const { projectId: pid, categoryId: cid } = categoryEdit;
-            const inCat = state.scheduleBlocks.filter(
-              (b) => b.projectId === pid && b.categoryId === cid,
-            );
-            const subCount = inCat.filter((b) => b.role === "subcategory").length;
-            const workCount = inCat.filter((b) => b.role === "work").length;
-            if (inCat.length > 0) {
-              const parts: string[] = [];
-              if (subCount) {
-                parts.push(
-                  `${subCount} ${
-                    subCount === 1
-                      ? "podkategorię"
-                      : subCount < 5
-                        ? "podkategorie"
-                        : "podkategorii"
-                  }`,
-                );
-              }
-              if (workCount) {
-                parts.push(
-                  `${workCount} ${
-                    workCount === 1
-                      ? "zakres"
-                      : workCount < 5
-                        ? "zakresy"
-                        : "zakresów"
-                  }`,
-                );
-              }
-              if (
-                !confirm(
-                  `Kategoria zawiera ${parts.join(" i ")}. Usunąć kategorię wraz z całą zawartością?`,
-                )
-              ) {
-                return;
-              }
-            } else if (!confirm("Usunąć tę kategorię z harmonogramu budowy?")) {
-              return;
-            }
             repo.removeProjectCategory(pid, cid);
             setCategoryEdit(null);
           }}
@@ -3572,6 +3533,7 @@ function CategoryLaneSheet({
   const [projectId, setProjectId] = useState(
     initialProjectId ?? projects[0]?.id ?? "",
   );
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const isInny = preset === CATEGORY_INNY_VALUE;
   const showProject = creating && projects.length > 1;
 
@@ -3599,7 +3561,11 @@ function CategoryLaneSheet({
         aria-label="Zamknij"
         onClick={onClose}
       />
-      <div className="relative z-10 max-h-[90vh] w-full overflow-y-auto thin-scrollbar rounded-t-2xl border border-line bg-surface-overlay p-4 shadow-pop sm:max-w-md sm:rounded-2xl">
+      <div
+        className="relative z-10 max-h-[90vh] w-full overflow-y-auto thin-scrollbar rounded-t-2xl border border-line bg-surface-overlay p-4 shadow-pop sm:max-w-md sm:rounded-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-ink">
             {creating && showKindPicker
@@ -3741,33 +3707,60 @@ function CategoryLaneSheet({
         </div>
 
         <div className="mt-4 flex flex-wrap justify-between gap-2">
-          {onDelete ? (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
-            >
-              Usuń
-            </button>
+          {onDelete && confirmDelete ? (
+            <div className="flex w-full flex-col gap-2">
+              <p className="text-[12px] leading-snug text-red-300/90">
+                Usunąć tę kategorię z harmonogramu budowy wraz z podkategoriami,
+                zakresami i powiązanymi pozycjami?
+              </p>
+              <div className="flex flex-wrap justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded-lg px-3 py-1.5 text-sm text-ink-light hover:bg-surface-raised"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete()}
+                  className="rounded-lg bg-red-600/90 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-600"
+                >
+                  Usuń definitywnie
+                </button>
+              </div>
+            </div>
           ) : (
-            <span />
+            <>
+              {onDelete ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
+                >
+                  Usuń
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg px-3 py-1.5 text-sm text-ink-light"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="button"
+                  onClick={submit}
+                  className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
+                >
+                  Zapisz
+                </button>
+              </div>
+            </>
           )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-ink-light"
-            >
-              Anuluj
-            </button>
-            <button
-              type="button"
-              onClick={submit}
-              className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
-            >
-              Zapisz
-            </button>
-          </div>
         </div>
       </div>
     </div>,

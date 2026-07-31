@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   CalendarDays,
@@ -13,6 +14,7 @@ import {
   MoreHorizontal,
   Pin,
   RotateCw,
+  X,
 } from "lucide-react";
 import { format, isToday } from "date-fns";
 import { pl } from "date-fns/locale";
@@ -45,6 +47,89 @@ import { PdfThumb } from "@/components/chat/PdfThumb";
 import { ChatImageLightbox } from "@/components/chat/ChatImageLightbox";
 
 const INLINE_REACTIONS = ["👍", "👎", "😂", "😮"];
+
+/** Lista osób, które dały daną reakcję (podgląd — bez przełączania). */
+function ReactionUsersPopover({
+  emoji,
+  userIds,
+  onClose,
+}: {
+  emoji: string;
+  userIds: string[];
+  onClose: () => void;
+}) {
+  const profiles = useChatStore((s) => s.profiles);
+  const myUserId = useChatStore((s) => s.userId);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:px-4">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40"
+        aria-label="Zamknij"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-label={`Reakcje ${emoji}`}
+        className="relative z-10 w-full max-h-[70vh] overflow-hidden rounded-t-2xl border border-line bg-surface-overlay shadow-pop sm:max-w-sm sm:rounded-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-line/70 px-4 py-3">
+          <p className="text-sm font-semibold text-ink">
+            <span className="mr-1.5 text-base">{emoji}</span>
+            {userIds.length === 1
+              ? "1 osoba"
+              : `${userIds.length} osób`}
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+            aria-label="Zamknij"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <ul className="max-h-[min(55vh,320px)] overflow-y-auto thin-scrollbar p-2">
+          {userIds.map((uid) => {
+            const profile = profiles[uid];
+            const name =
+              uid === myUserId
+                ? "Ty"
+                : profile?.displayName?.trim() || "Nieznany";
+            return (
+              <li
+                key={uid}
+                className="flex items-center gap-2.5 rounded-lg px-2 py-2"
+              >
+                <PersonAvatar
+                  userId={uid}
+                  avatarUrl={profile?.avatarUrl}
+                  size={32}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                  {name}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="border-t border-line/60 px-4 py-2 text-[11px] text-ink-faint">
+          Reakcję dodasz lub usuniesz z menu wiadomości (przytrzymaj).
+        </p>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 /** Odtwórz wiadomość ze snapshota przeniesienia (fallback zanim dojdzie live fetch). */
 function messageFromMovedPreview(stub: ChatMessage): ChatMessage | null {
@@ -797,6 +882,7 @@ export function MessageBubble({
   const attachmentsStretch =
     !msg.deletedAt &&
     (msg.attachments?.some((a) => !a.mimeType.startsWith("image/")) ?? false);
+  const [reactionPreview, setReactionPreview] = useState<string | null>(null);
 
   if (msg.kind === "system") {
     if (msg.payload?.movedStub) {
@@ -1201,7 +1287,11 @@ export function MessageBubble({
               <button
                 key={r.emoji}
                 type="button"
-                onClick={() => onToggleReaction?.(msg, r.emoji)}
+                title="Zobacz, kto zareagował"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setReactionPreview(r.emoji);
+                }}
                 className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] transition ${
                   r.mine
                     ? "bg-accent/20 text-ink ring-1 ring-inset ring-accent/40"
@@ -1214,6 +1304,16 @@ export function MessageBubble({
             ))}
           </div>
         )}
+
+        {reactionPreview ? (
+          <ReactionUsersPopover
+            emoji={reactionPreview}
+            userIds={(msg.reactions ?? [])
+              .filter((r) => r.emoji === reactionPreview)
+              .map((r) => r.userId)}
+            onClose={() => setReactionPreview(null)}
+          />
+        ) : null}
 
         {!inThread && replyCount > 0 && onOpenThread && (
           <button

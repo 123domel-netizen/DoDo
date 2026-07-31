@@ -95,7 +95,11 @@ export interface ScheduleRepository {
   removeProjectCategory(
     projectId: string,
     categoryId: string,
-  ): { deletedBlockIds: string[] };
+  ): {
+    deletedBlockIds: string[];
+    deletedEventIds: string[];
+    touchedEventIds: string[];
+  };
 
   moveCategoryWindow(
     projectId: string,

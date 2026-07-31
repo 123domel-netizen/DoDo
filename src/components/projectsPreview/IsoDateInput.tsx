@@ -89,8 +89,10 @@ export function IsoDateInput({
 
   useEffect(() => {
     if (!open) return;
-    setViewMonth(startOfMonth(selected ?? new Date()));
-  }, [open, selected]);
+    // Zależność od `value` (string), nie od obiektu Date — ten powstaje
+    // na nowo przy każdym renderze i powodował nieskończoną pętlę setState.
+    setViewMonth(startOfMonth(parseIsoLocal(value) ?? new Date()));
+  }, [open, value]);
 
   useLayoutEffect(() => {
     if (!open || !rootRef.current) {

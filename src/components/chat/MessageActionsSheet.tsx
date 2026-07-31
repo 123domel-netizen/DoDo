@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type { ChatMessage } from "@/lib/chat/types";
 import { QUICK_REACTIONS } from "@/lib/chat/polls";
+import { useChatStore } from "@/lib/chat/store";
 
 export type MessageAction =
   | "react"
@@ -136,6 +137,7 @@ export function MessageActionsSheet({
 }: MessageActionsSheetProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const myUserId = useChatStore((s) => s.userId);
 
   useLayoutEffect(() => {
     if (!msg || !anchor || !menuRef.current) {
@@ -157,6 +159,9 @@ export function MessageActionsSheet({
   }, [msg, onClose]);
 
   if (!msg || !anchor) return null;
+
+  const myReactionEmoji =
+    msg.reactions?.find((r) => r.userId === myUserId)?.emoji ?? null;
 
   const act = (action: MessageAction, arg?: string) => {
     onAction(action, msg, arg);
@@ -199,22 +204,31 @@ export function MessageActionsSheet({
         </div>
 
         <div className="flex items-center justify-center gap-0.5 px-2 py-1.5">
-          {QUICK_REACTIONS.map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              role="menuitem"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                act("react", emoji);
-              }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-base transition hover:scale-110 hover:bg-ink/5 dark:hover:bg-white/[0.08]"
-              aria-label={`Reaguj ${emoji}`}
-            >
-              {emoji}
-            </button>
-          ))}
+          {QUICK_REACTIONS.map((emoji) => {
+            const active = myReactionEmoji === emoji;
+            return (
+              <button
+                key={emoji}
+                type="button"
+                role="menuitem"
+                aria-pressed={active}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  act("react", emoji);
+                }}
+                className={`flex h-8 w-8 items-center justify-center rounded-lg text-base transition hover:scale-110 ${
+                  active
+                    ? "bg-accent/20 ring-1 ring-inset ring-accent/50"
+                    : "hover:bg-ink/5 dark:hover:bg-white/[0.08]"
+                }`}
+                aria-label={active ? `Usuń reakcję ${emoji}` : `Reaguj ${emoji}`}
+                title={active ? "Odznacz, aby usunąć" : undefined}
+              >
+                {emoji}
+              </button>
+            );
+          })}
         </div>
 
         <Divider />

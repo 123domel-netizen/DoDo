@@ -484,7 +484,11 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
   removeProjectCategory(
     projectId: string,
     categoryId: string,
-  ): { deletedBlockIds: string[] } {
+  ): {
+    deletedBlockIds: string[];
+    deletedEventIds: string[];
+    touchedEventIds: string[];
+  } {
     const cid = normalizeStageId(categoryId);
     const deletedBlockIds = this.state.scheduleBlocks
       .filter((b) => b.projectId === projectId && b.categoryId === cid)
@@ -494,27 +498,29 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
     const categoryMeta = this.state.categoryMeta.filter(
       (m) => !(m.projectId === projectId && m.categoryId === cid),
     );
-    const scheduleEvents = detachEventsFromBlocks(
-      this.state.scheduleEvents.map((e) => {
-        if (
-          e.projectId === projectId &&
-          e.kind === "budowlane" &&
-          e.categoryId === cid &&
-          !e.blockId
-        ) {
-          return { ...e, categoryId: PROJECT_LEVEL_EVENT_CATEGORY };
-        }
-        return e;
-      }),
-      idSet,
-    );
+    const prevEvents = this.state.scheduleEvents;
+    const afterDetach = detachEventsFromBlocks(prevEvents, idSet);
+    const touchedEventIds: string[] = [];
+    const scheduleEvents = afterDetach.map((e) => {
+      if (e.projectId !== projectId || e.categoryId !== cid) return e;
+      touchedEventIds.push(e.id);
+      return {
+        ...e,
+        categoryId: PROJECT_LEVEL_EVENT_CATEGORY,
+        blockId: null,
+      };
+    });
+    const kept = new Set(scheduleEvents.map((e) => e.id));
+    const deletedEventIds = prevEvents
+      .filter((e) => !kept.has(e.id))
+      .map((e) => e.id);
     this.commit({
       ...this.state,
       scheduleBlocks,
       categoryMeta,
       scheduleEvents,
     });
-    return { deletedBlockIds };
+    return { deletedBlockIds, deletedEventIds, touchedEventIds };
   }
 
   moveCategoryWindow(

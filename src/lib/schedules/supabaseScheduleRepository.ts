@@ -331,19 +331,84 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   removeProjectCategory(projectId: string, categoryId: string) {
     const result = this.inner.removeProjectCategory(projectId, categoryId);
-    if (!supabase) return result;
-    if (result.deletedBlockIds.length) {
-      void supabase
+    void this.persistCategoryRemoval(projectId, categoryId, result);
+    return result;
+  }
+
+  /**
+   * Cloud FK only nulls event.block_id on block delete — events keep category_id
+   * and a later reload brings the category lane back. Persist full removal.
+   */
+  private async persistCategoryRemoval(
+    projectId: string,
+    categoryId: string,
+    result: {
+      deletedBlockIds: string[];
+      deletedEventIds: string[];
+      touchedEventIds: string[];
+    },
+  ) {
+    if (!supabase) return;
+    const blockIds = result.deletedBlockIds.filter(isUuid);
+    if (blockIds.length) {
+      const { error } = await supabase
         .from("schedule_blocks")
         .delete()
-        .in("id", result.deletedBlockIds);
+        .in("id", blockIds);
+      if (error) {
+        console.warn("[schedules] delete category blocks failed:", error.message);
+      }
     }
-    void supabase
+
+    const eventIds = result.deletedEventIds.filter(isUuid);
+    if (eventIds.length) {
+      const { error } = await supabase
+        .from("schedule_events")
+        .delete()
+        .in("id", eventIds);
+      if (error) {
+        console.warn("[schedules] delete category events failed:", error.message);
+      }
+    }
+
+    const { error: metaErr } = await supabase
       .from("schedule_category_meta")
       .delete()
       .eq("project_id", projectId)
       .eq("category_id", categoryId);
-    return result;
+    if (metaErr) {
+      console.warn("[schedules] delete category meta failed:", metaErr.message);
+    }
+
+    // Remapped events (np. dokumentacyjne) — upsert bez reload przy błędzie,
+    // żeby nie przywrócić właśnie usuniętej kategorii.
+    const touched = result.touchedEventIds.filter(isUuid);
+    if (touched.length === 0) return;
+    const events = this.inner
+      .listScheduleEvents()
+      .filter((e) => touched.includes(e.id));
+    for (const row of events) {
+      const { error } = await supabase.from("schedule_events").upsert({
+        id: row.id,
+        project_id: row.projectId,
+        block_id: row.blockId,
+        kind: row.kind,
+        title: row.title,
+        event_date: row.date,
+        event_time: row.time ? `${row.time}:00` : null,
+        note: row.note,
+        category_id: row.categoryId ?? null,
+        status: row.status ?? null,
+        activity: row.activity ?? null,
+        custom_label: row.customLabel ?? null,
+        written_at: row.writtenAt ?? null,
+        reported_by_user_id: row.reportedByUserId ?? null,
+        written_by_user_id: row.writtenByUserId ?? null,
+      });
+      if (error) {
+        console.warn("[schedules] remap category event failed:", error.message);
+      }
+    }
   }
 
   moveCategoryWindow(

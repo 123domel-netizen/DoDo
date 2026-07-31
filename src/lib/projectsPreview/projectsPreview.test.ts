@@ -621,12 +621,21 @@ describe("projectsPreview schedule events", () => {
       title: "Instalacje custom",
       note: "",
     });
-    const { deletedBlockIds } = repo.removeProjectCategory("p-121", "instalacje");
+    const { deletedBlockIds, deletedEventIds } = repo.removeProjectCategory(
+      "p-121",
+      "instalacje",
+    );
     expect(deletedBlockIds.length).toBe(before.length);
+    expect(deletedEventIds.length).toBeGreaterThanOrEqual(0);
     expect(
       repo.listSchedule("p-121").every((b) => b.categoryId !== "instalacje"),
     ).toBe(true);
     expect(repo.getCategoryMeta("p-121", "instalacje")).toBe(null);
+    expect(
+      repo
+        .listScheduleEvents("p-121")
+        .every((e) => e.categoryId !== "instalacje"),
+    ).toBe(true);
   });
 });
 
