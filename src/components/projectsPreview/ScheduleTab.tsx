@@ -4001,7 +4001,7 @@ function CategoryLaneSheet({
   );
 }
 
-function BlockEditorSheet({
+export function BlockEditorSheet({
   block,
   creating,
   createDefaults,

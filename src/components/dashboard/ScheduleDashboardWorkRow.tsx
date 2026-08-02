@@ -3,6 +3,7 @@ import {
   CalendarPlus,
   GanttChart,
   ListPlus,
+  Plus,
   Zap,
 } from "lucide-react";
 import { useStore } from "@/state/store";
@@ -19,6 +20,7 @@ import {
   saveDashboardSchedulesCollapsed,
 } from "@/lib/projectsPreview/dashboardSchedulesCollapse";
 import { todayIso } from "@/lib/projectsPreview/projectMetrics";
+import { visibleProjects } from "@/lib/projectsPreview/search";
 import type { ScheduleEvent } from "@/lib/projectsPreview/types";
 import { SCHEDULE_EVENT_KIND_LABEL } from "@/lib/projectsPreview/types";
 import { useScheduleDashboardWorks } from "@/hooks/useScheduleDashboardWorks";
@@ -27,6 +29,8 @@ import {
   ScheduleEventSheet,
   type ScheduleEventDraft,
 } from "@/components/projectsPreview/ScheduleEventSheet";
+import { BlockEditorSheet } from "@/components/projectsPreview/ScheduleTab";
+import { CrewEditorSheet } from "@/components/projectsPreview/CrewEditorSheet";
 import { MobileSectionToggle } from "@/components/mobile/dashboard/MobileSectionToggle";
 import { DASHBOARD_LEAD_COL } from "@/components/dashboard/dashboardRowLayout";
 
@@ -210,6 +214,8 @@ export function ScheduleDashboardWorksSection({
     event: ScheduleEvent;
     meta: ScheduleDashboardEvent;
   } | null>(null);
+  const [addingWork, setAddingWork] = useState(false);
+  const [crewEdit, setCrewEdit] = useState(false);
   const [storedCollapsed, setStoredCollapsed] = useState<boolean | null>(() =>
     loadDashboardSchedulesCollapsed(collapseUserId),
   );
@@ -228,6 +234,26 @@ export function ScheduleDashboardWorksSection({
     const next = !collapsed;
     saveDashboardSchedulesCollapsed(collapseUserId, next);
     setStoredCollapsed(next);
+  };
+
+  const myProjects = visibleProjects(
+    scheduleState.projects,
+    collapseUserId === "local" ? "" : collapseUserId,
+  );
+  const editorProjects = myProjects.length
+    ? myProjects
+    : scheduleState.projects;
+
+  const openAddWork = () => {
+    if (editorProjects.length === 0) {
+      alert("Brak budów — najpierw dodaj inwestycję w Harmonogramach.");
+      return;
+    }
+    if (collapsed) {
+      saveDashboardSchedulesCollapsed(collapseUserId, false);
+      setStoredCollapsed(false);
+    }
+    setAddingWork(true);
   };
 
   const empty = inProgress.length === 0 && startingSoon.length === 0;
@@ -357,6 +383,14 @@ export function ScheduleDashboardWorksSection({
               Brak
             </span>
           ) : null}
+          <button
+            type="button"
+            onClick={openAddWork}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
+          >
+            <Plus size={12} strokeWidth={2.5} />
+            Dodaj
+          </button>
           <MobileSectionToggle
             expanded={!collapsed}
             onToggle={toggleCollapsed}
@@ -438,6 +472,44 @@ export function ScheduleDashboardWorksSection({
           onDelete={() => {
             scheduleRepo.deleteScheduleEvent(editEvent.event.id);
             setEditEvent(null);
+          }}
+        />
+      ) : null}
+
+      {addingWork ? (
+        <BlockEditorSheet
+          block={null}
+          creating
+          createDefaults={{ role: "work" }}
+          defaultProjectId={editorProjects[0]?.id ?? ""}
+          projects={editorProjects}
+          crews={scheduleState.crews}
+          scheduleCatalog={scheduleState.scheduleCatalog}
+          allBlocks={scheduleState.scheduleBlocks}
+          onClose={() => setAddingWork(false)}
+          onAddCrew={() => setCrewEdit(true)}
+          onSave={(data) => {
+            if (data.newCategoryTitle) {
+              scheduleRepo.upsertCategoryMeta({
+                projectId: data.projectId,
+                categoryId: data.categoryId,
+                title: data.newCategoryTitle,
+                note: "",
+              });
+            }
+            scheduleRepo.upsertScheduleBlock(data);
+            setAddingWork(false);
+          }}
+        />
+      ) : null}
+
+      {crewEdit ? (
+        <CrewEditorSheet
+          crew={null}
+          onClose={() => setCrewEdit(false)}
+          onSave={(data) => {
+            scheduleRepo.upsertCrew(data);
+            setCrewEdit(false);
           }}
         />
       ) : null}
