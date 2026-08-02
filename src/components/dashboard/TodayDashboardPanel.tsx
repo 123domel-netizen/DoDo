@@ -23,10 +23,7 @@ import { deadlineIconDimmed } from "@/lib/deadlines";
 import { itemSupportsTodoDone } from "@/lib/items";
 import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
 import { ScheduleDashboardWorksSection } from "@/components/dashboard/ScheduleDashboardWorkRow";
-
-const DASHBOARD_LEFT_COL =
-  "flex w-14 shrink-0 justify-center xl:w-[3.75rem] 2xl:w-16";
-const DASHBOARD_CHECK_COL = "flex w-8 shrink-0 justify-center xl:w-9";
+import { DASHBOARD_LEAD_COL } from "@/components/dashboard/dashboardRowLayout";
 
 /** Desktop side-panel „Dziś” — ta sama logika co MobileDashboard. */
 export function TodayDashboardPanel() {
@@ -35,6 +32,7 @@ export function TodayDashboardPanel() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
+  const setSettings = useStore((s) => s.setSettings);
 
   const hasTodaySection = todayEvents.length > 0;
   const hasUpcomingSection = upcomingEvents.length > 0;
@@ -47,16 +45,18 @@ export function TodayDashboardPanel() {
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden thin-scrollbar">
-      <ScheduleDashboardWorksSection />
+      <ScheduleDashboardWorksSection
+        onOpenSchedules={() => setSettings({ mainAreaMode: "projects" })}
+      />
 
       <section className="border-b border-line p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
         <div
-          className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+          className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium uppercase tracking-wide text-ink-faint ${
             hasTodaySection || hasUpcomingSection ? "mb-1.5" : "mb-1"
           }`}
         >
           <CalendarClock size={14} className="shrink-0" />
-          <span className="shrink-0">Wydarzenia nadchodzące</span>
+          <span className="shrink-0 text-ink-light">Wydarzenia nadchodzące</span>
           {!hasTodaySection && !hasUpcomingSection && (
             <span className="text-xs font-normal normal-case text-ink-faint">
               Brak wydarzeń
@@ -117,9 +117,9 @@ export function TodayDashboardPanel() {
       </section>
 
       <section className="flex-1 p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
-        <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+        <div className="mb-1.5 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-ink-faint">
           <ListChecks size={14} />
-          Zadania
+          <span className="text-ink-light">Zadania</span>
         </div>
         {tasks.length === 0 ? (
           <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak zadań</p>
@@ -276,15 +276,15 @@ export function DashboardEventRow({
 
   const timeCol = (
     <div
-      className={`${DASHBOARD_LEFT_COL} flex-col items-center text-[10px] font-medium tabular-nums leading-tight text-ink-light`}
+      className={`${DASHBOARD_LEAD_COL} flex-col text-[10px] font-medium tabular-nums leading-tight text-ink-light`}
     >
       {showEventDate && (
         <div className="whitespace-nowrap text-center text-[9px] leading-tight text-ink-faint">
-          {fmt(item.start, "EEE d MMM")}
+          {fmt(item.start, "d.MM")}
         </div>
       )}
       {item.allDay ? (
-        <span className="text-[9px] leading-tight text-ink-faint">Cały dzień</span>
+        <span className="text-[9px] leading-tight text-ink-faint">cały dzień</span>
       ) : (
         <>
           <div>{fmt(item.start, "HH:mm")}</div>
@@ -297,7 +297,7 @@ export function DashboardEventRow({
   const body = (
     <div className="min-w-0 flex-1 overflow-hidden">
       <div
-        className={`truncate text-[13px] font-medium leading-snug ${item.done ? "text-ink-faint line-through" : "text-ink"} ${
+        className={`truncate text-sm font-medium leading-snug ${item.done ? "text-ink-faint line-through" : "text-ink"} ${
           canToggleDone ? "cursor-pointer" : ""
         }`}
         onClick={canToggleDone ? onOpen : undefined}
@@ -399,7 +399,7 @@ export function DashboardTodoRow({
       }`}
       style={{ borderLeft: `3px solid ${item.done ? "var(--line-strong-hex)" : color}` }}
     >
-      <div className={`${DASHBOARD_CHECK_COL} items-center pt-0.5`}>
+      <div className={`${DASHBOARD_LEAD_COL} pt-0.5`}>
         <input
           type="checkbox"
           checked={item.done}
@@ -410,7 +410,7 @@ export function DashboardTodoRow({
       </div>
       <div className="min-w-0 flex-1 overflow-hidden">
         <div
-          className={`cursor-pointer truncate text-[13px] font-medium leading-snug ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
+          className={`cursor-pointer truncate text-sm font-medium leading-snug ${item.done ? "text-ink-faint line-through" : "text-ink"}`}
           onClick={onOpen}
         >
           {item.title || "(bez tytułu)"}

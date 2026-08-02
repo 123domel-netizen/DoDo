@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   CalendarPlus,
-  ChevronDown,
-  ChevronRight,
   GanttChart,
   ListPlus,
   Zap,
@@ -29,6 +27,8 @@ import {
   ScheduleEventSheet,
   type ScheduleEventDraft,
 } from "@/components/projectsPreview/ScheduleEventSheet";
+import { MobileSectionToggle } from "@/components/mobile/dashboard/MobileSectionToggle";
+import { DASHBOARD_LEAD_COL } from "@/components/dashboard/dashboardRowLayout";
 
 function isoToDotDate(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
@@ -82,22 +82,24 @@ function WorkFeedRow({
   onAddTask: () => void;
   onAddEvent: () => void;
 }) {
+  const accent = work.inProgress ? "var(--accent-hex, #8b7cf8)" : "#6b7280";
   return (
     <div
-      className="group flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 transition hover:bg-surface-raised/40"
+      className="group flex min-w-0 items-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 transition hover:bg-surface-overlay"
+      style={{ borderLeft: `3px solid ${accent}` }}
       title={`${work.projectLabel}\n${work.startDate} → ${work.endDate}`}
     >
-      <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-          work.inProgress ? "bg-accent" : "bg-ink-faint"
-        }`}
-        aria-hidden
-      />
-      <p className="min-w-0 flex-1 truncate text-[12px] leading-snug text-ink">
-        <span className="text-ink-faint">#{work.projectNumber}</span> {work.title}
-        {work.crewName ? ` ${work.crewName}` : ""}
-        {showStartDate ? (
-          <span className="text-ink-faint"> {isoToDotDate(work.startDate)}</span>
+      <span className={DASHBOARD_LEAD_COL} aria-hidden />
+      <p className="min-w-0 flex-1 truncate text-sm font-medium leading-snug text-ink">
+        {work.title}
+        {work.crewName ? (
+          <span className="font-normal text-ink-light"> · {work.crewName}</span>
+        ) : null}
+        {showStartDate && !work.inProgress ? (
+          <span className="font-normal text-ink-faint">
+            {" "}
+            {isoToDotDate(work.startDate)}
+          </span>
         ) : null}
       </p>
       <FeedActions onAddTask={onAddTask} onAddEvent={onAddEvent} />
@@ -119,31 +121,30 @@ function EventFeedRow({
   onAddEvent: () => void;
 }) {
   const kindLabel = SCHEDULE_EVENT_KIND_LABEL[event.kind];
+  const accent = event.kind === "budowlane" ? "#fbbf24" : "#38bdf8";
   return (
     <div
-      className="group flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 transition hover:bg-surface-raised/40"
+      className="group flex min-w-0 items-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 transition hover:bg-surface-overlay"
+      style={{ borderLeft: `3px solid ${accent}` }}
       title={`Harmonogram · ${event.projectLabel}\n${kindLabel}: ${event.title}`}
     >
+      <span className={DASHBOARD_LEAD_COL} aria-hidden>
+        {event.kind === "budowlane" ? (
+          <Zap size={14} className="text-amber-400" />
+        ) : null}
+      </span>
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+        className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-snug text-ink"
       >
-        {event.kind === "budowlane" ? (
-          <Zap size={10} className="shrink-0 text-amber-400" aria-hidden />
-        ) : (
-          <span
-            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
-            aria-hidden
-          />
-        )}
-        <span className="min-w-0 flex-1 truncate text-[12px] leading-snug text-ink">
-          <span className="text-ink-faint">#{event.projectNumber}</span>{" "}
-          {event.title}
-          {showDate ? (
-            <span className="text-ink-faint"> {isoToDotDate(event.date)}</span>
-          ) : null}
-        </span>
+        {event.title}
+        {showDate ? (
+          <span className="font-normal text-ink-faint">
+            {" "}
+            {isoToDotDate(event.date)}
+          </span>
+        ) : null}
       </button>
       <FeedActions onAddTask={onAddTask} onAddEvent={onAddEvent} />
     </div>
@@ -168,7 +169,7 @@ function FeedList({
   onAddEventFromEvent: (event: ScheduleDashboardEvent) => void;
 }) {
   return (
-    <div className="space-y-px">
+    <div className="space-y-0.5">
       {items.map((item) =>
         item.type === "work" ? (
           <WorkFeedRow
@@ -193,7 +194,11 @@ function FeedList({
   );
 }
 
-export function ScheduleDashboardWorksSection() {
+export function ScheduleDashboardWorksSection({
+  onOpenSchedules,
+}: {
+  onOpenSchedules?: () => void;
+} = {}) {
   const { inProgress, startingSoon } = useScheduleDashboardWorks();
   const addItem = useStore((s) => s.addItem);
   const setEditing = useStore((s) => s.setEditing);
@@ -321,38 +326,48 @@ export function ScheduleDashboardWorksSection() {
   return (
     <>
       <section className="border-b border-line p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          aria-expanded={!collapsed}
-          className={`flex w-full items-center gap-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-faint transition hover:text-ink-light ${
+        <div
+          className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
             collapsed || empty ? "mb-0" : "mb-1.5"
           }`}
         >
-          {collapsed ? (
-            <ChevronRight size={14} className="shrink-0" aria-hidden />
-          ) : (
-            <ChevronDown size={14} className="shrink-0" aria-hidden />
-          )}
           <GanttChart size={14} className="shrink-0" />
-          <span className="min-w-0 flex-1">Harmonogramy</span>
+          {onOpenSchedules ? (
+            <button
+              type="button"
+              onClick={onOpenSchedules}
+              title="Otwórz harmonogramy"
+              className="inline-flex min-w-0 max-w-full shrink items-center truncate rounded-md border border-line bg-surface-raised/60 px-2 py-1 text-left text-sm font-medium uppercase tracking-wide text-ink-light transition hover:border-line-strong hover:bg-surface-overlay hover:text-ink active:bg-surface-overlay"
+            >
+              Harmonogramy
+            </button>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-sm font-medium uppercase tracking-wide text-ink-light">
+              Harmonogramy
+            </span>
+          )}
+          <span className="min-w-0 flex-1" aria-hidden />
           {collapsed && feedCount > 0 ? (
             <span className="rounded-full bg-surface-overlay px-1.5 py-px text-[10px] font-semibold tabular-nums normal-case tracking-normal text-ink-light">
               {feedCount}
             </span>
           ) : null}
           {!collapsed && empty ? (
-            <span className="font-normal normal-case tracking-normal text-ink-faint">
-              Brak aktywnych zakresów
+            <span className="text-[10px] font-normal normal-case tracking-normal text-ink-faint">
+              Brak
             </span>
           ) : null}
-        </button>
+          <MobileSectionToggle
+            expanded={!collapsed}
+            onToggle={toggleCollapsed}
+          />
+        </div>
 
         {!collapsed && inProgress.length > 0 ? (
           <div className={startingSoon.length > 0 ? "mb-2" : undefined}>
-            <p className="mb-0.5 text-[10px] font-medium text-ink-faint">
-              Aktualnie powinny być procedowane
-            </p>
+            <div className="mb-0.5 text-[10px] font-medium text-ink-faint">
+              W toku
+            </div>
             <FeedList
               items={inProgress}
               onOpenEvent={(e) => void openEvent(e)}
@@ -366,9 +381,13 @@ export function ScheduleDashboardWorksSection() {
 
         {!collapsed && startingSoon.length > 0 ? (
           <div>
-            <p className="mb-0.5 text-[10px] font-medium text-ink-faint">
-              W najbliższym czasie rozpoczynają się
-            </p>
+            <div
+              className={`mb-0.5 text-[10px] font-medium text-ink-faint ${
+                inProgress.length > 0 ? "mt-2" : ""
+              }`}
+            >
+              Startują
+            </div>
             <FeedList
               items={startingSoon}
               showDates
@@ -382,7 +401,9 @@ export function ScheduleDashboardWorksSection() {
         ) : null}
 
         {!collapsed && empty ? (
-          <p className="mt-1 text-[11px] text-ink-faint">Brak aktywnych zakresów</p>
+          <p className="py-2 text-center text-[12px] text-ink-faint">
+            Brak aktywnych zakresów
+          </p>
         ) : null}
       </section>
 

@@ -9,6 +9,8 @@ import { itemSupportsTodoDone } from "@/lib/items";
 
 /** Łączna liczba wydarzeń w sekcjach „dzisiaj” + „nadchodzące”. */
 export const EVENTS_DISPLAY_TARGET = 7;
+/** Szerszy limit na mobile (przycisk Rozwiń). */
+export const EVENTS_DISPLAY_EXPANDED = 24;
 
 function sortEventsByStart(a: Item, b: Item): number {
   if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
@@ -80,11 +82,32 @@ export function useTodayDashboardData(opts?: { eventsTarget?: number }) {
           if (inArchiveView) {
             return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
           }
+          const ap = a.pinnedAt ? 1 : 0;
+          const bp = b.pinnedAt ? 1 : 0;
+          if (ap !== bp) return bp - ap;
+          if (a.pinnedAt && b.pinnedAt) return b.pinnedAt.localeCompare(a.pinnedAt);
           if (!a.hasDueDate && !b.hasDueDate) return 0;
           if (!a.hasDueDate) return 1;
           if (!b.hasDueDate) return -1;
           return new Date(a.end).getTime() - new Date(b.end).getTime();
         }),
+    [itemsMap, activeGroupFilter, inArchiveView],
+  );
+
+  /** Przypięte wydarzenia kalendarza (mogą być poza oknem „najbliższych”). */
+  const pinnedEvents = useMemo(
+    () =>
+      Object.values(itemsMap)
+        .filter(
+          (it) =>
+            Boolean(it.pinnedAt) &&
+            it.hasDueDate &&
+            it.showInCalendar &&
+            itemMatchesGroupFilter(it, activeGroupFilter, "dashboard") &&
+            (inArchiveView || !(itemSupportsTodoDone(it) && it.done)),
+        )
+        .map(withNormalizedAllDay)
+        .sort(sortEventsByStart),
     [itemsMap, activeGroupFilter, inArchiveView],
   );
 
@@ -95,6 +118,7 @@ export function useTodayDashboardData(opts?: { eventsTarget?: number }) {
     myTagIdsByItem,
     todayEvents,
     upcomingEvents,
+    pinnedEvents,
     tasks,
     inArchiveView,
   };

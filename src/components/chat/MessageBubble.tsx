@@ -435,12 +435,13 @@ function VoiceAttachment({ att, durationSec }: { att: ChatAttachment; durationSe
 
 function AttachmentTile({ att }: { att: ChatAttachment }) {
   const isImage = att.mimeType.startsWith("image/");
+  const kind = classifyFile(att.mimeType, att.fileName);
   const isPdf = !isImage && isPdfAttachment(att.mimeType, att.fileName);
+  const isVideo = !isImage && !isPdf && kind === "video";
   const isUploading =
     att.bucketPath === "pending:" || att.bucketPath.startsWith("pending:");
   const isEditable =
     !isUploading && att.attachIntent === "editable" && Boolean(att.spShareUrl);
-  const kind = classifyFile(att.mimeType, att.fileName);
   const Icon = fileKindIcon(kind);
   const tone = fileKindTone(kind);
   const ext = fileExtension(att.fileName) || kind.toUpperCase();
@@ -449,6 +450,7 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
     !isUploading && isImage ? (att.thumbPath ?? att.bucketPath) : null,
   );
   const fileUrl = useSignedUrl(!isUploading && isPdf ? att.bucketPath : null);
+  const videoUrl = useSignedUrl(!isUploading && isVideo ? att.bucketPath : null);
 
   const openFull = async () => {
     if (isUploading) return;
@@ -494,6 +496,60 @@ function AttachmentTile({ att }: { att: ChatAttachment }) {
           />
         )}
       </>
+    );
+  }
+
+  if (isVideo) {
+    return (
+      <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-line bg-surface-raised">
+        {isUploading ? (
+          <div className="flex h-36 items-center justify-center gap-2 text-xs text-ink-faint">
+            <Clock size={14} className="animate-pulse" />
+            Wysyłanie wideo…
+          </div>
+        ) : videoUrl ? (
+          <video
+            controls
+            playsInline
+            preload="metadata"
+            src={videoUrl}
+            className="block max-h-72 w-full bg-black"
+            aria-label={att.fileName}
+          >
+            Twoja przeglądarka nie obsługuje odtwarzania wideo.
+          </video>
+        ) : (
+          <div className="flex h-36 items-center justify-center text-xs text-ink-faint">
+            Wczytywanie wideo…
+          </div>
+        )}
+        <div className="flex min-w-0 items-center gap-2 border-t border-line px-2.5 py-1.5">
+          <span
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${tone.bg} ${tone.fg}`}
+          >
+            <Icon size={14} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[11px] font-medium text-ink">
+              {att.fileName}
+            </div>
+            <div className="text-[10px] text-ink-faint">
+              {formatFileSize(att.sizeBytes)}
+            </div>
+          </div>
+          {!isUploading ? (
+            <button
+              type="button"
+              onClick={() => void openFull()}
+              className="rounded-md p-1 text-ink-faint transition hover:bg-surface-overlay hover:text-ink"
+              title="Otwórz / pobierz"
+              aria-label={`Pobierz ${att.fileName}`}
+            >
+              <Download size={14} />
+            </button>
+          ) : null}
+        </div>
+      </div>
     );
   }
 

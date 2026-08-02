@@ -11,11 +11,9 @@ import {
 import { addDays, addMonths, startOfDay } from "date-fns";
 import {
   Bell,
-  CalendarDays,
   ChevronLeft,
   ChevronRight,
   LayoutDashboard,
-  ListChecks,
   LogOut,
   MessageCircle,
   MoreHorizontal,
@@ -140,6 +138,10 @@ export function MobileShell() {
   const goTasks = () => {
     setSchedulesOpen(false);
     setTab("tasks");
+  };
+
+  const goSchedules = () => {
+    setSchedulesOpen(true);
   };
 
   const anchor = new Date(settings.anchorDate);
@@ -327,7 +329,11 @@ export function MobileShell() {
             <ChatPanel />
           </Suspense>
         ) : tab === "dashboard" ? (
-          <MobileDashboard />
+          <MobileDashboard
+            onOpenCalendar={goCalendar}
+            onOpenTasks={goTasks}
+            onOpenSchedules={goSchedules}
+          />
         ) : tab === "calendar" ? (
           mobileView === "today" ? (
             <MobileTodayPanel />
@@ -345,42 +351,8 @@ export function MobileShell() {
         )}
       </main>
 
-      {/* Ostatnie korespondencje — nad dolnymi belkami. */}
-      {!schedulesOpen && <MobileRecentCorrespondences />}
-
-      {/* Skróty Kalendarz / Zadania — nad belką główną (Dashboard + te zakładki). */}
-      {!schedulesOpen && tab !== "chat" && (
-        <div className="shrink-0 border-t border-line bg-surface-raised/80 p-2">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={goCalendar}
-              aria-pressed={tab === "calendar"}
-              className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition active:bg-surface-raised ${
-                tab === "calendar"
-                  ? "border-accent/40 bg-accent/15 text-accent"
-                  : "border-line bg-surface-overlay text-ink"
-              }`}
-            >
-              <CalendarDays size={18} className="shrink-0" />
-              Kalendarz
-            </button>
-            <button
-              type="button"
-              onClick={goTasks}
-              aria-pressed={tab === "tasks"}
-              className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition active:bg-surface-raised ${
-                tab === "tasks"
-                  ? "border-accent/40 bg-accent/15 text-accent"
-                  : "border-line bg-surface-overlay text-ink"
-              }`}
-            >
-              <ListChecks size={18} className="shrink-0" />
-              Zadania
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Ostatnie korespondencje — tylko na Dashboardzie (nie w czacie / rozmowie). */}
+      {!schedulesOpen && tab === "dashboard" && <MobileRecentCorrespondences />}
 
       {/* Dolne menu: Harmonogramy · Dashboard · Czat */}
       <nav

@@ -4,6 +4,7 @@ import {
   CalendarPlus,
   Clock,
   CornerUpLeft,
+  Image,
   Images,
   ListChecks,
   Mic,
@@ -140,6 +141,7 @@ export function MessageComposer({
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const [fileDragOver, setFileDragOver] = useState(false);
   const isMobile = useIsMobile();
@@ -281,7 +283,10 @@ export function MessageComposer({
     addFiles(pasted);
   };
 
-  const addFiles = (list: FileList | File[] | null) => {
+  const addFiles = (
+    list: FileList | File[] | null,
+    opts?: { preferPhoto?: boolean },
+  ) => {
     if (!list) return;
     const incoming = Array.from(list).filter((f) => {
       // Pomiń „puste” wpisy katalogów z DnD.
@@ -295,6 +300,12 @@ export function MessageComposer({
       return true;
     });
     if (!incoming.length) return;
+    if (opts?.preferPhoto) {
+      setAttachMode("photo");
+      setOfficeMode("attachment");
+      setFiles((prev) => [...prev, ...incoming].slice(0, 6));
+      return;
+    }
     const hasImage = incoming.some((f) => /^image\//i.test(f.type));
     if (hasImage) {
       setImageModePrompt(incoming);
@@ -704,16 +715,29 @@ export function MessageComposer({
             !editing && (
             <div className="relative shrink-0 self-center">
               {allowFiles && (
-                <input
-                  ref={fileRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    addFiles(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
+                <>
+                  <input
+                    ref={photoRef}
+                    type="file"
+                    accept="image/*,image/heic,image/heif,.heic,.heif"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      addFiles(e.target.files, { preferPhoto: true });
+                      e.target.value = "";
+                    }}
+                  />
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      addFiles(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                </>
               )}
               <button
                 type="button"
@@ -782,16 +806,28 @@ export function MessageComposer({
                       </button>
                     )}
                     {allowFiles && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPlusOpen(false);
-                          fileRef.current?.click();
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
-                      >
-                        <Paperclip size={14} className="text-ink-faint" /> Załączniki
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlusOpen(false);
+                            photoRef.current?.click();
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                        >
+                          <Image size={14} className="text-ink-faint" /> Zdjęcia
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlusOpen(false);
+                            fileRef.current?.click();
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                        >
+                          <Paperclip size={14} className="text-ink-faint" /> Załączniki
+                        </button>
+                      </>
                     )}
                   </div>
                 </>

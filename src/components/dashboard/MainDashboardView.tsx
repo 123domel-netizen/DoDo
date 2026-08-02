@@ -24,6 +24,7 @@ export function MainDashboardView() {
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
   const startDraft = useStore((s) => s.startDraft);
+  const setSettings = useStore((s) => s.setSettings);
 
   const tagsForItem = (item: Item) => {
     const baseId = baseItemId(item.id);
@@ -85,7 +86,9 @@ export function MainDashboardView() {
         </div>
 
         <div className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface-raised/40 [&_section]:border-0">
-          <ScheduleDashboardWorksSection />
+          <ScheduleDashboardWorksSection
+            onOpenSchedules={() => setSettings({ mainAreaMode: "projects" })}
+          />
         </div>
 
         <div className="grid gap-5 lg:grid-cols-2 lg:gap-6">
