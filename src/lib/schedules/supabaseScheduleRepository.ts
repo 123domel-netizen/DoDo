@@ -87,6 +87,11 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   private inner: ProjectsPreviewRepository;
   private loadPromise: Promise<void>;
   private loadError: string | null = null;
+  /** Optimistic deletes — survive focus/reload until cloud confirms. */
+  private pendingDeletedBlockIds = new Set<string>();
+  private pendingDeletedEventIds = new Set<string>();
+  private pendingDeletedCrewIds = new Set<string>();
+  private pendingDeletedCategoryKeys = new Set<string>();
 
   constructor(orgId: string, userId: string) {
     this.orgId = orgId;
@@ -331,6 +336,9 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   removeProjectCategory(projectId: string, categoryId: string) {
     const result = this.inner.removeProjectCategory(projectId, categoryId);
+    for (const id of result.deletedBlockIds) this.pendingDeletedBlockIds.add(id);
+    for (const id of result.deletedEventIds) this.pendingDeletedEventIds.add(id);
+    this.pendingDeletedCategoryKeys.add(`${projectId}:${categoryId}`);
     void this.persistCategoryRemoval(projectId, categoryId, result);
     return result;
   }
@@ -357,7 +365,11 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
         .in("id", blockIds);
       if (error) {
         console.warn("[schedules] delete category blocks failed:", error.message);
+      } else {
+        for (const id of blockIds) this.pendingDeletedBlockIds.delete(id);
       }
+    } else {
+      for (const id of result.deletedBlockIds) this.pendingDeletedBlockIds.delete(id);
     }
 
     const eventIds = result.deletedEventIds.filter(isUuid);
@@ -368,7 +380,11 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
         .in("id", eventIds);
       if (error) {
         console.warn("[schedules] delete category events failed:", error.message);
+      } else {
+        for (const id of eventIds) this.pendingDeletedEventIds.delete(id);
       }
+    } else {
+      for (const id of result.deletedEventIds) this.pendingDeletedEventIds.delete(id);
     }
 
     const { error: metaErr } = await supabase
@@ -378,6 +394,8 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       .eq("category_id", categoryId);
     if (metaErr) {
       console.warn("[schedules] delete category meta failed:", metaErr.message);
+    } else {
+      this.pendingDeletedCategoryKeys.delete(`${projectId}:${categoryId}`);
     }
 
     // Remapped events (np. dokumentacyjne) — upsert bez reload przy błędzie,
@@ -391,7 +409,7 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       const { error } = await supabase.from("schedule_events").upsert({
         id: row.id,
         project_id: row.projectId,
-        block_id: row.blockId,
+        block_id: row.blockId && isUuid(row.blockId) ? row.blockId : null,
         kind: row.kind,
         title: row.title,
         event_date: row.date,
@@ -482,8 +500,30 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   deleteCrew(id: string) {
     const res = this.inner.deleteCrew(id);
-    if (res.ok) void supabase?.from("construction_crews").delete().eq("id", id);
+    if (!res.ok) return res;
+    this.pendingDeletedCrewIds.add(id);
+    void this.persistCrewDeletion(id);
     return res;
+  }
+
+  private async persistCrewDeletion(id: string) {
+    if (!supabase) {
+      this.pendingDeletedCrewIds.delete(id);
+      return;
+    }
+    if (!isUuid(id)) {
+      this.pendingDeletedCrewIds.delete(id);
+      return;
+    }
+    const { error } = await supabase
+      .from("construction_crews")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.warn("[schedules] delete crew failed:", error.message);
+      return;
+    }
+    this.pendingDeletedCrewIds.delete(id);
   }
 
   upsertScheduleBlock(block: Omit<ScheduleBlock, "id"> & { id?: string }) {
@@ -517,9 +557,55 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   }
 
   demoteSubcategory(id: string, opts?: { keepAsWork?: boolean }) {
+    const keepAsWork = opts?.keepAsWork ?? true;
+    const childrenBefore = this.inner
+      .getState()
+      .scheduleBlocks.filter((b) => b.parentId === id)
+      .map((b) => b.id);
     const res = this.inner.demoteSubcategory(id, opts);
-    if (res.ok) void this.reload();
+    if (!res.ok) return res;
+    if (!keepAsWork) this.pendingDeletedBlockIds.add(id);
+    void this.persistDemote(id, keepAsWork, childrenBefore);
     return res;
+  }
+
+  private async persistDemote(
+    id: string,
+    keepAsWork: boolean,
+    childIds: string[],
+  ) {
+    if (!supabase) {
+      this.pendingDeletedBlockIds.delete(id);
+      return;
+    }
+    const uuidChildren = childIds.filter(isUuid);
+    if (uuidChildren.length) {
+      const { error } = await supabase
+        .from("schedule_blocks")
+        .update({ parent_id: null })
+        .in("id", uuidChildren);
+      if (error) {
+        console.warn("[schedules] demote children failed:", error.message);
+      }
+    }
+    if (keepAsWork) {
+      const row = this.inner.getState().scheduleBlocks.find((b) => b.id === id);
+      if (row) await this.syncBlock(row);
+      return;
+    }
+    if (!isUuid(id)) {
+      this.pendingDeletedBlockIds.delete(id);
+      return;
+    }
+    const { error } = await supabase
+      .from("schedule_blocks")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.warn("[schedules] demote delete failed:", error.message);
+      return;
+    }
+    this.pendingDeletedBlockIds.delete(id);
   }
 
   deleteScheduleBlock(id: string) {
@@ -532,11 +618,31 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
         : []),
     ];
     this.inner.deleteScheduleBlock(id);
-    if (ids.length === 1) {
-      void supabase?.from("schedule_blocks").delete().eq("id", id);
+    for (const x of ids) this.pendingDeletedBlockIds.add(x);
+    void this.persistBlockDeletion(ids);
+  }
+
+  private async persistBlockDeletion(ids: string[]) {
+    if (!supabase) {
+      for (const id of ids) this.pendingDeletedBlockIds.delete(id);
       return;
     }
-    void supabase?.from("schedule_blocks").delete().in("id", ids);
+    const uuids = ids.filter(isUuid);
+    for (const id of ids) {
+      if (!isUuid(id)) this.pendingDeletedBlockIds.delete(id);
+    }
+    if (!uuids.length) return;
+    // Children first — parent_id FK is ON DELETE SET NULL, but deleting the
+    // whole set in one statement is fine; prefer children→parent for clarity.
+    const { error } = await supabase
+      .from("schedule_blocks")
+      .delete()
+      .in("id", uuids);
+    if (error) {
+      console.warn("[schedules] delete blocks failed:", error.message);
+      return;
+    }
+    for (const id of uuids) this.pendingDeletedBlockIds.delete(id);
   }
 
   moveScheduleBlock(
@@ -582,7 +688,28 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   deleteScheduleEvent(id: string) {
     this.inner.deleteScheduleEvent(id);
-    void supabase?.from("schedule_events").delete().eq("id", id);
+    this.pendingDeletedEventIds.add(id);
+    void this.persistEventDeletion(id);
+  }
+
+  private async persistEventDeletion(id: string) {
+    if (!supabase) {
+      this.pendingDeletedEventIds.delete(id);
+      return;
+    }
+    if (!isUuid(id)) {
+      this.pendingDeletedEventIds.delete(id);
+      return;
+    }
+    const { error } = await supabase
+      .from("schedule_events")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.warn("[schedules] delete event failed:", error.message);
+      return;
+    }
+    this.pendingDeletedEventIds.delete(id);
   }
 
   setDocEventStatus(id: string, status: DocEventStatus) {
@@ -621,6 +748,80 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     return this.inner.projectDisplay(id);
   }
 
+  private applyPendingDeletes(bundle: BundleRow): BundleRow {
+    if (
+      this.pendingDeletedBlockIds.size === 0 &&
+      this.pendingDeletedEventIds.size === 0 &&
+      this.pendingDeletedCrewIds.size === 0 &&
+      this.pendingDeletedCategoryKeys.size === 0
+    ) {
+      return bundle;
+    }
+    return {
+      ...bundle,
+      scheduleBlocks: bundle.scheduleBlocks.filter(
+        (b) => !this.pendingDeletedBlockIds.has(b.id),
+      ),
+      scheduleEvents: bundle.scheduleEvents.filter(
+        (e) => !this.pendingDeletedEventIds.has(e.id),
+      ),
+      crews: bundle.crews.filter((c) => !this.pendingDeletedCrewIds.has(c.id)),
+      categoryMeta: bundle.categoryMeta.filter(
+        (m) =>
+          !this.pendingDeletedCategoryKeys.has(`${m.projectId}:${m.categoryId}`),
+      ),
+    };
+  }
+
+  /** Retry in-flight deletes before hydrate so focus-reload cannot revive them. */
+  private async flushPendingDeletes() {
+    if (!supabase) return;
+    const blocks = [...this.pendingDeletedBlockIds].filter(isUuid);
+    if (blocks.length) {
+      const { error } = await supabase
+        .from("schedule_blocks")
+        .delete()
+        .in("id", blocks);
+      if (!error) {
+        for (const id of blocks) this.pendingDeletedBlockIds.delete(id);
+      } else {
+        console.warn("[schedules] flush block deletes failed:", error.message);
+      }
+    }
+    const events = [...this.pendingDeletedEventIds].filter(isUuid);
+    if (events.length) {
+      const { error } = await supabase
+        .from("schedule_events")
+        .delete()
+        .in("id", events);
+      if (!error) {
+        for (const id of events) this.pendingDeletedEventIds.delete(id);
+      } else {
+        console.warn("[schedules] flush event deletes failed:", error.message);
+      }
+    }
+    const crews = [...this.pendingDeletedCrewIds].filter(isUuid);
+    for (const id of crews) {
+      const { error } = await supabase
+        .from("construction_crews")
+        .delete()
+        .eq("id", id);
+      if (!error) this.pendingDeletedCrewIds.delete(id);
+      else console.warn("[schedules] flush crew delete failed:", error.message);
+    }
+    for (const key of [...this.pendingDeletedCategoryKeys]) {
+      const [projectId, categoryId] = key.split(":");
+      if (!projectId || !categoryId) continue;
+      const { error } = await supabase
+        .from("schedule_category_meta")
+        .delete()
+        .eq("project_id", projectId)
+        .eq("category_id", categoryId);
+      if (!error) this.pendingDeletedCategoryKeys.delete(key);
+      else console.warn("[schedules] flush category meta failed:", error.message);
+    }
+  }
+
   private async loadFromCloud() {
     if (!cloudEnabled || !supabase) {
       this.loadError = "Brak połączenia z chmurą.";
@@ -628,7 +829,9 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     }
     try {
       await supabase.rpc("schedule_ensure_catalogs", { p_org_id: this.orgId });
-      const bundle = await fetchOrgBundle(this.orgId);
+      await this.flushPendingDeletes();
+      const raw = await fetchOrgBundle(this.orgId);
+      const bundle = this.applyPendingDeletes(raw);
       this.inner.hydrate({
         version: 1,
         orgId: this.orgId,
@@ -744,6 +947,7 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   private async syncBlock(row: ScheduleBlock) {
     if (!supabase) return;
+    if (this.pendingDeletedBlockIds.has(row.id)) return;
     const parentId =
       row.parentId && isUuid(row.parentId) ? row.parentId : null;
     const crewId = row.crewId && isUuid(row.crewId) ? row.crewId : null;
@@ -786,10 +990,13 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
 
   private async syncEvent(row: ScheduleEvent) {
     if (!supabase) return;
+    if (this.pendingDeletedEventIds.has(row.id)) return;
+    const blockId =
+      row.blockId && isUuid(row.blockId) ? row.blockId : null;
     const { error } = await supabase.from("schedule_events").upsert({
       id: row.id,
       project_id: row.projectId,
-      block_id: row.blockId,
+      block_id: blockId,
       kind: row.kind,
       title: row.title,
       event_date: row.date,
