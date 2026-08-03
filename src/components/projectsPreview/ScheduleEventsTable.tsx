@@ -1,4 +1,5 @@
 import { Pencil, Trash2, Zap } from "lucide-react";
+import { useState } from "react";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import { formatDayShort } from "@/lib/projectsPreview/projectLastEvent";
 import {
@@ -35,6 +36,7 @@ export function ScheduleEventsTable({
   onAdd,
 }: ScheduleEventsTableProps) {
   const repo = useProjectsPreviewRepo();
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const byProject = new Map(projects.map((p) => [p.id, p]));
   const byBlock = new Map(blocks.map((b) => [b.id, b]));
 
@@ -182,17 +184,29 @@ export function ScheduleEventsTable({
                         </button>
                         <button
                           type="button"
-                          title="Usuń"
+                          title={
+                            pendingDeleteId === event.id
+                              ? "Potwierdź usunięcie"
+                              : "Usuń"
+                          }
                           onClick={() => {
-                            if (
-                              confirm(
-                                `Usunąć zdarzenie „${scheduleEventLabel(event)}”?`,
-                              )
-                            ) {
+                            if (pendingDeleteId === event.id) {
                               repo.deleteScheduleEvent(event.id);
+                              setPendingDeleteId(null);
+                              return;
+                            }
+                            setPendingDeleteId(event.id);
+                          }}
+                          onBlur={() => {
+                            if (pendingDeleteId === event.id) {
+                              setPendingDeleteId(null);
                             }
                           }}
-                          className="rounded p-0.5 text-ink-faint hover:bg-surface-raised hover:text-rose-300"
+                          className={
+                            pendingDeleteId === event.id
+                              ? "rounded p-0.5 text-rose-300 hover:bg-red-950/40"
+                              : "rounded p-0.5 text-ink-faint hover:bg-surface-raised hover:text-rose-300"
+                          }
                         >
                           <Trash2 size={12} />
                         </button>

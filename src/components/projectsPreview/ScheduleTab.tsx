@@ -1184,43 +1184,14 @@ export function ScheduleTab({
           onDemote={
             editing?.role === "subcategory"
               ? () => {
-                  if (
-                    confirm(
-                      "Cofnąć podkategorię? Prace zostaną na liście jako osobne roboty.",
-                    )
-                  ) {
-                    repo.demoteSubcategory(editing.id, { keepAsWork: false });
-                    closeEditor();
-                  }
+                  repo.demoteSubcategory(editing.id, { keepAsWork: false });
+                  closeEditor();
                 }
               : undefined
           }
           onDelete={
             editing
               ? () => {
-                  const children = state.scheduleBlocks.filter(
-                    (b) => b.parentId === editing.id,
-                  );
-                  if (editing.role === "subcategory" && children.length > 0) {
-                    const n = children.length;
-                    if (
-                      !confirm(
-                        `Ta podkategoria zawiera ${n} ${
-                          n === 1 ? "zakres" : n < 5 ? "zakresy" : "zakresów"
-                        }. Usunąć podkategorię wraz z zakresami?`,
-                      )
-                    ) {
-                      return;
-                    }
-                  } else if (
-                    !confirm(
-                      editing.role === "subcategory"
-                        ? "Usunąć tę podkategorię?"
-                        : "Usunąć ten zakres?",
-                    )
-                  ) {
-                    return;
-                  }
                   repo.deleteScheduleBlock(editing.id);
                   closeEditor();
                 }
@@ -1341,7 +1312,6 @@ export function ScheduleTab({
           onDelete={
             eventEdit.event
               ? () => {
-                  if (!confirm("Usunąć to zdarzenie?")) return;
                   repo.deleteScheduleEvent(eventEdit.event!.id);
                   setEventEdit(null);
                 }
@@ -4242,6 +4212,19 @@ export function BlockEditorSheet({
       crews.find((c) => c.id === crewId)?.color ??
       "#3b82f6",
   );
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDemote, setConfirmDemote] = useState(false);
+  const childCount = block
+    ? allBlocks.filter((b) => b.parentId === block.id).length
+    : 0;
+  const deleteMessage =
+    block?.role === "subcategory" && childCount > 0
+      ? `Ta podkategoria zawiera ${childCount} ${
+          childCount === 1 ? "zakres" : childCount < 5 ? "zakresy" : "zakresów"
+        }. Usunąć podkategorię wraz z zakresami?`
+      : block?.role === "subcategory"
+        ? "Usunąć tę podkategorię?"
+        : "Usunąć ten zakres?";
 
   const parentOptions = allBlocks.filter(
     (b) =>
@@ -4693,10 +4676,36 @@ export function BlockEditorSheet({
                   Przekształć w podkategorię
                 </button>
               ) : null}
-              {onDemote ? (
+              {onDemote && confirmDemote ? (
+                <div className="flex flex-col gap-2 rounded-lg border border-line/80 bg-surface-raised/40 p-2.5">
+                  <p className="text-[12px] leading-snug text-ink-light">
+                    Cofnąć podkategorię? Prace zostaną na liście jako osobne
+                    roboty.
+                  </p>
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDemote(false)}
+                      className="rounded-lg px-3 py-1.5 text-xs text-ink-light hover:bg-surface-raised"
+                    >
+                      Anuluj
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDemote()}
+                      className="rounded-lg bg-accent/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent"
+                    >
+                      Cofnij podkategorię
+                    </button>
+                  </div>
+                </div>
+              ) : onDemote ? (
                 <button
                   type="button"
-                  onClick={onDemote}
+                  onClick={() => {
+                    setConfirmDelete(false);
+                    setConfirmDemote(true);
+                  }}
                   className="rounded-lg px-3 py-1.5 text-xs text-ink-light hover:bg-surface-raised hover:text-ink"
                 >
                   Cofnij podkategorię (prace zostają)
@@ -4705,33 +4714,62 @@ export function BlockEditorSheet({
             </div>
           ) : null}
           <div className="flex flex-wrap justify-between gap-2">
-            {onDelete ? (
-              <button
-                type="button"
-                onClick={onDelete}
-                className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
-              >
-                Usuń
-              </button>
+            {onDelete && confirmDelete ? (
+              <div className="flex w-full flex-col gap-2">
+                <p className="text-[12px] leading-snug text-red-300/90">
+                  {deleteMessage}
+                </p>
+                <div className="flex flex-wrap justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(false)}
+                    className="rounded-lg px-3 py-1.5 text-sm text-ink-light hover:bg-surface-raised"
+                  >
+                    Anuluj
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete()}
+                    className="rounded-lg bg-red-600/90 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-600"
+                  >
+                    Usuń definitywnie
+                  </button>
+                </div>
+              </div>
             ) : (
-              <span />
+              <>
+                {onDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmDemote(false);
+                      setConfirmDelete(true);
+                    }}
+                    className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
+                  >
+                    Usuń
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-lg px-3 py-1.5 text-sm text-ink-light"
+                  >
+                    Anuluj
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submit}
+                    className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
+                  >
+                    Zapisz
+                  </button>
+                </div>
+              </>
             )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg px-3 py-1.5 text-sm text-ink-light"
-              >
-                Anuluj
-              </button>
-              <button
-                type="button"
-                onClick={submit}
-                className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
-              >
-                Zapisz
-              </button>
-            </div>
           </div>
         </div>
       </div>

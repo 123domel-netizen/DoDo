@@ -111,6 +111,7 @@ export function ScheduleEventSheet({
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
   const [mode, setMode] = useState<"view" | "edit">(event ? "view" : "edit");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const [kind, setKind] = useState<ScheduleEventKind>(
     event?.kind ?? defaultKind,
@@ -548,9 +549,41 @@ export function ScheduleEventSheet({
         )}
 
         <div className="mt-4 flex flex-wrap justify-between gap-2">
-          {viewing ? (
+          {onDelete && confirmDelete ? (
+            <div className="flex w-full flex-col gap-2">
+              <p className="text-[12px] leading-snug text-red-300/90">
+                Usunąć to zdarzenie?
+              </p>
+              <div className="flex flex-wrap justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded-lg px-3 py-1.5 text-sm text-ink-light hover:bg-surface-raised"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete()}
+                  className="rounded-lg bg-red-600/90 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-600"
+                >
+                  Usuń definitywnie
+                </button>
+              </div>
+            </div>
+          ) : viewing ? (
             <>
-              <span />
+              {onDelete ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
+                >
+                  Usuń
+                </button>
+              ) : (
+                <span />
+              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -564,7 +597,7 @@ export function ScheduleEventSheet({
               {onDelete ? (
                 <button
                   type="button"
-                  onClick={onDelete}
+                  onClick={() => setConfirmDelete(true)}
                   className="rounded-lg px-3 py-1.5 text-sm text-red-400 hover:bg-red-950/30"
                 >
                   Usuń
@@ -576,7 +609,10 @@ export function ScheduleEventSheet({
                 {event ? (
                   <button
                     type="button"
-                    onClick={() => setMode("view")}
+                    onClick={() => {
+                      setConfirmDelete(false);
+                      setMode("view");
+                    }}
                     className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-light hover:border-line-strong hover:text-ink"
                   >
                     Anuluj
