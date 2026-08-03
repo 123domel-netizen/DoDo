@@ -908,6 +908,13 @@ describe("projectsPreview scheduleRowCollapse", () => {
       "work-2",
     ]);
   });
+
+  it("hides category and subcategory rows but keeps works when showCategoryRows is off", () => {
+    const visible = filterCollapsedBoardRows(sampleRows, new Set(), 0, {
+      showCategoryRows: false,
+    }).map((r) => r.id);
+    expect(visible).toEqual(["sec-a", "work-a1", "sec-b"]);
+  });
 });
 
 describe("projectsPreview scheduleZoom", () => {

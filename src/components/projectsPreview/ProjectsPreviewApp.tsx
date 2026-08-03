@@ -70,11 +70,6 @@ function primaryOf(view: ProjectsPreviewView): PrimarySection {
   }
 }
 
-const BOARD_MODES: Array<{ id: BoardMode; label: string }> = [
-  { id: "allBuilds", label: "Wg budów" },
-  { id: "byCrew", label: "Wg brygad" },
-];
-
 const EVENT_KINDS: Array<{ id: ScheduleEventKind; label: string }> = [
   { id: "budowlane", label: "Budowlane" },
   { id: "dokumentacyjne", label: "Dokumentacyjne" },
@@ -418,13 +413,6 @@ export function ProjectsPreviewApp({
                   </button>
                 </div>
               ) : null}
-              {view.name === "board" && !focusedProject ? (
-                <Segmented
-                  options={BOARD_MODES}
-                  value={view.mode}
-                  onChange={(id) => setBoardMode(id)}
-                />
-              ) : null}
               <div
                 id={SCHEDULE_TOOLBAR_SLOT_ID}
                 className={
@@ -611,14 +599,6 @@ export function ProjectsPreviewApp({
                     </span>
                   ) : null}
                 </button>
-              ) : null}
-
-              {view.name === "board" && !focusedProject ? (
-                <Segmented
-                  options={BOARD_MODES}
-                  value={view.mode}
-                  onChange={(id) => setBoardMode(id)}
-                />
               ) : null}
 
               {view.name === "catalog" ? (

@@ -465,11 +465,18 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   }
 
   upsertCrew(crew: Omit<PreviewCrew, "id"> & { id?: string }) {
+    const before = new Map(
+      this.inner.getState().scheduleBlocks.map((b) => [b.id, b.color] as const),
+    );
     const row = this.inner.upsertCrew({
       ...crew,
       id: asCloudId(crew.id),
     });
     void this.syncCrew(row);
+    const recolored = this.inner
+      .getState()
+      .scheduleBlocks.filter((b) => before.get(b.id) !== b.color);
+    if (recolored.length) void this.syncBlocks(recolored);
     return row;
   }
 

@@ -1,4 +1,5 @@
 const STORAGE_KEY = "dodo-schedule-row-collapse-v1";
+const SHOW_CATEGORIES_KEY = "dodo-schedule-show-categories-v1";
 
 export function projectCollapseKey(projectId: string): string {
   return `proj:${projectId}`;
@@ -169,12 +170,17 @@ export type CollapseFilterRow = {
 /**
  * Filters timeline rows according to project / category / subcategory
  * collapse keys and revealLevel.
+ *
+ * `showCategoryRows: false` — ukrywa wiersze kategorii i podkategorii,
+ * ale zostawia zakresy (i zakresy na poziomie inwestycji).
  */
 export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
   rows: T[],
   collapsedKeys: Set<string>,
   revealLevel: ScheduleRevealLevel,
+  opts?: { showCategoryRows?: boolean },
 ): T[] {
+  const showCategoryRows = opts?.showCategoryRows !== false;
   const out: T[] = [];
   let hideUnderProject = false;
   let hideUnderCategory = false;
@@ -225,6 +231,11 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
 
     if (row.categoryLane && row.projectId && row.categoryId) {
       underCrewSection = false;
+      if (!showCategoryRows) {
+        hideUnderCategory = false;
+        hideUnderSubId = null;
+        continue;
+      }
       const key = categoryCollapseKey(row.projectId, row.categoryId);
       hideUnderCategory = revealLevel <= 0 || collapsedKeys.has(key);
       hideUnderSubId = null;
@@ -234,6 +245,10 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
     if (hideUnderCategory) continue;
 
     if (row.subcategory) {
+      if (!showCategoryRows) {
+        hideUnderSubId = null;
+        continue;
+      }
       if (revealLevel < 1) continue;
       const subId = row.blocks?.[0]?.id ?? row.id;
       const subKey = subcategoryCollapseKey(subId);
@@ -248,11 +263,36 @@ export function filterCollapsedBoardRows<T extends CollapseFilterRow>(
       out.push(row);
       continue;
     }
+    // Bez wierszy kategorii: zakresy i tak pokazujemy (domyślny widok osi).
+    if (!showCategoryRows) {
+      out.push(row);
+      continue;
+    }
     if (revealLevel < 2) continue;
     if (hideUnderSubId && row.parentId === hideUnderSubId) continue;
     out.push(row);
   }
   return out;
+}
+
+export function loadScheduleShowCategories(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  try {
+    const raw = localStorage.getItem(SHOW_CATEGORIES_KEY);
+    if (raw === null) return false;
+    return raw === "1" || raw === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function saveScheduleShowCategories(show: boolean) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(SHOW_CATEGORIES_KEY, show ? "1" : "0");
+  } catch {
+    // ignore quota / private mode
+  }
 }
 
 /** @deprecated kept for older imports */

@@ -674,7 +674,10 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
     const crews = exists
       ? this.state.crews.map((c) => (c.id === id ? row : c))
       : [...this.state.crews, row];
-    this.commit({ ...this.state, crews });
+    const scheduleBlocks = this.state.scheduleBlocks.map((b) =>
+      b.role === "work" && b.crewId === id ? { ...b, color: row.color } : b,
+    );
+    this.commit({ ...this.state, crews, scheduleBlocks });
     return row;
   }
 

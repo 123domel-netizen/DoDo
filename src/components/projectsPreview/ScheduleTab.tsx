@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   FolderTree,
   LayoutTemplate,
+  Layers,
   Pencil,
   Plus,
   ChevronDown,
@@ -33,9 +34,11 @@ import {
   expandScheduleRowsStep,
   filterCollapsedBoardRows,
   loadScheduleCollapseState,
+  loadScheduleShowCategories,
   nextExpandStepLabel,
   projectCollapseKey,
   saveScheduleCollapseState,
+  saveScheduleShowCategories,
   subcategoryCollapseKey,
   toggleCollapsedKey,
   type ScheduleRevealLevel,
@@ -222,6 +225,9 @@ export function ScheduleTab({
   );
   const [revealLevel, setRevealLevel] = useState<ScheduleRevealLevel>(
     () => loadScheduleCollapseState().revealLevel,
+  );
+  const [showCategoryRows, setShowCategoryRows] = useState(
+    () => loadScheduleShowCategories(),
   );
   const scrollerRef = useRef<HTMLDivElement>(null);
   const conflictsRef = useRef<HTMLDivElement>(null);
@@ -499,8 +505,10 @@ export function ScheduleTab({
       // Widok brygad: zawsze pełna lista robót pod sekcjami (bez drzewa kategorii).
       mode === "byCrew"
         ? rows
-        : filterCollapsedBoardRows(rows, collapsedRowKeys, revealLevel),
-    [mode, rows, collapsedRowKeys, revealLevel],
+        : filterCollapsedBoardRows(rows, collapsedRowKeys, revealLevel, {
+            showCategoryRows,
+          }),
+    [mode, rows, collapsedRowKeys, revealLevel, showCategoryRows],
   );
 
   const toggleProjectCollapse = (projectId: string) => {
@@ -542,6 +550,28 @@ export function ScheduleTab({
     blocks.length === 0 &&
     scheduleEvents.length === 0;
   const showEmptyPanel = rows.length === 0 || projectModeEmpty;
+
+  /** Align so today is visible with ~5 days of lookback on the left (when range allows). */
+  const scrollToToday = (
+    opts?: { dayPx?: number; rangeStart?: string; smooth?: boolean },
+  ) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const px = opts?.dayPx ?? dayPx;
+    const start = opts?.rangeStart ?? range.start;
+    const today = todayIso();
+    let anchor = addDaysIso(today, -5);
+    if (anchor < start) anchor = start;
+    if (anchor > range.end) anchor = start;
+    el.scrollTo({
+      left: scrollLeftForDayStart({
+        rangeStart: start,
+        dayPx: px,
+        iso: anchor,
+      }),
+      behavior: opts?.smooth === false ? "auto" : "smooth",
+    });
+  };
 
   /** Align the Monday of `iso`'s week to the left edge of the chart. */
   const scrollToWeekStart = (
@@ -705,10 +735,35 @@ export function ScheduleTab({
     <div
       className={
         chromeInParent
-          ? "flex min-w-0 flex-1 items-center gap-1 overflow-x-auto thin-scrollbar"
+          ? "flex min-w-0 flex-1 items-center gap-2 overflow-x-auto thin-scrollbar"
           : "flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 sm:px-4"
       }
     >
+      {mode !== "project" ? (
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-surface-raised/70 p-0.5">
+          {(
+            [
+              ["allBuilds", "Wg budów"],
+              ["byCrew", "Wg brygad"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setMode(id)}
+              aria-pressed={mode === id}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
+                mode === id
+                  ? "bg-accent/20 text-accent shadow-sm"
+                  : "text-ink-faint hover:text-ink"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {conflicts.length > 0 ? (
         <div className="relative shrink-0" ref={conflictsRef}>
           <button
@@ -719,8 +774,10 @@ export function ScheduleTab({
             aria-expanded={conflictsOpen}
           >
             <AlertTriangle size={12} className="shrink-0" />
-            {conflicts.length}{" "}
-            {conflicts.length === 1 ? "konflikt" : "konflikty"} brygad
+            <span className="tabular-nums">{conflicts.length}</span>
+            <span className="hidden sm:inline">
+              {conflicts.length === 1 ? "konflikt" : "konflikty"}
+            </span>
           </button>
           {conflictsOpen ? (
             <div className="absolute left-0 top-full z-30 mt-1 max-h-72 w-80 overflow-y-auto thin-scrollbar rounded-xl border border-line bg-surface-overlay p-1 shadow-pop">
@@ -759,7 +816,7 @@ export function ScheduleTab({
 
       {overflowHint ? (
         <span
-          className="inline-flex max-w-[12rem] shrink-0 items-center gap-1 truncate rounded-md bg-amber-950/40 px-2 py-1 text-[10px] font-medium text-amber-200"
+          className="inline-flex max-w-[10rem] shrink-0 items-center gap-1 truncate rounded-md bg-amber-950/40 px-2 py-1 text-[10px] font-medium text-amber-200"
           title={overflowHint}
         >
           <AlertTriangle size={12} className="shrink-0" />
@@ -768,32 +825,48 @@ export function ScheduleTab({
       ) : null}
 
       {!showMobileList ? (
-        <div
-          className="flex shrink-0 items-center gap-0.5"
-          title="Ctrl+scroll — zoom osi"
-        >
-          {(isMobile
-            ? ZOOM_PRESETS.filter((p) => p.id === "1m" || p.id === "1q")
-            : ZOOM_PRESETS
-          ).map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              onClick={() => applyZoomPreset(preset)}
-              aria-pressed={activeZoomId === preset.id}
-              className={`rounded-md border px-1.5 py-1 text-[10px] font-medium transition ${
-                activeZoomId === preset.id
-                  ? "border-accent/40 bg-accent/15 text-accent"
-                  : "border-line text-ink-light hover:border-line-strong hover:text-ink"
-              }`}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
+        <>
+          <div
+            className="mx-0.5 hidden h-4 w-px shrink-0 bg-line sm:block"
+            aria-hidden
+          />
+          <div
+            className="flex shrink-0 items-center gap-0.5"
+            title="Ctrl+scroll — zoom osi"
+          >
+            {(isMobile
+              ? ZOOM_PRESETS.filter((p) => p.id === "1m" || p.id === "1q")
+              : ZOOM_PRESETS
+            ).map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyZoomPreset(preset)}
+                aria-pressed={activeZoomId === preset.id}
+                className={`rounded-md px-2 py-1 text-[10px] font-medium transition ${
+                  activeZoomId === preset.id
+                    ? "bg-surface-raised text-ink"
+                    : "text-ink-faint hover:bg-surface-raised/70 hover:text-ink"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => scrollToToday()}
+            className="inline-flex shrink-0 items-center rounded-md bg-accent px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110"
+            title="Pokaż dziś (z 5 dniami wstecz, jeśli jest miejsce)"
+          >
+            Dziś
+          </button>
+        </>
       ) : null}
 
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <div className="min-w-2 flex-1" aria-hidden />
+
+      <div className="flex shrink-0 items-center gap-1.5">
         {isMobile ? (
           <button
             type="button"
@@ -808,52 +881,29 @@ export function ScheduleTab({
             title={showMobileList ? "Pokaż oś czasu" : "Pokaż listę"}
           >
             {showMobileList ? <GanttChart size={13} /> : <List size={13} />}
-            {showMobileList ? "Oś czasu" : "Lista"}
-          </button>
-        ) : null}
-        {!showMobileList ? (
-          <button
-            type="button"
-            onClick={() => scrollToWeekStart(todayIso())}
-            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light transition hover:border-line-strong hover:text-ink"
-            title="Przewiń do bieżącego tygodnia"
-          >
-            Dziś
+            {showMobileList ? "Oś" : "Lista"}
           </button>
         ) : null}
         <button
           type="button"
           onClick={() => openEventSheet({ kind: "budowlane" })}
-          className="inline-flex min-h-8 items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white"
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-accent/35 bg-accent/12 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/20"
           title="Dodaj zdarzenie"
         >
-          <Zap size={13} />
+          <Zap size={13} strokeWidth={2.25} />
           <span className="hidden sm:inline">Zdarzenie</span>
         </button>
-        {!isMobile ? (
-          <button
-            type="button"
-            onClick={() =>
-              openEditor(null, { pickPositionKind: true, role: "work" })
-            }
-            className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white"
-            title="Dodaj pozycję harmonogramu"
-          >
-            <Plus size={13} />
-            Dodaj pozycję harmonogramu
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() =>
-              openEditor(null, { pickPositionKind: true, role: "work" })
-            }
-            className="inline-flex min-h-8 items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-medium text-ink-light"
-            title="Dodaj pozycję"
-          >
-            <Plus size={13} />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() =>
+            openEditor(null, { pickPositionKind: true, role: "work" })
+          }
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:brightness-110"
+          title="Dodaj pozycję harmonogramu"
+        >
+          <Plus size={14} strokeWidth={2.5} />
+          <span className="hidden sm:inline">Dodaj pozycję</span>
+        </button>
       </div>
     </div>
   );
@@ -941,6 +991,14 @@ export function ScheduleTab({
                 : {
                     collapsedKeys: collapsedRowKeys,
                     revealLevel,
+                    showCategoryRows,
+                    onToggleShowCategories: () => {
+                      setShowCategoryRows((prev) => {
+                        const next = !prev;
+                        saveScheduleShowCategories(next);
+                        return next;
+                      });
+                    },
                     onToggleProject: toggleProjectCollapse,
                     onToggleCategory: toggleCategoryCollapse,
                     onToggleSubcategory: toggleSubcategoryCollapse,
@@ -1726,14 +1784,7 @@ function buildAllBuildsRows(
   for (const p of projects) {
     const projectBlocks = blocks.filter((b) => b.projectId === p.id);
     const projectEvents = events.filter((e) => e.projectId === p.id);
-    rows.push({
-      id: `sec-proj-${p.id}`,
-      label: projectLabel(p),
-      section: true,
-      projectId: p.id,
-      blocks: [],
-      looseEvents: projectHeaderEvents(projectEvents, p.id),
-    });
+    const headerEvents = projectHeaderEvents(projectEvents, p.id);
     const catRows = buildProjectScopeRows(
       projectBlocks,
       scheduleCatalog,
@@ -1743,16 +1794,16 @@ function buildAllBuildsRows(
       p.id,
       categoryMeta,
     );
-    if (catRows.length === 0) {
-      rows.push({
-        id: `empty-proj-${p.id}`,
-        label: "—",
-        meta: "Brak harmonogramu",
-        indented: true,
-        blocks: [],
-      });
-      continue;
-    }
+    // Pusta inwestycja (bez kategorii, zakresów i zdarzeń na wierszu) — pomijamy.
+    if (catRows.length === 0 && headerEvents.length === 0) continue;
+    rows.push({
+      id: `sec-proj-${p.id}`,
+      label: projectLabel(p),
+      section: true,
+      projectId: p.id,
+      blocks: [],
+      looseEvents: headerEvents,
+    });
     rows.push(...catRows);
   }
   return rows;
@@ -1793,7 +1844,7 @@ function buildByCrewRows(
         id: b.id,
         label: `#${projects.find((p) => p.id === b.projectId)?.number ?? "?"} ${b.title || b.scope}`,
         meta: projectLabelOf(b.projectId),
-        color: b.color || lane.crew?.color,
+        color: lane.crew?.color || b.color,
         indented: true,
         blocks: [b],
       });
@@ -2282,6 +2333,8 @@ function TimelineBoard({
   categoryCollapse?: {
     collapsedKeys: Set<string>;
     revealLevel: ScheduleRevealLevel;
+    showCategoryRows: boolean;
+    onToggleShowCategories: () => void;
     onToggleProject: (projectId: string) => void;
     onToggleCategory: (projectId: string, categoryId: string) => void;
     onToggleSubcategory: (subcategoryId: string) => void;
@@ -2412,6 +2465,33 @@ function TimelineBoard({
               <span className="min-w-0 flex-1 truncate px-1">{labelHeader}</span>
               {categoryCollapse ? (
                 <span className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    title={
+                      categoryCollapse.showCategoryRows
+                        ? "Ukryj kategorie i podkategorie (zakresy zostają)"
+                        : "Pokaż kategorie i podkategorie"
+                    }
+                    aria-label={
+                      categoryCollapse.showCategoryRows
+                        ? "Ukryj kategorie"
+                        : "Pokaż kategorie"
+                    }
+                    aria-pressed={categoryCollapse.showCategoryRows}
+                    onClick={categoryCollapse.onToggleShowCategories}
+                    className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium transition hover:bg-surface-raised ${
+                      categoryCollapse.showCategoryRows
+                        ? "bg-accent/15 text-accent"
+                        : "text-ink-faint hover:text-ink"
+                    }`}
+                  >
+                    <Layers size={14} className="shrink-0" />
+                    <span className="hidden sm:inline">
+                      {categoryCollapse.showCategoryRows
+                        ? "Ukryj kategorie"
+                        : "Pokaż kategorie"}
+                    </span>
+                  </button>
                   <button
                     type="button"
                     title="Zwiń wszystkie kategorie, podkategorie i zakresy"
@@ -2664,7 +2744,12 @@ function TimelineBoard({
                   }
                 };
                 const labelInteractive = Boolean(editable) || canOpenCategory;
-                const workColor = row.color || row.blocks[0]?.color;
+                const workBlock = row.blocks[0];
+                const crewColor = workBlock?.crewId
+                  ? crews.find((c) => c.id === workBlock.crewId)?.color
+                  : undefined;
+                const workColor =
+                  crewColor || row.color || workBlock?.color;
                 const workDot = workColor
                   ? softenScheduleColor(workColor)
                   : undefined;
@@ -3472,8 +3557,11 @@ function DraggableBar({
   onMove: (id: string, start: string, end: string) => void;
 }) {
   const crew = crews.find((c) => c.id === block.crewId);
+  // Kolor belki = zawsze kolor brygady (zmiana brygady odświeża belki).
   const color = softenScheduleColor(
-    block.color || crew?.color || "#7a8494",
+    (block.crewId ? crew?.color : undefined) ||
+      block.color ||
+      "#7a8494",
   );
   const barH = Math.max(14, rowH - 8);
   const top = (rowH - barH) / 2;
@@ -3623,12 +3711,16 @@ function DraggableBar({
           liveRef.current = null;
           setLive(null);
         }}
-        className={`absolute inset-0 flex cursor-grab items-stretch text-white active:cursor-grabbing ${
-          conflict || overflow?.outside
-            ? "ring-2 ring-amber-400"
-            : "shadow-sm"
+        className={`absolute inset-0 flex cursor-grab items-stretch active:cursor-grabbing ${
+          conflict
+            ? "text-[#ffb4b4] ring-2 ring-red-400"
+            : overflow?.outside
+              ? "text-white ring-2 ring-amber-400"
+              : "text-white shadow-sm"
         }`}
         title={`${label}\n${start} → ${end}\n${crew?.name ?? "Bez brygady"}\n${SCHEDULE_STATUS_LABEL[block.status]}${
+          conflict ? "\n⚠ Konflikt brygad" : ""
+        }${
           overflow?.outside
             ? "\n⚠ Poza przedziałem czasowym podkategorii"
             : ""
@@ -3647,7 +3739,9 @@ function DraggableBar({
             style={{
               marginLeft: labelPad,
               maxWidth: Math.max(40, visibleW - handleW - 2),
-              textShadow: "0 1px 2px rgba(0,0,0,0.55)",
+              textShadow: conflict
+                ? "0 0 3px rgba(0,0,0,0.95), 0 1px 2px rgba(0,0,0,0.9), 0 0 1px #450a0a"
+                : "0 1px 2px rgba(0,0,0,0.55)",
             }}
           >
             {done ? (
@@ -4250,6 +4344,8 @@ export function BlockEditorSheet({
       : isNewCat
         ? newCustomCategoryId(customCategoryTitle.trim())
         : categoryId;
+    const resolvedCrewId = role === "subcategory" ? "" : crewId;
+    const crewColor = crews.find((c) => c.id === resolvedCrewId)?.color;
     onSave({
       id: block?.id,
       projectId,
@@ -4258,11 +4354,11 @@ export function BlockEditorSheet({
       title: resolvedScope,
       role: noCategory ? "work" : role,
       parentId: role === "work" && !noCategory ? parentId : null,
-      crewId: role === "subcategory" ? "" : crewId,
+      crewId: resolvedCrewId,
       startDate,
       endDate: endDate < startDate ? startDate : endDate,
       status: role === "subcategory" ? "planowane" : status,
-      color,
+      color: crewColor || color,
       note,
       newCategoryTitle: isNewCat ? customCategoryTitle.trim() : undefined,
     });
