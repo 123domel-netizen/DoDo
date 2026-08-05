@@ -102,7 +102,6 @@ export function shiftAttendanceFocus(
     nm = 1;
     ny += 1;
   }
-  const start = `${ny}-${String(nm).padStart(2, "0")}-01`;
   const next =
     nm === 12
       ? `${ny + 1}-01-01`
