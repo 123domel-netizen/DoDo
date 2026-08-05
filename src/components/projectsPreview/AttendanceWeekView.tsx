@@ -16,6 +16,7 @@ import {
   type AttendanceRangeMode,
 } from "@/lib/projectsPreview/attendanceWindow";
 import { todayIso } from "@/lib/projectsPreview/projectMetrics";
+import { applyCrewAttendanceSave } from "@/lib/projectsPreview/applyAttendanceSave";
 import type { CrewAttendance } from "@/lib/projectsPreview/types";
 import { AttendanceConfirmSheet } from "./AttendanceConfirmSheet";
 import { CrewAttendanceSheet } from "./CrewAttendanceSheet";
@@ -118,6 +119,8 @@ export function AttendanceWeekView({
   } | null>(null);
   const [editingAttendance, setEditingAttendance] =
     useState<CrewAttendance | null>(null);
+  const [editingBatch, setEditingBatch] = useState<CrewAttendance[]>([]);
+
 
 
   const window = useMemo(
@@ -185,11 +188,14 @@ export function AttendanceWeekView({
   }, [confirmRows, state.crewEquipmentLogs]);
 
   const editingEquipment = useMemo(() => {
-    if (!editingAttendance) return [];
-    return state.crewEquipmentLogs.filter(
-      (e) => e.attendanceId === editingAttendance.id,
+    if (!editingBatch.length && !editingAttendance) return [];
+    const ids = new Set(
+      (editingBatch.length ? editingBatch : [editingAttendance!]).map(
+        (a) => a.id,
+      ),
     );
-  }, [editingAttendance, state.crewEquipmentLogs]);
+    return state.crewEquipmentLogs.filter((e) => ids.has(e.attendanceId));
+  }, [editingAttendance, editingBatch, state.crewEquipmentLogs]);
 
   const visibleProjects = useMemo(() => {
     const list = state.projects.filter(
@@ -376,6 +382,11 @@ export function AttendanceWeekView({
           }}
           onEdit={(row) => {
             setConfirm(null);
+            const batch = state.crewAttendance.filter(
+              (a) =>
+                a.crewId === row.crewId && a.workDate === row.workDate,
+            );
+            setEditingBatch(batch);
             setEditingAttendance(row);
           }}
         />
@@ -392,7 +403,7 @@ export function AttendanceWeekView({
           defaultDate={adding.workDate}
           onClose={() => setAdding(null)}
           onSave={(data) => {
-            repo.upsertCrewAttendance(data);
+            applyCrewAttendanceSave(repo, data);
             setAdding(null);
           }}
         />
@@ -407,15 +418,27 @@ export function AttendanceWeekView({
           projects={visibleProjects}
           blocks={state.scheduleBlocks}
           existing={editingAttendance}
+          existingBatch={
+            editingBatch.length > 0 ? editingBatch : [editingAttendance]
+          }
           existingEquipment={editingEquipment}
-          onClose={() => setEditingAttendance(null)}
-          onSave={(data) => {
-            repo.upsertCrewAttendance(data);
+          onClose={() => {
             setEditingAttendance(null);
+            setEditingBatch([]);
+          }}
+          onSave={(data) => {
+            applyCrewAttendanceSave(repo, data);
+            setEditingAttendance(null);
+            setEditingBatch([]);
           }}
           onDelete={() => {
-            repo.deleteCrewAttendance(editingAttendance.id);
+            const ids =
+              editingBatch.length > 0
+                ? editingBatch.map((a) => a.id)
+                : [editingAttendance.id];
+            for (const id of ids) repo.deleteCrewAttendance(id);
             setEditingAttendance(null);
+            setEditingBatch([]);
           }}
         />
       ) : null}

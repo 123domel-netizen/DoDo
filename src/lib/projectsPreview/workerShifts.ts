@@ -12,6 +12,8 @@ export type WorkerShiftDraft = {
   id: string;
   startTime: string;
   endTime: string;
+  /** Empty = default budowa from the form. */
+  projectId: string;
 };
 
 export function isHalfHourTime(value: string): boolean {
@@ -57,18 +59,30 @@ function toMinutes(hhmm: string): number | null {
 export function newWorkerShift(
   startTime = DEFAULT_WORK_START,
   endTime = DEFAULT_WORK_END,
+  projectId = "",
 ): WorkerShiftDraft {
   return {
     id: `w-${Math.random().toString(36).slice(2, 9)}`,
     startTime: snapToHalfHour(startTime),
     endTime: snapToHalfHour(endTime),
+    projectId,
   };
 }
 
 export function cloneWorkersAsDrafts(
-  workers: Array<{ startTime: string; endTime: string }>,
+  workers: Array<{
+    startTime: string;
+    endTime: string;
+    projectId?: string | null;
+  }>,
+  defaultProjectId?: string,
 ): WorkerShiftDraft[] {
-  return workers.map((w) => newWorkerShift(w.startTime, w.endTime));
+  return workers.map((w) => {
+    const raw = (w.projectId ?? "").trim();
+    const projectId =
+      !raw || (defaultProjectId && raw === defaultProjectId) ? "" : raw;
+    return newWorkerShift(w.startTime, w.endTime, projectId);
+  });
 }
 
 export function workersFromHeadcount(
@@ -130,26 +144,67 @@ export function defaultShiftTimesFromPrevious(
  */
 export function resolveInitialWorkers(opts: {
   existing?: import("./types").CrewAttendance | null;
+  /** All attendances for this crew+day when editing a split day. */
+  existingBatch?: import("./types").CrewAttendance[];
+  defaultProjectId?: string;
   crew: import("./types").PreviewCrew;
   crews: import("./types").PreviewCrew[];
   attendance: import("./types").CrewAttendance[];
   workDate: string;
 }): WorkerShiftDraft[] {
-  const { existing, crew, crews, attendance, workDate } = opts;
-  if (existing?.workers?.length) {
-    return cloneWorkersAsDrafts(existing.workers);
-  }
-  if (existing && existing.headcount > 0) {
-    const times = defaultShiftTimesFromPrevious(
-      findPreviousCompanyAttendance(
-        attendance,
-        crews,
-        crew,
-        existing.workDate,
-        existing.id,
-      ),
-    );
-    return workersFromHeadcount(existing.headcount, times.startTime, times.endTime);
+  const {
+    existing,
+    existingBatch,
+    defaultProjectId,
+    crew,
+    crews,
+    attendance,
+    workDate,
+  } = opts;
+
+  const batch =
+    existingBatch && existingBatch.length > 0
+      ? existingBatch
+      : existing
+        ? [existing]
+        : [];
+
+  if (batch.length > 0) {
+    const def =
+      defaultProjectId ||
+      existing?.projectId ||
+      batch[0]!.projectId;
+    const drafts: WorkerShiftDraft[] = [];
+    for (const row of batch) {
+      if (row.workers?.length) {
+        drafts.push(
+          ...row.workers.map((w) => {
+            const override =
+              row.projectId === def ? "" : row.projectId;
+            return newWorkerShift(w.startTime, w.endTime, override);
+          }),
+        );
+      } else if (row.headcount > 0) {
+        const times = defaultShiftTimesFromPrevious(
+          findPreviousCompanyAttendance(
+            attendance,
+            crews,
+            crew,
+            row.workDate,
+            row.id,
+          ),
+        );
+        const override = row.projectId === def ? "" : row.projectId;
+        drafts.push(
+          ...workersFromHeadcount(
+            row.headcount,
+            times.startTime,
+            times.endTime,
+          ).map((w) => ({ ...w, projectId: override })),
+        );
+      }
+    }
+    if (drafts.length) return drafts;
   }
 
   const previous = findPreviousCompanyAttendance(
@@ -159,7 +214,7 @@ export function resolveInitialWorkers(opts: {
     workDate,
   );
   if (previous?.workers?.length) {
-    return cloneWorkersAsDrafts(previous.workers);
+    return cloneWorkersAsDrafts(previous.workers, defaultProjectId);
   }
   if (previous && previous.headcount > 0) {
     const times = defaultShiftTimesFromPrevious(previous);
@@ -189,7 +244,12 @@ export function normalizeWorkerList(
       typeof rec.id === "string" && rec.id
         ? rec.id
         : `w-${Math.random().toString(36).slice(2, 9)}`;
-    out.push({ id, startTime, endTime });
+    const projectRaw = rec.projectId ?? rec.project_id;
+    const projectId =
+      typeof projectRaw === "string" && projectRaw.trim()
+        ? projectRaw.trim()
+        : null;
+    out.push({ id, startTime, endTime, projectId });
   }
   return out;
 }

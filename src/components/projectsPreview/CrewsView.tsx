@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, ClipboardList, Plus, Users } from "lucide-react";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
+import { applyCrewAttendanceSave } from "@/lib/projectsPreview/applyAttendanceSave";
 import type { PreviewCrew } from "@/lib/projectsPreview/types";
 import { CrewAttendanceSheet } from "./CrewAttendanceSheet";
 import { CrewEditorSheet } from "./CrewEditorSheet";
@@ -69,19 +70,30 @@ export function CrewsView({
           visibleProjects.some((p) => p.id === b.projectId),
       )?.projectId ?? visibleProjects[0]?.id;
     if (!preferred) {
-      return { existing: null as null, equipment: [] as typeof state.crewEquipmentLogs };
+      return {
+        existing: null as null,
+        existingBatch: [] as typeof state.crewAttendance,
+        equipment: [] as typeof state.crewEquipmentLogs,
+        defaultProjectId: undefined as string | undefined,
+      };
     }
+    const existingBatch = state.crewAttendance.filter(
+      (a) => a.crewId === attendanceCrew.id && a.workDate === today,
+    );
     const existing =
-      state.crewAttendance.find(
-        (a) =>
-          a.crewId === attendanceCrew.id &&
-          a.projectId === preferred &&
-          a.workDate === today,
-      ) ?? null;
-    const equipment = existing
-      ? state.crewEquipmentLogs.filter((e) => e.attendanceId === existing.id)
-      : [];
-    return { existing, equipment, defaultProjectId: preferred };
+      existingBatch.find((a) => a.projectId === preferred) ??
+      existingBatch[0] ??
+      null;
+    const ids = new Set(existingBatch.map((a) => a.id));
+    const equipment = state.crewEquipmentLogs.filter((e) =>
+      ids.has(e.attendanceId),
+    );
+    return {
+      existing,
+      existingBatch,
+      equipment,
+      defaultProjectId: preferred,
+    };
   }, [
     attendanceCrew,
     state.scheduleBlocks,
@@ -237,17 +249,20 @@ export function CrewsView({
           projects={visibleProjects}
           blocks={state.scheduleBlocks}
           existing={attendanceContext.existing}
+          existingBatch={attendanceContext.existingBatch}
           existingEquipment={attendanceContext.equipment}
           defaultProjectId={attendanceContext.defaultProjectId}
           onClose={() => setAttendanceCrew(null)}
           onSave={(data) => {
-            repo.upsertCrewAttendance(data);
+            applyCrewAttendanceSave(repo, data);
             setAttendanceCrew(null);
           }}
           onDelete={
-            attendanceContext.existing
+            attendanceContext.existingBatch.length > 0
               ? () => {
-                  repo.deleteCrewAttendance(attendanceContext.existing!.id);
+                  for (const a of attendanceContext.existingBatch) {
+                    repo.deleteCrewAttendance(a.id);
+                  }
                   setAttendanceCrew(null);
                 }
               : undefined

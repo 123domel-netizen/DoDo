@@ -129,6 +129,11 @@ export interface CrewWorkerShift {
   /** HH:mm */
   startTime: string;
   endTime: string;
+  /**
+   * Opcjonalne nadpisanie budowy (awaryjnie inna niż oświadczenie).
+   * Po zapisie zwykle rozbijane na osobne wiersze obecności per budowa.
+   */
+  projectId?: string | null;
 }
 
 /**

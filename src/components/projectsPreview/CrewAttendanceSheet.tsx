@@ -24,6 +24,7 @@ import {
   type PreviewProject,
   type ScheduleBlock,
 } from "@/lib/projectsPreview/types";
+import { splitAttendanceByProject } from "@/lib/projectsPreview/attendanceSplit";
 import {
   DEFAULT_WORK_END,
   DEFAULT_WORK_START,
@@ -44,18 +45,16 @@ type EquipmentDraft = {
   equipmentLabel: string;
   quantity: string;
   hours: string;
+  /** Empty = default budowa. */
+  projectId: string;
 };
 
 export type CrewAttendanceSavePayload = {
-  id?: string;
   crewId: string;
-  projectId: string;
   workDate: string;
-  workers: WorkerShiftDraft[];
   note: string;
-  equipment: Array<
-    Omit<CrewEquipmentLog, "id" | "attendanceId"> & { id?: string }
-  >;
+  splits: ReturnType<typeof splitAttendanceByProject>;
+  previousAttendanceIds: string[];
 };
 
 interface CrewAttendanceSheetProps {
@@ -68,6 +67,8 @@ interface CrewAttendanceSheetProps {
   blocks: ScheduleBlock[];
   /** Existing row for crew+project+date if editing. */
   existing?: CrewAttendance | null;
+  /** All attendances for this crew+day (multi-budowa). */
+  existingBatch?: CrewAttendance[];
   existingEquipment?: CrewEquipmentLog[];
   defaultDate?: string;
   defaultProjectId?: string;
@@ -113,6 +114,7 @@ export function CrewAttendanceSheet({
   projects,
   blocks,
   existing,
+  existingBatch,
   existingEquipment = [],
   defaultDate,
   defaultProjectId,
@@ -124,41 +126,72 @@ export function CrewAttendanceSheet({
   const options = crewOptions?.length ? crewOptions : [initialCrew];
   const [crewId, setCrewId] = useState(initialCrew.id);
   const crew = options.find((c) => c.id === crewId) ?? initialCrew;
+  const batch = useMemo(() => {
+    if (existingBatch && existingBatch.length > 0) return existingBatch;
+    return existing ? [existing] : [];
+  }, [existing, existingBatch]);
   const [workDate, setWorkDate] = useState(
-    existing?.workDate ?? defaultDate ?? today,
+    batch[0]?.workDate ?? defaultDate ?? today,
   );
-  const [projectId, setProjectId] = useState(
-    () =>
-      existing?.projectId ||
-      suggestProjectId(crew.id, projects, blocks, today, defaultProjectId),
-  );
+  const [projectId, setProjectId] = useState(() => {
+    if (defaultProjectId && projects.some((p) => p.id === defaultProjectId)) {
+      return defaultProjectId;
+    }
+    if (existing?.projectId) return existing.projectId;
+    if (batch[0]?.projectId) return batch[0].projectId;
+    return suggestProjectId(crew.id, projects, blocks, today, defaultProjectId);
+  });
   const [workers, setWorkers] = useState<WorkerShiftDraft[]>(() =>
     resolveInitialWorkers({
       existing,
+      existingBatch: batch,
+      defaultProjectId:
+        existing?.projectId ||
+        batch[0]?.projectId ||
+        defaultProjectId ||
+        "",
       crew,
       crews,
       attendance: attendanceHistory,
-      workDate: existing?.workDate ?? defaultDate ?? today,
+      workDate: batch[0]?.workDate ?? defaultDate ?? today,
     }),
   );
-  const [note, setNote] = useState(existing?.note ?? "");
+  const [note, setNote] = useState(
+    () => batch.find((b) => b.note)?.note ?? existing?.note ?? "",
+  );
   const [lastEditedWorkerId, setLastEditedWorkerId] = useState<string | null>(
     null,
   );
+  const attendanceProjectById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of batch) m.set(a.id, a.projectId);
+    return m;
+  }, [batch]);
   const [equipment, setEquipment] = useState<EquipmentDraft[]>(() =>
     existingEquipment.length
-      ? existingEquipment.map((e) => ({
-          key: e.id,
-          id: e.id,
-          equipmentKey: (EQUIPMENT_PRESET_KEYS.includes(
-            e.equipmentKey as EquipmentPresetKey,
-          )
-            ? e.equipmentKey
-            : "other") as EquipmentPresetKey,
-          equipmentLabel: e.equipmentLabel,
-          quantity: String(e.quantity),
-          hours: String(e.hours),
-        }))
+      ? existingEquipment.map((e) => {
+          const attProject = attendanceProjectById.get(e.attendanceId);
+          const def =
+            existing?.projectId ||
+            batch[0]?.projectId ||
+            defaultProjectId ||
+            "";
+          const projectId =
+            attProject && attProject !== def ? attProject : "";
+          return {
+            key: e.id,
+            id: e.id,
+            equipmentKey: (EQUIPMENT_PRESET_KEYS.includes(
+              e.equipmentKey as EquipmentPresetKey,
+            )
+              ? e.equipmentKey
+              : "other") as EquipmentPresetKey,
+            equipmentLabel: e.equipmentLabel,
+            quantity: String(e.quantity),
+            hours: String(e.hours),
+            projectId,
+          };
+        })
       : [],
   );
 
@@ -239,6 +272,7 @@ export function CrewAttendanceSheet({
         equipmentLabel: "",
         quantity: "1",
         hours: "8",
+        projectId: "",
       },
     ]);
   };
@@ -254,7 +288,14 @@ export function CrewAttendanceSheet({
         return;
       }
     }
-    const logs: CrewAttendanceSavePayload["equipment"] = [];
+    const logs: Array<{
+      id?: string;
+      equipmentKey: string;
+      equipmentLabel: string;
+      quantity: number;
+      hours: number;
+      projectId: string;
+    }> = [];
     for (const row of equipment) {
       const qty = Number.parseInt(row.quantity, 10);
       const hrs = Number.parseFloat(row.hours.replace(",", "."));
@@ -279,16 +320,28 @@ export function CrewAttendanceSheet({
             : EQUIPMENT_PRESET_LABEL[row.equipmentKey],
         quantity: qty,
         hours: hrs,
+        projectId: row.projectId,
       });
     }
-    onSave({
-      id: existing?.id,
-      crewId: crew.id,
-      projectId,
-      workDate,
+
+    const existingIdByProject: Record<string, string> = {};
+    for (const a of batch) {
+      existingIdByProject[a.projectId] = a.id;
+    }
+
+    const splits = splitAttendanceByProject({
+      defaultProjectId: projectId,
       workers,
-      note: note.trim(),
       equipment: logs,
+      existingIdByProject,
+    });
+
+    onSave({
+      crewId: crew.id,
+      workDate,
+      note: note.trim(),
+      splits,
+      previousAttendanceIds: batch.map((a) => a.id),
     });
   };
 
@@ -364,7 +417,7 @@ export function CrewAttendanceSheet({
               </div>
             )}
           </Field>
-          <Field label="Budowa">
+          <Field label="Budowa (domyślna)">
             {projectOptions.length === 0 ? (
               <p className="text-sm text-ink-faint">Brak widocznych budów.</p>
             ) : (
@@ -381,6 +434,10 @@ export function CrewAttendanceSheet({
               </select>
             )}
           </Field>
+          <p className="-mt-1 text-[11px] text-ink-faint">
+            Osoby i sprzęt domyślnie na tej budowie. Awaryjnie możesz zmienić
+            budowę przy konkretnej osobie lub pozycji sprzętu.
+          </p>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -409,51 +466,88 @@ export function CrewAttendanceSheet({
               <ul className="divide-y divide-line/50 overflow-hidden rounded-lg border border-line/70">
                 {workers.map((row, index) => {
                   const hrs = shiftHours(row.startTime, row.endTime);
+                  const override =
+                    row.projectId.trim() && row.projectId !== projectId;
                   return (
                     <li
                       key={row.id}
-                      className="flex items-center gap-1.5 bg-surface-raised/30 px-2 py-1.5"
+                      className="space-y-1 bg-surface-raised/30 px-2 py-1.5"
                     >
-                      <span
-                        className="w-4 shrink-0 text-center text-[11px] font-semibold tabular-nums text-ink-faint"
-                        title={`Osoba ${index + 1}`}
-                      >
-                        {index + 1}
-                      </span>
-                      <HalfHourControl
-                        value={row.startTime}
-                        kind="start"
-                        onChange={(v) =>
-                          updateWorkerTime(row.id, "startTime", v)
-                        }
-                        aria-label={`Start osoby ${index + 1}`}
-                      />
-                      <span className="shrink-0 text-[11px] text-ink-faint" aria-hidden>
-                        →
-                      </span>
-                      <HalfHourControl
-                        value={row.endTime}
-                        kind="end"
-                        onChange={(v) =>
-                          updateWorkerTime(row.id, "endTime", v)
-                        }
-                        aria-label={`Koniec osoby ${index + 1}`}
-                      />
-                      <span className="ml-auto shrink-0 text-[11px] tabular-nums text-ink-faint">
-                        {formatRh(hrs)}h
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setWorkers((prev) =>
-                            prev.filter((x) => x.id !== row.id),
-                          )
-                        }
-                        className="rounded p-1 text-ink-faint hover:bg-red-950/30 hover:text-red-300"
-                        aria-label={`Usuń osobę ${index + 1}`}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-4 shrink-0 text-center text-[11px] font-semibold tabular-nums text-ink-faint"
+                          title={`Osoba ${index + 1}`}
+                        >
+                          {index + 1}
+                        </span>
+                        <HalfHourControl
+                          value={row.startTime}
+                          kind="start"
+                          onChange={(v) =>
+                            updateWorkerTime(row.id, "startTime", v)
+                          }
+                          aria-label={`Start osoby ${index + 1}`}
+                        />
+                        <span
+                          className="shrink-0 text-[11px] text-ink-faint"
+                          aria-hidden
+                        >
+                          →
+                        </span>
+                        <HalfHourControl
+                          value={row.endTime}
+                          kind="end"
+                          onChange={(v) =>
+                            updateWorkerTime(row.id, "endTime", v)
+                          }
+                          aria-label={`Koniec osoby ${index + 1}`}
+                        />
+                        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-ink-faint">
+                          {formatRh(hrs)}h
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setWorkers((prev) =>
+                              prev.filter((x) => x.id !== row.id),
+                            )
+                          }
+                          className="rounded p-1 text-ink-faint hover:bg-red-950/30 hover:text-red-300"
+                          aria-label={`Usuń osobę ${index + 1}`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5 pl-5">
+                        <span className="shrink-0 text-[10px] text-ink-faint">
+                          Budowa
+                        </span>
+                        <select
+                          value={row.projectId}
+                          onChange={(e) =>
+                            setWorkers((prev) =>
+                              prev.map((x) =>
+                                x.id === row.id
+                                  ? { ...x, projectId: e.target.value }
+                                  : x,
+                              ),
+                            )
+                          }
+                          className={`min-w-0 flex-1 rounded border px-1.5 py-1 text-[11px] ${
+                            override
+                              ? "border-accent/50 bg-accent/10 text-ink"
+                              : "border-line/70 bg-surface-raised text-ink-light"
+                          }`}
+                          aria-label={`Budowa osoby ${index + 1}`}
+                        >
+                          <option value="">Jak wyżej (domyślna)</option>
+                          {projectOptions.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {projectLabel(p)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </li>
                   );
                 })}
@@ -606,6 +700,36 @@ export function CrewAttendanceSheet({
                           </span>
                         </div>
                       </label>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <span className="shrink-0 text-[10px] text-ink-faint">
+                        Budowa
+                      </span>
+                      <select
+                        value={row.projectId}
+                        onChange={(e) =>
+                          setEquipment((prev) =>
+                            prev.map((x) =>
+                              x.key === row.key
+                                ? { ...x, projectId: e.target.value }
+                                : x,
+                            ),
+                          )
+                        }
+                        className={`min-w-0 flex-1 rounded border px-1.5 py-1 text-[11px] ${
+                          row.projectId.trim() && row.projectId !== projectId
+                            ? "border-accent/50 bg-accent/10 text-ink"
+                            : "border-line/70 bg-surface-raised text-ink-light"
+                        }`}
+                        aria-label="Budowa sprzętu"
+                      >
+                        <option value="">Jak wyżej (domyślna)</option>
+                        {projectOptions.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {projectLabel(p)}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </li>
                 ))}
