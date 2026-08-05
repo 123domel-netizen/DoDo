@@ -158,6 +158,33 @@ describe("aggregateAttendanceByCrew", () => {
     expect(a!.days["2026-08-04"]!.attendanceIds).toHaveLength(0);
   });
 
+  it("sorts by control frequency then newest crew first", () => {
+    const more: CrewAttendance[] = [
+      ...attendance,
+      {
+        id: "a3",
+        orgId: "o",
+        crewId: "c1",
+        projectId: "p1",
+        workDate: "2026-08-01",
+        headcount: 1,
+        laborHours: 8,
+        workers: [],
+        status: "declared",
+        note: "",
+        createdByUserId: null,
+        confirmedByUserId: null,
+        confirmedAt: null,
+      },
+    ];
+    const rows = aggregateAttendanceByCrew(more, [], crews, [
+      "2026-08-03",
+      "2026-08-04",
+    ]);
+    // c1 has 2 control days, c2 has 1, c3 has 0 → c1, c2, then c3 (newest of zeros)
+    expect(rows.map((r) => r.crewId)).toEqual(["c1", "c2", "c3"]);
+  });
+
   it("lists crews with empty cells", () => {
     const rows = aggregateAttendanceByCrew([], [], crews, ["2026-08-03"]);
     const solo = rows.find((r) => r.crewLabel === "Solo");

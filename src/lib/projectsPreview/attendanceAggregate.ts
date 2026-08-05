@@ -122,6 +122,22 @@ export function aggregateAttendanceByCrew(
     }
   }
 
+  /** Distinct control days (all history, not only visible window). */
+  const controlDaysByCrew = new Map<string, Set<string>>();
+  for (const row of attendance) {
+    if (projectFilter && !projectFilter.has(row.projectId)) continue;
+    if (!byCrew.has(row.crewId)) continue;
+    let set = controlDaysByCrew.get(row.crewId);
+    if (!set) {
+      set = new Set();
+      controlDaysByCrew.set(row.crewId, set);
+    }
+    set.add(row.workDate);
+  }
+
+  /** Newer crews are later in the array → higher index sorts first on ties. */
+  const crewOrder = new Map(crews.map((c, i) => [c.id, i]));
+
   return [...byCrew.entries()]
     .map(([crewId, g]) => {
       const dayMap: Record<string, AttendanceDayCell> = {};
@@ -141,9 +157,17 @@ export function aggregateAttendanceByCrew(
         crewLabel: g.label,
         company: g.company,
         days: dayMap,
+        controlDays: controlDaysByCrew.get(crewId)?.size ?? 0,
+        crewOrder: crewOrder.get(crewId) ?? 0,
       };
     })
-    .sort((a, b) => a.crewLabel.localeCompare(b.crewLabel, "pl"));
+    .sort((a, b) => {
+      if (b.controlDays !== a.controlDays) return b.controlDays - a.controlDays;
+      // Reverse DB / list order: newly added crews sit later in `crews` → on top.
+      if (b.crewOrder !== a.crewOrder) return b.crewOrder - a.crewOrder;
+      return a.crewLabel.localeCompare(b.crewLabel, "pl");
+    })
+    .map(({ controlDays: _c, crewOrder: _o, ...row }) => row);
 }
 
 /** @deprecated Prefer aggregateAttendanceByCrew */
