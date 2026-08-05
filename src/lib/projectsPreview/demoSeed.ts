@@ -328,6 +328,8 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
     scheduleBlocks,
     scheduleEvents,
     categoryMeta: [],
+    crewAttendance: [],
+    crewEquipmentLogs: [],
   };
 }
 
@@ -359,6 +361,8 @@ export function buildEmptyScheduleState(opts?: {
     scheduleBlocks: [],
     scheduleEvents: [],
     categoryMeta: [],
+    crewAttendance: [],
+    crewEquipmentLogs: [],
   };
 }
 

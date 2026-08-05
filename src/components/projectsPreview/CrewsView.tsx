@@ -1,22 +1,32 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, Pencil, Plus, Users } from "lucide-react";
+import { AlertTriangle, ClipboardList, Plus, Users } from "lucide-react";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import type { PreviewCrew } from "@/lib/projectsPreview/types";
+import { CrewAttendanceSheet } from "./CrewAttendanceSheet";
 import { CrewEditorSheet } from "./CrewEditorSheet";
 
 interface CrewsViewProps {
   /** Opened from the header „+ Brygada”. */
   createOpen: boolean;
   onCreateOpenChange: (open: boolean) => void;
+  /** Shared filtr budów from the shell. */
+  projectIds?: string[] | "all";
 }
 
 const COLUMN_COUNT = 7;
 
 /** Brygady: kto pracuje, na ilu robotach i gdzie się zderza z samą sobą. */
-export function CrewsView({ createOpen, onCreateOpenChange }: CrewsViewProps) {
+export function CrewsView({
+  createOpen,
+  onCreateOpenChange,
+  projectIds = "all",
+}: CrewsViewProps) {
   const repo = useProjectsPreviewRepo();
   const state = repo.getState();
   const [editing, setEditing] = useState<PreviewCrew | null>(null);
+  const [attendanceCrew, setAttendanceCrew] = useState<PreviewCrew | null>(
+    null,
+  );
 
   const conflictsByCrew = useMemo(() => {
     const m = new Map<string, number>();
@@ -27,12 +37,58 @@ export function CrewsView({ createOpen, onCreateOpenChange }: CrewsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- conflicts derive from blocks
   }, [repo, state.scheduleBlocks, state.projects, state.viewAsUserId]);
 
-  const closeSheet = () => {
+  const visibleProjects = useMemo(() => {
+    const list = state.projects.filter(
+      (p) =>
+        p.status === "active" &&
+        (p.adminUserId === state.viewAsUserId ||
+          p.memberIds.includes(state.viewAsUserId)),
+    );
+    if (projectIds === "all") return list;
+    const wanted = new Set(projectIds);
+    return list.filter((p) => wanted.has(p.id));
+  }, [state.projects, state.viewAsUserId, projectIds]);
+
+  const closeEditor = () => {
     setEditing(null);
     onCreateOpenChange(false);
   };
 
-  const sheetOpen = createOpen || editing != null;
+  const editorOpen = createOpen || editing != null;
+
+  const attendanceContext = useMemo(() => {
+    if (!attendanceCrew) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const preferred =
+      state.scheduleBlocks.find(
+        (b) =>
+          b.role === "work" &&
+          b.crewId === attendanceCrew.id &&
+          b.startDate <= today &&
+          b.endDate >= today &&
+          visibleProjects.some((p) => p.id === b.projectId),
+      )?.projectId ?? visibleProjects[0]?.id;
+    if (!preferred) {
+      return { existing: null as null, equipment: [] as typeof state.crewEquipmentLogs };
+    }
+    const existing =
+      state.crewAttendance.find(
+        (a) =>
+          a.crewId === attendanceCrew.id &&
+          a.projectId === preferred &&
+          a.workDate === today,
+      ) ?? null;
+    const equipment = existing
+      ? state.crewEquipmentLogs.filter((e) => e.attendanceId === existing.id)
+      : [];
+    return { existing, equipment, defaultProjectId: preferred };
+  }, [
+    attendanceCrew,
+    state.scheduleBlocks,
+    state.crewAttendance,
+    state.crewEquipmentLogs,
+    visibleProjects,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -87,6 +143,7 @@ export function CrewsView({ createOpen, onCreateOpenChange }: CrewsViewProps) {
                     }}
                     tabIndex={0}
                     role="button"
+                    title="Edytuj brygadę"
                   >
                     <td className="px-2 py-1">
                       <div className="flex min-w-0 items-center gap-1.5">
@@ -98,11 +155,17 @@ export function CrewsView({ createOpen, onCreateOpenChange }: CrewsViewProps) {
                         <span className="min-w-0 truncate font-medium text-ink">
                           {crew.name}
                         </span>
-                        <Pencil
-                          size={11}
-                          className="shrink-0 text-ink-faint"
-                          aria-hidden
-                        />
+                        <button
+                          type="button"
+                          title="Obecność / RH i sprzęt"
+                          className="shrink-0 rounded p-0.5 text-ink-faint hover:bg-accent/15 hover:text-accent"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAttendanceCrew(crew);
+                          }}
+                        >
+                          <ClipboardList size={12} aria-hidden />
+                        </button>
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-1.5 py-1 tabular-nums text-ink-light">
@@ -141,14 +204,14 @@ export function CrewsView({ createOpen, onCreateOpenChange }: CrewsViewProps) {
         </table>
       </div>
 
-      {sheetOpen ? (
+      {editorOpen ? (
         <CrewEditorSheet
           key={editing?.id ?? "new-crew"}
           crew={editing}
-          onClose={closeSheet}
+          onClose={closeEditor}
           onSave={(data) => {
             repo.upsertCrew(data);
-            closeSheet();
+            closeEditor();
           }}
           onDelete={
             editing
@@ -158,7 +221,34 @@ export function CrewsView({ createOpen, onCreateOpenChange }: CrewsViewProps) {
                     alert(res.error);
                     return;
                   }
-                  closeSheet();
+                  closeEditor();
+                }
+              : undefined
+          }
+        />
+      ) : null}
+
+      {attendanceCrew && attendanceContext ? (
+        <CrewAttendanceSheet
+          key={`att-${attendanceCrew.id}-${attendanceContext.existing?.id ?? "new"}`}
+          crew={attendanceCrew}
+          crews={state.crews}
+          attendanceHistory={state.crewAttendance}
+          projects={visibleProjects}
+          blocks={state.scheduleBlocks}
+          existing={attendanceContext.existing}
+          existingEquipment={attendanceContext.equipment}
+          defaultProjectId={attendanceContext.defaultProjectId}
+          onClose={() => setAttendanceCrew(null)}
+          onSave={(data) => {
+            repo.upsertCrewAttendance(data);
+            setAttendanceCrew(null);
+          }}
+          onDelete={
+            attendanceContext.existing
+              ? () => {
+                  repo.deleteCrewAttendance(attendanceContext.existing!.id);
+                  setAttendanceCrew(null);
                 }
               : undefined
           }

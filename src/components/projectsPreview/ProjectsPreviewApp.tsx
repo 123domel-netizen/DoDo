@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   BookOpen,
   CalendarRange,
+  ClipboardList,
   History,
   List,
   MoreVertical,
@@ -16,6 +17,7 @@ import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import type { ScheduleEventKind } from "@/lib/projectsPreview/types";
+import { AttendanceWeekView } from "./AttendanceWeekView";
 import { CatalogView } from "./CatalogView";
 import { BuildsFilterControl } from "./BuildsFilterControl";
 import { CrewsView } from "./CrewsView";
@@ -39,10 +41,11 @@ export type ProjectsPreviewView =
   | { name: "events"; kind: ScheduleEventKind }
   | { name: "list"; archived?: boolean }
   | { name: "crews" }
+  | { name: "attendance" }
   | { name: "catalog"; from: ProjectsPreviewView };
 
 /** Row 1 segments. Everything else is a sub-state of one of them. */
-type PrimarySection = "board" | "events" | "list" | "crews";
+type PrimarySection = "board" | "events" | "list" | "crews" | "attendance";
 
 const PRIMARY_SECTIONS: Array<{
   id: PrimarySection;
@@ -52,6 +55,7 @@ const PRIMARY_SECTIONS: Array<{
   { id: "board", label: "Harmonogramy", icon: <CalendarRange size={13} /> },
   { id: "events", label: "Zdarzenia", icon: <History size={13} /> },
   { id: "crews", label: "Brygady", icon: <Users size={13} /> },
+  { id: "attendance", label: "Obecność", icon: <ClipboardList size={13} /> },
   { id: "list", label: "Budowy", icon: <List size={13} /> },
 ];
 
@@ -61,6 +65,8 @@ function primaryOf(view: ProjectsPreviewView): PrimarySection {
       return "list";
     case "crews":
       return "crews";
+    case "attendance":
+      return "attendance";
     case "events":
       return "events";
     case "catalog":
@@ -151,6 +157,8 @@ export function ProjectsPreviewApp({
       setView({ name: "list", archived: memory.current.listArchived });
     } else if (section === "crews") {
       setView({ name: "crews" });
+    } else if (section === "attendance") {
+      setView({ name: "attendance" });
     } else if (section === "events") {
       setView({ name: "events", kind: memory.current.eventsKind });
     } else {
@@ -653,7 +661,11 @@ export function ProjectsPreviewApp({
           <CrewsView
             createOpen={crewFormOpen}
             onCreateOpenChange={setCrewFormOpen}
+            projectIds={buildsFilter}
           />
+        ) : null}
+        {view.name === "attendance" ? (
+          <AttendanceWeekView projectIds={buildsFilter} />
         ) : null}
         {view.name === "catalog" ? <CatalogView onBack={goBack} /> : null}
       </main>

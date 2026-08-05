@@ -120,6 +120,48 @@ export interface PreviewCrew {
   phone: string;
 }
 
+/** Daily RH declaration status. */
+export type CrewAttendanceStatus = "declared" | "confirmed";
+
+/** Jedna osoba na budowie — własne godziny start/koniec (krok 30 min). */
+export interface CrewWorkerShift {
+  id: string;
+  /** HH:mm */
+  startTime: string;
+  endTime: string;
+}
+
+/**
+ * Oświadczenie obecności: brygada + budowa + dzień.
+ * `headcount` / `laborHours` = agregaty z `workers`.
+ */
+export interface CrewAttendance {
+  id: string;
+  orgId: string;
+  crewId: string;
+  projectId: string;
+  workDate: string; // YYYY-MM-DD
+  headcount: number;
+  laborHours: number;
+  workers: CrewWorkerShift[];
+  status: CrewAttendanceStatus;
+  note: string;
+  createdByUserId: string | null;
+  confirmedByUserId: string | null;
+  confirmedAt: string | null;
+}
+
+/** Linia sprzętu ciężkiego przy oświadczeniu. */
+export interface CrewEquipmentLog {
+  id: string;
+  attendanceId: string;
+  /** Preset key (koparka, dzwig, …) or `other`. */
+  equipmentKey: string;
+  equipmentLabel: string;
+  quantity: number;
+  hours: number;
+}
+
 /**
  * Punktowe zdarzenie na harmonogramie. Nie jest robotą (nie ma czasu trwania)
  * ani zadaniem w kalendarzu.
@@ -172,6 +214,10 @@ export interface ProjectsPreviewState {
   scheduleEvents: ScheduleEvent[];
   /** Własne nazwy / notatki wierszy kategorii na budowach. */
   categoryMeta: ScheduleCategoryMeta[];
+  /** Oświadczenia obecności / RH. */
+  crewAttendance: CrewAttendance[];
+  /** Linie sprzętu powiązane z oświadczeniami. */
+  crewEquipmentLogs: CrewEquipmentLog[];
 }
 
 export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {

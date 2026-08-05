@@ -9,7 +9,11 @@ import { buildBudowaScheduleCatalog } from "@/lib/projectsPreview/scheduleCatalo
 import type { ScheduleCatalogPreset } from "@/lib/projectsPreview/scheduleCatalog";
 import { buildProjectSchedulePreset } from "@/lib/projectsPreview/schedulePresetSeed";
 import { normalizeProjectCode } from "@/lib/projectsPreview/types";
+import { normalizeWorkerList, totalLaborHours } from "@/lib/projectsPreview/workerShifts";
 import type {
+  CrewAttendance,
+  CrewAttendanceStatus,
+  CrewEquipmentLog,
   DocEventStatus,
   PreviewCrew,
   PreviewProject,
@@ -32,6 +36,8 @@ type BundleRow = {
   scheduleBlocks: ScheduleBlock[];
   scheduleEvents: ScheduleEvent[];
   categoryMeta: ScheduleCategoryMeta[];
+  crewAttendance: CrewAttendance[];
+  crewEquipmentLogs: CrewEquipmentLog[];
   catalog: SupervisionCatalogPreset;
   scheduleCatalog: ScheduleCatalogPreset;
   nextNumberHint: number;
@@ -520,6 +526,123 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     return res;
   }
 
+  listAttendance(
+    from: string,
+    to: string,
+    opts?: { projectIds?: string[] | "all"; companyKey?: string },
+  ) {
+    return this.inner.listAttendance(from, to, opts);
+  }
+
+  upsertCrewAttendance(
+    input: Parameters<ScheduleRepository["upsertCrewAttendance"]>[0],
+  ) {
+    const equipment =
+      input.equipment !== undefined
+        ? input.equipment.map((e) => ({
+            ...e,
+            id: asCloudId(e.id),
+          }))
+        : undefined;
+    const workers =
+      input.workers !== undefined
+        ? normalizeWorkerList(input.workers)
+        : undefined;
+    const row = this.inner.upsertCrewAttendance({
+      ...input,
+      id: asCloudId(input.id),
+      equipment,
+      workers,
+    });
+    const logs = this.inner
+      .getState()
+      .crewEquipmentLogs.filter((e) => e.attendanceId === row.id);
+    void this.syncAttendance(row, logs);
+    return row;
+  }
+
+  deleteCrewAttendance(id: string) {
+    this.inner.deleteCrewAttendance(id);
+    void this.persistAttendanceDeletion(id);
+  }
+
+  setAttendanceStatus(id: string, status: CrewAttendanceStatus) {
+    this.inner.setAttendanceStatus(id, status);
+    const row = this.inner.getState().crewAttendance.find((a) => a.id === id);
+    if (!row) return;
+    const logs = this.inner
+      .getState()
+      .crewEquipmentLogs.filter((e) => e.attendanceId === id);
+    void this.syncAttendance(row, logs);
+  }
+
+  private async syncAttendance(
+    row: CrewAttendance,
+    logs: CrewEquipmentLog[],
+  ) {
+    if (!supabase) return;
+    const { error } = await supabase.from("construction_crew_attendance").upsert({
+      id: row.id,
+      org_id: this.orgId,
+      crew_id: row.crewId,
+      project_id: row.projectId,
+      work_date: row.workDate,
+      headcount: row.headcount,
+      labor_hours: row.laborHours,
+      workers: row.workers,
+      status: row.status,
+      note: row.note,
+      created_by: row.createdByUserId && isUuid(row.createdByUserId)
+        ? row.createdByUserId
+        : null,
+      confirmed_by:
+        row.confirmedByUserId && isUuid(row.confirmedByUserId)
+          ? row.confirmedByUserId
+          : null,
+      confirmed_at: row.confirmedAt,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      console.warn("[schedules] sync attendance failed:", error.message);
+      return;
+    }
+    const { error: delErr } = await supabase
+      .from("construction_crew_equipment_logs")
+      .delete()
+      .eq("attendance_id", row.id);
+    if (delErr) {
+      console.warn("[schedules] clear equipment failed:", delErr.message);
+      return;
+    }
+    if (!logs.length) return;
+    const { error: insErr } = await supabase
+      .from("construction_crew_equipment_logs")
+      .insert(
+        logs.map((e) => ({
+          id: e.id,
+          attendance_id: row.id,
+          equipment_key: e.equipmentKey,
+          equipment_label: e.equipmentLabel,
+          quantity: e.quantity,
+          hours: e.hours,
+        })),
+      );
+    if (insErr) {
+      console.warn("[schedules] sync equipment failed:", insErr.message);
+    }
+  }
+
+  private async persistAttendanceDeletion(id: string) {
+    if (!supabase || !isUuid(id)) return;
+    const { error } = await supabase
+      .from("construction_crew_attendance")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.warn("[schedules] delete attendance failed:", error.message);
+    }
+  }
+
   private async persistCrewDeletion(id: string) {
     if (!supabase) {
       this.pendingDeletedCrewIds.delete(id);
@@ -960,6 +1083,8 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
         scheduleBlocks: bundle.scheduleBlocks,
         scheduleEvents: bundle.scheduleEvents,
         categoryMeta: bundle.categoryMeta,
+        crewAttendance: bundle.crewAttendance,
+        crewEquipmentLogs: bundle.crewEquipmentLogs,
       });
       await this.ensureDefaultCatalogs(bundle);
     } catch (e) {
@@ -1213,6 +1338,8 @@ function emptyCloudState(orgId: string, userId: string): ProjectsPreviewState {
     scheduleBlocks: [],
     scheduleEvents: [],
     categoryMeta: [],
+    crewAttendance: [],
+    crewEquipmentLogs: [],
   };
 }
 
@@ -1245,7 +1372,7 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
 
   for (const p of projectsRes.data ?? []) projectIds.push(p.id);
 
-  const [blocksRes, eventsRes, metaRes] = await Promise.all([
+  const [blocksRes, eventsRes, metaRes, attendanceRes] = await Promise.all([
     projectIds.length
       ? supabase.from("schedule_blocks").select("*").in("project_id", projectIds)
       : Promise.resolve({ data: [], error: null }),
@@ -1258,7 +1385,20 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
           .select("*")
           .in("project_id", projectIds)
       : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("construction_crew_attendance")
+      .select("*")
+      .eq("org_id", orgId),
   ]);
+
+  const attendanceIds = (attendanceRes.data ?? []).map((a) => a.id as string);
+  const equipmentRes =
+    attendanceIds.length > 0
+      ? await supabase
+          .from("construction_crew_equipment_logs")
+          .select("*")
+          .in("attendance_id", attendanceIds)
+      : { data: [], error: null };
 
   const memberMap = new Map<string, string[]>();
   for (const m of membersRes.data ?? []) {
@@ -1339,6 +1479,42 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
     endDate: m.end_date ?? "",
   }));
 
+  const crewAttendance: CrewAttendance[] = (attendanceRes.data ?? []).map((a) => {
+    const workers = normalizeWorkerList(a.workers);
+    const headcount =
+      workers.length > 0 ? workers.length : (a.headcount ?? 0);
+    const laborHours =
+      workers.length > 0
+        ? totalLaborHours(workers)
+        : Number(a.labor_hours) || 0;
+    return {
+      id: a.id,
+      orgId: a.org_id,
+      crewId: a.crew_id,
+      projectId: a.project_id,
+      workDate: a.work_date,
+      headcount,
+      laborHours,
+      workers,
+      status: a.status === "confirmed" ? "confirmed" : "declared",
+      note: a.note ?? "",
+      createdByUserId: a.created_by ?? null,
+      confirmedByUserId: a.confirmed_by ?? null,
+      confirmedAt: a.confirmed_at ?? null,
+    };
+  });
+
+  const crewEquipmentLogs: CrewEquipmentLog[] = (equipmentRes.data ?? []).map(
+    (e) => ({
+      id: e.id,
+      attendanceId: e.attendance_id,
+      equipmentKey: e.equipment_key,
+      equipmentLabel: e.equipment_label ?? "",
+      quantity: e.quantity ?? 0,
+      hours: Number(e.hours) || 0,
+    }),
+  );
+
   let catalog = buildNadzorPodstawowyPreset();
   let scheduleCatalog = buildBudowaScheduleCatalog();
   for (const c of catalogsRes.data ?? []) {
@@ -1353,6 +1529,8 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
     scheduleBlocks,
     scheduleEvents,
     categoryMeta,
+    crewAttendance,
+    crewEquipmentLogs,
     catalog,
     scheduleCatalog,
     nextNumberHint: settingsRes.data?.next_number_hint ?? 1,

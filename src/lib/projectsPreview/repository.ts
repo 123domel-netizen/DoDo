@@ -23,7 +23,15 @@ import {
 import { addDaysIso } from "./scheduleZoom";
 import { isProjectVisibleTo, searchProjects, visibleProjects } from "./search";
 import { normalizeStageId } from "./stageIds";
+import {
+  normalizeWorkerList,
+  totalLaborHours,
+} from "./workerShifts";
 import type {
+  CrewAttendance,
+  CrewAttendanceStatus,
+  CrewEquipmentLog,
+  CrewWorkerShift,
   DocEventStatus,
   PreviewCrew,
   PreviewProject,
@@ -691,11 +699,195 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
         error: "Brygada jest przypisana do robót — najpierw zmień brygadę w blokach.",
       };
     }
+    const attendanceIds = new Set(
+      this.state.crewAttendance
+        .filter((a) => a.crewId === id)
+        .map((a) => a.id),
+    );
     this.commit({
       ...this.state,
       crews: this.state.crews.filter((c) => c.id !== id),
+      crewAttendance: this.state.crewAttendance.filter((a) => a.crewId !== id),
+      crewEquipmentLogs: this.state.crewEquipmentLogs.filter(
+        (e) => !attendanceIds.has(e.attendanceId),
+      ),
     });
     return { ok: true };
+  }
+
+  listAttendance(
+    from: string,
+    to: string,
+    opts?: { projectIds?: string[] | "all"; companyKey?: string },
+  ): CrewAttendance[] {
+    const projectFilter =
+      opts?.projectIds && opts.projectIds !== "all"
+        ? new Set(opts.projectIds)
+        : null;
+    const crewFilter = opts?.companyKey
+      ? new Set(
+          this.state.crews
+            .filter((c) => {
+              const key = c.company.trim()
+                ? c.company.trim().toLocaleLowerCase("pl")
+                : `__crew:${c.id}`;
+              return key === opts.companyKey;
+            })
+            .map((c) => c.id),
+        )
+      : null;
+    return this.state.crewAttendance
+      .filter((a) => {
+        if (a.workDate < from || a.workDate > to) return false;
+        if (projectFilter && !projectFilter.has(a.projectId)) return false;
+        if (crewFilter && !crewFilter.has(a.crewId)) return false;
+        return true;
+      })
+      .slice()
+      .sort(
+        (a, b) =>
+          a.workDate.localeCompare(b.workDate) ||
+          a.crewId.localeCompare(b.crewId),
+      );
+  }
+
+  upsertCrewAttendance(
+    input: Omit<
+      CrewAttendance,
+      | "id"
+      | "orgId"
+      | "status"
+      | "createdByUserId"
+      | "confirmedByUserId"
+      | "confirmedAt"
+      | "workers"
+      | "headcount"
+      | "laborHours"
+    > & {
+      id?: string;
+      status?: CrewAttendanceStatus;
+      /** When set, replaces people rows and recomputes headcount / RH. */
+      workers?: CrewWorkerShift[];
+      headcount?: number;
+      laborHours?: number;
+      /** When omitted, existing equipment logs are kept. */
+      equipment?: Array<
+        Omit<CrewEquipmentLog, "id" | "attendanceId"> & { id?: string }
+      >;
+    },
+  ): CrewAttendance {
+    const previous =
+      (input.id
+        ? this.state.crewAttendance.find((a) => a.id === input.id)
+        : undefined) ??
+      this.state.crewAttendance.find(
+        (a) =>
+          a.crewId === input.crewId &&
+          a.projectId === input.projectId &&
+          a.workDate === input.workDate,
+      );
+
+    const id = previous?.id ?? input.id ?? uid("att");
+    const status = input.status ?? previous?.status ?? "declared";
+    const workers =
+      input.workers !== undefined
+        ? normalizeWorkerList(input.workers)
+        : (previous?.workers ?? []);
+    const headcount =
+      input.workers !== undefined
+        ? workers.length
+        : Math.max(
+            0,
+            Math.floor(
+              Number(
+                input.headcount ?? previous?.headcount ?? 0,
+              ) || 0,
+            ),
+          );
+    const laborHours =
+      input.workers !== undefined
+        ? totalLaborHours(workers)
+        : Math.max(
+            0,
+            Number(input.laborHours ?? previous?.laborHours) || 0,
+          );
+    const row: CrewAttendance = {
+      id,
+      orgId: this.state.orgId,
+      crewId: input.crewId,
+      projectId: input.projectId,
+      workDate: input.workDate,
+      headcount,
+      laborHours,
+      workers,
+      status,
+      note: (input.note ?? previous?.note ?? "").trim(),
+      createdByUserId:
+        previous?.createdByUserId ?? this.state.viewAsUserId ?? null,
+      confirmedByUserId:
+        status === "confirmed"
+          ? (previous?.confirmedByUserId ?? this.state.viewAsUserId ?? null)
+          : null,
+      confirmedAt:
+        status === "confirmed"
+          ? (previous?.confirmedAt ?? new Date().toISOString())
+          : null,
+    };
+
+    const crewAttendance = previous
+      ? this.state.crewAttendance.map((a) => (a.id === id ? row : a))
+      : [...this.state.crewAttendance, row];
+
+    let crewEquipmentLogs = this.state.crewEquipmentLogs;
+    if (input.equipment !== undefined) {
+      const nextLogs: CrewEquipmentLog[] = input.equipment.map((e) => ({
+        id: e.id ?? uid("eq"),
+        attendanceId: id,
+        equipmentKey: e.equipmentKey,
+        equipmentLabel: (e.equipmentLabel ?? "").trim(),
+        quantity: Math.max(0, Math.floor(e.quantity)),
+        hours: Math.max(0, Number(e.hours) || 0),
+      }));
+      crewEquipmentLogs = [
+        ...this.state.crewEquipmentLogs.filter((e) => e.attendanceId !== id),
+        ...nextLogs,
+      ];
+    }
+
+    this.commit({ ...this.state, crewAttendance, crewEquipmentLogs });
+    return row;
+  }
+
+  deleteCrewAttendance(id: string) {
+    this.commit({
+      ...this.state,
+      crewAttendance: this.state.crewAttendance.filter((a) => a.id !== id),
+      crewEquipmentLogs: this.state.crewEquipmentLogs.filter(
+        (e) => e.attendanceId !== id,
+      ),
+    });
+  }
+
+  setAttendanceStatus(id: string, status: CrewAttendanceStatus) {
+    const me = this.state.viewAsUserId;
+    const crewAttendance = this.state.crewAttendance.map((a) => {
+      if (a.id !== id) return a;
+      if (status === "confirmed") {
+        return {
+          ...a,
+          status,
+          confirmedByUserId: a.confirmedByUserId ?? me,
+          confirmedAt: a.confirmedAt ?? new Date().toISOString(),
+        };
+      }
+      return {
+        ...a,
+        status: "declared" as const,
+        confirmedByUserId: null,
+        confirmedAt: null,
+      };
+    });
+    this.commit({ ...this.state, crewAttendance });
   }
 
   upsertScheduleBlock(
@@ -1137,6 +1329,12 @@ function migrateState(raw: LooseState): ProjectsPreviewState {
     categoryMeta: (raw.categoryMeta ?? [])
       .map((m) => normalizeCategoryMeta(m))
       .filter((m): m is ScheduleCategoryMeta => m != null),
+    crewAttendance: (raw.crewAttendance ?? [])
+      .map((a) => normalizeAttendance(a as CrewAttendance))
+      .filter((a): a is CrewAttendance => a != null),
+    crewEquipmentLogs: (raw.crewEquipmentLogs ?? [])
+      .map((e) => normalizeEquipmentLog(e as CrewEquipmentLog))
+      .filter((e): e is CrewEquipmentLog => e != null),
   };
 }
 
@@ -1323,6 +1521,52 @@ function normalizeCrew(
     supervisor: c.supervisor ?? "",
     company: c.company ?? "",
     phone: c.phone ?? "",
+  };
+}
+
+function normalizeAttendance(
+  a: Partial<CrewAttendance> &
+    Pick<CrewAttendance, "id" | "crewId" | "projectId" | "workDate">,
+): CrewAttendance | null {
+  if (!a?.id || !a.crewId || !a.projectId || !a.workDate) return null;
+  const workers = normalizeWorkerList(a.workers);
+  const headcount =
+    workers.length > 0
+      ? workers.length
+      : Math.max(0, Math.floor(Number(a.headcount) || 0));
+  const laborHours =
+    workers.length > 0
+      ? totalLaborHours(workers)
+      : Math.max(0, Number(a.laborHours) || 0);
+  return {
+    id: a.id,
+    orgId: a.orgId ?? PREVIEW_ORG_ID,
+    crewId: a.crewId,
+    projectId: a.projectId,
+    workDate: a.workDate,
+    headcount,
+    laborHours,
+    workers,
+    status: a.status === "confirmed" ? "confirmed" : "declared",
+    note: (a.note ?? "").trim(),
+    createdByUserId: a.createdByUserId ?? null,
+    confirmedByUserId: a.confirmedByUserId ?? null,
+    confirmedAt: a.confirmedAt ?? null,
+  };
+}
+
+function normalizeEquipmentLog(
+  e: Partial<CrewEquipmentLog> &
+    Pick<CrewEquipmentLog, "id" | "attendanceId" | "equipmentKey">,
+): CrewEquipmentLog | null {
+  if (!e?.id || !e.attendanceId || !e.equipmentKey) return null;
+  return {
+    id: e.id,
+    attendanceId: e.attendanceId,
+    equipmentKey: e.equipmentKey,
+    equipmentLabel: (e.equipmentLabel ?? "").trim(),
+    quantity: Math.max(0, Math.floor(Number(e.quantity) || 0)),
+    hours: Math.max(0, Number(e.hours) || 0),
   };
 }
 

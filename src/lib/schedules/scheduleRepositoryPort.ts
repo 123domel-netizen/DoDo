@@ -124,6 +124,47 @@ export interface ScheduleRepository {
   upsertCrew(crew: Omit<PreviewCrew, "id"> & { id?: string }): PreviewCrew;
   deleteCrew(id: string): { ok: true } | { ok: false; error: string };
 
+  listAttendance(
+    from: string,
+    to: string,
+    opts?: { projectIds?: string[] | "all"; companyKey?: string },
+  ): import("@/lib/projectsPreview/types").CrewAttendance[];
+
+  upsertCrewAttendance(
+    input: Omit<
+      import("@/lib/projectsPreview/types").CrewAttendance,
+      | "id"
+      | "orgId"
+      | "status"
+      | "createdByUserId"
+      | "confirmedByUserId"
+      | "confirmedAt"
+      | "workers"
+      | "headcount"
+      | "laborHours"
+    > & {
+      id?: string;
+      status?: import("@/lib/projectsPreview/types").CrewAttendanceStatus;
+      /** When set, replaces people rows and recomputes headcount / RH. */
+      workers?: import("@/lib/projectsPreview/types").CrewWorkerShift[];
+      headcount?: number;
+      laborHours?: number;
+      /** When omitted, existing equipment logs are kept. */
+      equipment?: Array<
+        Omit<
+          import("@/lib/projectsPreview/types").CrewEquipmentLog,
+          "id" | "attendanceId"
+        > & { id?: string }
+      >;
+    },
+  ): import("@/lib/projectsPreview/types").CrewAttendance;
+
+  deleteCrewAttendance(id: string): void;
+  setAttendanceStatus(
+    id: string,
+    status: import("@/lib/projectsPreview/types").CrewAttendanceStatus,
+  ): void;
+
   upsertScheduleBlock(
     block: Omit<ScheduleBlock, "id"> & { id?: string },
   ): ScheduleBlock;
