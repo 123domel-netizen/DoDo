@@ -8,7 +8,7 @@ Zakładka **Harmonogramy** jest zawsze w UI.
 
 | Dane | Warunek |
 |------|---------|
-| Supabase (wspólne dla zespołu) | zalogowany użytkownik + aktywna org + migracje `0054` + `0057` + `0058` |
+| Supabase (wspólne dla zespołu) | zalogowany użytkownik + aktywna org + migracje `0054` + `0057` + `0058` + `0060` |
 | LocalAdapter (przeglądarka) | brak sesji / sandbox `VITE_PROJECTS_PREVIEW=1` / brak cloud config |
 
 ## Adaptery
@@ -28,7 +28,9 @@ Zakładka **Obecność** (obok Brygady):
 
 Tabele: `construction_crew_attendance` (+ `workers` jsonb, migracja `0058`), `construction_crew_equipment_logs`.
 
+**RLS:** członek org widzi i edytuje obecność całej firmy (`0060_crew_attendance_org_visibility.sql`) — wcześniej tylko uczestnik budowy, więc wpisy koleżanki znikały u osób spoza tej budowy.
+
 ## Włączenie cloud
 
-1. Migracje `0054`, `0057`, `0058` na remote (`supabase db push`) — bez `0057` obecność **nie zapisuje się w chmurze** (wpis miga i znika po reload).
+1. Migracje `0054`, `0057`, `0058`, `0060` na remote (`supabase db push`) — bez `0057` obecność **nie zapisuje się w chmurze** (wpis miga i znika po reload); bez `0060` obecność widać tylko na budowach, w których jesteś uczestnikiem.
 2. Zaloguj się — Harmonogramy zapisują się w Supabase dla aktywnej org
