@@ -30,5 +30,5 @@ Tabele: `construction_crew_attendance` (+ `workers` jsonb, migracja `0058`), `co
 
 ## Włączenie cloud
 
-1. Migracje `0054`, `0057`, `0058` na remote (`supabase db push`)
+1. Migracje `0054`, `0057`, `0058` na remote (`supabase db push`) — bez `0057` obecność **nie zapisuje się w chmurze** (wpis miga i znika po reload).
 2. Zaloguj się — Harmonogramy zapisują się w Supabase dla aktywnej org

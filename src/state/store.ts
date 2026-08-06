@@ -294,6 +294,17 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     settings.view = "eleven";
     settings.settingsVersion = 17;
   }
+  if ((settings.settingsVersion ?? 0) < 18) {
+    if (
+      settings.mainAreaMode !== "dashboard" &&
+      settings.mainAreaMode !== "calendar" &&
+      settings.mainAreaMode !== "projects" &&
+      settings.mainAreaMode !== "attendance"
+    ) {
+      settings.mainAreaMode = "calendar";
+    }
+    settings.settingsVersion = 18;
+  }
   return { settings, groups, items, activeGroupFilter, tags, myTagIdsByItem };
 }
 

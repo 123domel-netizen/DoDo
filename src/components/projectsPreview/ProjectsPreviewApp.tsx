@@ -16,6 +16,7 @@ import {
 import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
+import { useStore } from "@/state/store";
 import type { ScheduleEventKind } from "@/lib/projectsPreview/types";
 import { AttendanceWeekView } from "./AttendanceWeekView";
 import { CatalogView } from "./CatalogView";
@@ -85,6 +86,8 @@ interface ProjectsPreviewAppProps {
   onClose: () => void;
   /** Render inside main canvas (calendar slot) instead of fullscreen portal. */
   embedded?: boolean;
+  /** Entry section when opened from CalendarNav (Harmonogramy / Obecności). */
+  initialSection?: "board" | "attendance";
 }
 
 /**
@@ -94,14 +97,16 @@ interface ProjectsPreviewAppProps {
 export function ProjectsPreviewApp({
   onClose,
   embedded = false,
+  initialSection = "board",
 }: ProjectsPreviewAppProps) {
   const isMobile = useIsMobile();
   const repo = useProjectsPreviewRepo();
-  const [view, setView] = useState<ProjectsPreviewView>({
-    name: "board",
-    mode: "allBuilds",
-    projectIds: "all",
-  });
+  const setSettings = useStore((s) => s.setSettings);
+  const [view, setView] = useState<ProjectsPreviewView>(() =>
+    initialSection === "attendance"
+      ? { name: "attendance" }
+      : { name: "board", mode: "allBuilds", projectIds: "all" },
+  );
   /** Row/day focused after a jump onto the board. */
   const [highlight, setHighlight] = useState<{
     blockId: string | null;
@@ -168,7 +173,29 @@ export function ProjectsPreviewApp({
         projectIds: memory.current.boardProjectIds,
       });
     }
+    if (embedded) {
+      setSettings({
+        mainAreaMode: section === "attendance" ? "attendance" : "projects",
+      });
+    }
   };
+
+  useEffect(() => {
+    if (initialSection === "attendance") {
+      setView((v) =>
+        primaryOf(v) === "attendance" ? v : { name: "attendance" },
+      );
+      return;
+    }
+    setView((v) => {
+      if (primaryOf(v) !== "attendance") return v;
+      return {
+        name: "board",
+        mode: memory.current.boardMode,
+        projectIds: memory.current.boardProjectIds,
+      };
+    });
+  }, [initialSection]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -424,7 +451,7 @@ export function ProjectsPreviewApp({
               <div
                 id={SCHEDULE_TOOLBAR_SLOT_ID}
                 className={
-                  view.name === "board"
+                  view.name === "board" || view.name === "attendance"
                     ? "flex min-w-0 flex-1 items-center"
                     : "hidden"
                 }
@@ -618,7 +645,7 @@ export function ProjectsPreviewApp({
               <div
                 id={SCHEDULE_TOOLBAR_SLOT_ID}
                 className={
-                  view.name === "board"
+                  view.name === "board" || view.name === "attendance"
                     ? "flex min-w-0 flex-1 items-center"
                     : "hidden"
                 }

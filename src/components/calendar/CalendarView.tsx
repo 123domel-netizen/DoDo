@@ -21,6 +21,7 @@ import type { CalendarViewKind, Group } from "@/types";
 const SchedulesCanvas: ComponentType<{
   onClose: () => void;
   embedded?: boolean;
+  initialSection?: "board" | "attendance";
 }> = lazy(() =>
   import("@/components/projectsPreview/ProjectsPreviewApp").then((m) => ({
     default: m.ProjectsPreviewApp,
@@ -150,7 +151,10 @@ export function CalendarView({
   const schedulesAvailable = useSchedulesAvailable();
   const showMainDashboard = !isMobile && settings.mainAreaMode === "dashboard";
   const showProjects =
-    !isMobile && settings.mainAreaMode === "projects" && schedulesAvailable;
+    !isMobile &&
+    (settings.mainAreaMode === "projects" ||
+      settings.mainAreaMode === "attendance") &&
+    schedulesAvailable;
 
   return (
     <div
@@ -168,6 +172,9 @@ export function CalendarView({
         >
           <SchedulesCanvas
             embedded
+            initialSection={
+              settings.mainAreaMode === "attendance" ? "attendance" : "board"
+            }
             onClose={() => setSettings({ mainAreaMode: "calendar" })}
           />
         </Suspense>

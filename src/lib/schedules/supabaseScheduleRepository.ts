@@ -98,6 +98,10 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   private pendingDeletedEventIds = new Set<string>();
   private pendingDeletedCrewIds = new Set<string>();
   private pendingDeletedCategoryKeys = new Set<string>();
+  private pendingDeletedAttendanceIds = new Set<string>();
+  /** Optimistic attendance upserts — reload must not wipe unsynced RH. */
+  private pendingAttendance = new Map<string, CrewAttendance>();
+  private pendingEquipment = new Map<string, CrewEquipmentLog[]>();
   /** Optimistic date moves — focus reload must not snap bars back. */
   private pendingBlockDates = new Map<
     string,
@@ -557,12 +561,21 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     const logs = this.inner
       .getState()
       .crewEquipmentLogs.filter((e) => e.attendanceId === row.id);
+    this.pendingDeletedAttendanceIds.delete(row.id);
+    this.pendingAttendance.set(row.id, { ...row });
+    this.pendingEquipment.set(
+      row.id,
+      logs.map((e) => ({ ...e })),
+    );
     void this.syncAttendance(row, logs);
     return row;
   }
 
   deleteCrewAttendance(id: string) {
     this.inner.deleteCrewAttendance(id);
+    this.pendingAttendance.delete(id);
+    this.pendingEquipment.delete(id);
+    this.pendingDeletedAttendanceIds.add(id);
     void this.persistAttendanceDeletion(id);
   }
 
@@ -573,6 +586,11 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     const logs = this.inner
       .getState()
       .crewEquipmentLogs.filter((e) => e.attendanceId === id);
+    this.pendingAttendance.set(row.id, { ...row });
+    this.pendingEquipment.set(
+      row.id,
+      logs.map((e) => ({ ...e })),
+    );
     void this.syncAttendance(row, logs);
   }
 
@@ -581,66 +599,178 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
     logs: CrewEquipmentLog[],
   ) {
     if (!supabase) return;
-    const { error } = await supabase.from("construction_crew_attendance").upsert({
-      id: row.id,
-      org_id: this.orgId,
-      crew_id: row.crewId,
-      project_id: row.projectId,
-      work_date: row.workDate,
-      headcount: row.headcount,
-      labor_hours: row.laborHours,
-      workers: row.workers,
-      status: row.status,
-      note: row.note,
-      created_by: row.createdByUserId && isUuid(row.createdByUserId)
-        ? row.createdByUserId
-        : null,
-      confirmed_by:
-        row.confirmedByUserId && isUuid(row.confirmedByUserId)
-          ? row.confirmedByUserId
-          : null,
-      confirmed_at: row.confirmedAt,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) {
-      console.warn("[schedules] sync attendance failed:", error.message);
+    if (!isUuid(row.crewId) || !isUuid(row.projectId)) {
+      console.warn(
+        "[schedules] sync attendance skipped: crew/project id is not a UUID",
+        row.crewId,
+        row.projectId,
+      );
       return;
     }
+
+    // Reuse cloud row for unique (crew, project, day) so we don't dual-insert.
+    let cloudId = row.id;
+    const { data: existing, error: findErr } = await supabase
+      .from("construction_crew_attendance")
+      .select("id")
+      .eq("crew_id", row.crewId)
+      .eq("project_id", row.projectId)
+      .eq("work_date", row.workDate)
+      .maybeSingle();
+    if (findErr) {
+      console.warn(
+        "[schedules] lookup attendance failed:",
+        findErr.message,
+        "— czy migracja 0057 jest na remote?",
+      );
+      return;
+    }
+    if (existing?.id && isUuid(existing.id) && existing.id !== row.id) {
+      cloudId = existing.id;
+      this.adoptAttendanceId(row.id, cloudId);
+    } else if (!isUuid(cloudId)) {
+      cloudId = crypto.randomUUID();
+      this.adoptAttendanceId(row.id, cloudId);
+    }
+
+    const latest =
+      this.inner.getState().crewAttendance.find((a) => a.id === cloudId) ?? {
+        ...row,
+        id: cloudId,
+      };
+    const latestLogsRaw = this.inner
+      .getState()
+      .crewEquipmentLogs.filter((e) => e.attendanceId === cloudId);
+    const latestLogs = latestLogsRaw.length ? latestLogsRaw : logs;
+
+    const basePayload = {
+      id: cloudId,
+      org_id: this.orgId,
+      crew_id: latest.crewId,
+      project_id: latest.projectId,
+      work_date: latest.workDate,
+      headcount: latest.headcount,
+      labor_hours: latest.laborHours,
+      status: latest.status,
+      note: latest.note,
+      created_by:
+        latest.createdByUserId && isUuid(latest.createdByUserId)
+          ? latest.createdByUserId
+          : null,
+      confirmed_by:
+        latest.confirmedByUserId && isUuid(latest.confirmedByUserId)
+          ? latest.confirmedByUserId
+          : null,
+      confirmed_at: latest.confirmedAt,
+      updated_at: new Date().toISOString(),
+    };
+
+    let { error } = await supabase.from("construction_crew_attendance").upsert({
+      ...basePayload,
+      workers: latest.workers,
+    });
+    if (error && /workers/i.test(error.message)) {
+      console.warn(
+        "[schedules] attendance.workers missing — sync without column (run 0058):",
+        error.message,
+      );
+      ({ error } = await supabase
+        .from("construction_crew_attendance")
+        .upsert(basePayload));
+    }
+    if (error) {
+      console.warn("[schedules] sync attendance failed:", error.message);
+      this.pendingAttendance.set(cloudId, { ...latest });
+      this.pendingEquipment.set(
+        cloudId,
+        latestLogs.map((e) => ({ ...e })),
+      );
+      return;
+    }
+
     const { error: delErr } = await supabase
       .from("construction_crew_equipment_logs")
       .delete()
-      .eq("attendance_id", row.id);
+      .eq("attendance_id", cloudId);
     if (delErr) {
       console.warn("[schedules] clear equipment failed:", delErr.message);
       return;
     }
-    if (!logs.length) return;
-    const { error: insErr } = await supabase
-      .from("construction_crew_equipment_logs")
-      .insert(
-        logs.map((e) => ({
-          id: e.id,
-          attendance_id: row.id,
-          equipment_key: e.equipmentKey,
-          equipment_label: e.equipmentLabel,
-          quantity: e.quantity,
-          hours: e.hours,
-        })),
+    if (latestLogs.length) {
+      const { error: insErr } = await supabase
+        .from("construction_crew_equipment_logs")
+        .insert(
+          latestLogs.map((e) => ({
+            id: asCloudId(e.id),
+            attendance_id: cloudId,
+            equipment_key: e.equipmentKey,
+            equipment_label: e.equipmentLabel,
+            quantity: e.quantity,
+            hours: e.hours,
+          })),
+        );
+      if (insErr) {
+        console.warn("[schedules] sync equipment failed:", insErr.message);
+        return;
+      }
+    }
+
+    this.pendingAttendance.delete(cloudId);
+    this.pendingEquipment.delete(cloudId);
+    this.pendingDeletedAttendanceIds.delete(cloudId);
+  }
+
+  /** Point local attendance + equipment + pending maps at the cloud id. */
+  private adoptAttendanceId(fromId: string, toId: string) {
+    if (fromId === toId) return;
+    const state = this.inner.getState();
+    const row = state.crewAttendance.find((a) => a.id === fromId);
+    if (!row) return;
+    const crewAttendance = [
+      ...state.crewAttendance.filter((a) => a.id !== fromId && a.id !== toId),
+      { ...row, id: toId },
+    ];
+    const crewEquipmentLogs = state.crewEquipmentLogs.map((e) =>
+      e.attendanceId === fromId ? { ...e, attendanceId: toId } : e,
+    );
+    this.inner.hydrate({
+      ...state,
+      crewAttendance,
+      crewEquipmentLogs,
+    });
+    const pendingRow = this.pendingAttendance.get(fromId);
+    if (pendingRow) {
+      this.pendingAttendance.delete(fromId);
+      this.pendingAttendance.set(toId, { ...pendingRow, id: toId });
+    }
+    const pendingLogs = this.pendingEquipment.get(fromId);
+    if (pendingLogs) {
+      this.pendingEquipment.delete(fromId);
+      this.pendingEquipment.set(
+        toId,
+        pendingLogs.map((e) => ({ ...e, attendanceId: toId })),
       );
-    if (insErr) {
-      console.warn("[schedules] sync equipment failed:", insErr.message);
+    }
+    if (this.pendingDeletedAttendanceIds.has(fromId)) {
+      this.pendingDeletedAttendanceIds.delete(fromId);
+      this.pendingDeletedAttendanceIds.add(toId);
     }
   }
 
   private async persistAttendanceDeletion(id: string) {
-    if (!supabase || !isUuid(id)) return;
+    if (!supabase || !isUuid(id)) {
+      if (!isUuid(id)) this.pendingDeletedAttendanceIds.delete(id);
+      return;
+    }
     const { error } = await supabase
       .from("construction_crew_attendance")
       .delete()
       .eq("id", id);
     if (error) {
       console.warn("[schedules] delete attendance failed:", error.message);
+      return;
     }
+    this.pendingDeletedAttendanceIds.delete(id);
   }
 
   private async persistCrewDeletion(id: string) {
@@ -979,6 +1109,31 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       ),
       crews: bundle.crews.filter((c) => !this.pendingDeletedCrewIds.has(c.id)),
       categoryMeta,
+      crewAttendance: (() => {
+        const byId = new Map(
+          bundle.crewAttendance
+            .filter((a) => !this.pendingDeletedAttendanceIds.has(a.id))
+            .map((a) => [a.id, a]),
+        );
+        for (const [id, row] of this.pendingAttendance) {
+          if (this.pendingDeletedAttendanceIds.has(id)) continue;
+          byId.set(id, row);
+        }
+        return [...byId.values()];
+      })(),
+      crewEquipmentLogs: (() => {
+        const pendingAttIds = new Set(this.pendingEquipment.keys());
+        const logs = bundle.crewEquipmentLogs.filter(
+          (e) =>
+            !this.pendingDeletedAttendanceIds.has(e.attendanceId) &&
+            !pendingAttIds.has(e.attendanceId),
+        );
+        for (const [attId, pending] of this.pendingEquipment) {
+          if (this.pendingDeletedAttendanceIds.has(attId)) continue;
+          logs.push(...pending);
+        }
+        return logs;
+      })(),
     };
   }
 
@@ -1057,6 +1212,20 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       });
       if (!error) this.pendingCategoryMeta.delete(key);
       else console.warn("[schedules] flush category meta upsert failed:", error.message);
+    }
+
+    for (const id of [...this.pendingDeletedAttendanceIds].filter(isUuid)) {
+      const { error } = await supabase
+        .from("construction_crew_attendance")
+        .delete()
+        .eq("id", id);
+      if (!error) this.pendingDeletedAttendanceIds.delete(id);
+      else console.warn("[schedules] flush attendance delete failed:", error.message);
+    }
+
+    for (const [id, row] of [...this.pendingAttendance]) {
+      const logs = this.pendingEquipment.get(id) ?? [];
+      await this.syncAttendance(row, logs);
     }
   }
 
@@ -1390,6 +1559,14 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
       .select("*")
       .eq("org_id", orgId),
   ]);
+
+  if (attendanceRes.error) {
+    console.warn(
+      "[schedules] load attendance failed:",
+      attendanceRes.error.message,
+      "— uruchom migracje 0057/0058 (supabase db push).",
+    );
+  }
 
   const attendanceIds = (attendanceRes.data ?? []).map((a) => a.id as string);
   const equipmentRes =

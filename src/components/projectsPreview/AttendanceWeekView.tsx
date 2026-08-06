@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Wrench } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import {
@@ -20,9 +21,12 @@ import { applyCrewAttendanceSave } from "@/lib/projectsPreview/applyAttendanceSa
 import type { CrewAttendance } from "@/lib/projectsPreview/types";
 import { AttendanceConfirmSheet } from "./AttendanceConfirmSheet";
 import { CrewAttendanceSheet } from "./CrewAttendanceSheet";
+import { SCHEDULE_TOOLBAR_SLOT_ID } from "./ScheduleTab";
 
 interface AttendanceWeekViewProps {
   projectIds?: string[] | "all";
+  /** Render range controls into ProjectsPreviewApp header slot. */
+  chromeInParent?: boolean;
 }
 
 const DOW = ["Nd", "Pn", "Wt", "Śr", "Cz", "Pt", "So"] as const;
@@ -98,11 +102,13 @@ function cellTitle(cell: AttendanceDayCell, empty: boolean): string {
 /** Company × day attendance board with 1 / 5 / 11 / month ranges. */
 export function AttendanceWeekView({
   projectIds = "all",
+  chromeInParent = true,
 }: AttendanceWeekViewProps) {
   const repo = useProjectsPreviewRepo();
   const state = repo.getState();
   const today = todayIso();
   const isMobile = useIsMobile();
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
   const [rangeMode, setRangeMode] = useState<AttendanceRangeMode>(() =>
     isMobile ? "day" : "days11",
   );
@@ -225,68 +231,90 @@ export function AttendanceWeekView({
           ? 480
           : undefined;
 
+  useLayoutEffect(() => {
+    if (!chromeInParent) {
+      setToolbarSlot(null);
+      return;
+    }
+    setToolbarSlot(document.getElementById(SCHEDULE_TOOLBAR_SLOT_ID));
+  }, [chromeInParent]);
+
+  const toolbar = (
+    <div
+      className={
+        chromeInParent
+          ? "flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto thin-scrollbar"
+          : "flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line px-2 py-1.5"
+      }
+    >
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          onClick={() =>
+            setFocusDate((d) => shiftAttendanceFocus(d, rangeMode, -1))
+          }
+          className="rounded-md p-1 text-ink-faint hover:bg-surface-raised hover:text-ink"
+          aria-label="Poprzedni okres"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            setFocusDate((d) => shiftAttendanceFocus(d, rangeMode, 1))
+          }
+          className="rounded-md p-1 text-ink-faint hover:bg-surface-raised hover:text-ink"
+          aria-label="Następny okres"
+        >
+          <ChevronRight size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={() => setFocusDate(today)}
+          className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-accent hover:bg-accent/10"
+        >
+          Dziś
+        </button>
+      </div>
+
+      <div
+        className="inline-flex shrink-0 rounded-md border border-line bg-surface-raised/60 p-0.5"
+        role="group"
+        aria-label="Zakres widoku"
+      >
+        {ATTENDANCE_RANGE_MODES.map((mode) => {
+          const active = mode === rangeMode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              title={ATTENDANCE_RANGE_TITLE[mode]}
+              onClick={() => setRangeMode(mode)}
+              className={`min-w-[1.6rem] rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums transition ${
+                active
+                  ? "bg-accent text-white"
+                  : "text-ink-faint hover:text-ink"
+              }`}
+            >
+              {ATTENDANCE_RANGE_LABEL[mode]}
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="min-w-0 flex-1 truncate text-[11px] text-ink-faint sm:text-right">
+        {rangeCaption}
+      </p>
+    </div>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() =>
-              setFocusDate((d) => shiftAttendanceFocus(d, rangeMode, -1))
-            }
-            className="rounded-lg p-1.5 text-ink-faint hover:bg-surface-raised hover:text-ink"
-            aria-label="Poprzedni okres"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              setFocusDate((d) => shiftAttendanceFocus(d, rangeMode, 1))
-            }
-            className="rounded-lg p-1.5 text-ink-faint hover:bg-surface-raised hover:text-ink"
-            aria-label="Następny okres"
-          >
-            <ChevronRight size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setFocusDate(today)}
-            className="rounded-lg px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/10"
-          >
-            Dziś
-          </button>
-        </div>
-
-        <div
-          className="inline-flex rounded-lg border border-line bg-surface-raised/60 p-0.5"
-          role="group"
-          aria-label="Zakres widoku"
-        >
-          {ATTENDANCE_RANGE_MODES.map((mode) => {
-            const active = mode === rangeMode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                title={ATTENDANCE_RANGE_TITLE[mode]}
-                onClick={() => setRangeMode(mode)}
-                className={`min-w-[1.75rem] rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums transition ${
-                  active
-                    ? "bg-accent text-white"
-                    : "text-ink-faint hover:text-ink"
-                }`}
-              >
-                {ATTENDANCE_RANGE_LABEL[mode]}
-              </button>
-            );
-          })}
-        </div>
-
-        <p className="max-w-full truncate text-[12px] text-ink-light sm:text-right">
-          {rangeCaption}
-        </p>
-      </div>
+      {chromeInParent && toolbarSlot
+        ? createPortal(toolbar, toolbarSlot)
+        : !chromeInParent
+          ? toolbar
+          : null}
 
       <div className="min-h-0 flex-1 overflow-auto thin-scrollbar">
         {state.crews.length === 0 ? (

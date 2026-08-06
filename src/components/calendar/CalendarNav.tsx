@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
-import type { CalendarViewKind } from "@/types";
+import type { CalendarViewKind, MainAreaMode } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
 import { fmt } from "@/lib/format";
@@ -31,6 +31,10 @@ function restoreHubLayoutAfterSchedules() {
   });
 }
 
+function isSchedulesMode(mode: MainAreaMode): boolean {
+  return mode === "projects" || mode === "attendance";
+}
+
 /** Pasek nawigacji kalendarza (desktop) — nad siatką / przeglądem. */
 export function CalendarNav() {
   const settings = useStore((s) => s.settings);
@@ -38,25 +42,26 @@ export function CalendarNav() {
   const schedulesAvailable = useSchedulesAvailable();
   const anchor = new Date(settings.anchorDate);
   const isDashboard = settings.mainAreaMode === "dashboard";
-  const isProjects = settings.mainAreaMode === "projects";
-  const showCalendarChrome = !isDashboard && !isProjects;
+  const isAttendance = settings.mainAreaMode === "attendance";
+  const isSchedules = isSchedulesMode(settings.mainAreaMode);
+  const showCalendarChrome = !isDashboard && !isSchedules;
 
-  const openSchedules = () => {
-    if (!isProjects) {
+  const enterSchedules = (mode: "projects" | "attendance") => {
+    if (!isSchedules) {
       const s = useChatStore.getState();
       hubLayoutBeforeSchedules = {
         hubExpanded: s.hubExpanded,
         hubCollapsed: s.hubCollapsed,
       };
     }
-    setSettings({ mainAreaMode: "projects" });
+    setSettings({ mainAreaMode: mode });
     // Tylko przy kliknięciu w nav: hub z powiększonego → normalny (nie do paska).
     useChatStore.setState({ hubExpanded: false, hubCollapsed: false });
   };
 
   const leaveSchedulesTo = (patch: Parameters<typeof setSettings>[0]) => {
     setSettings(patch);
-    if (isProjects) restoreHubLayoutAfterSchedules();
+    if (isSchedules) restoreHubLayoutAfterSchedules();
   };
 
   const shift = (dir: number) => {
@@ -122,9 +127,9 @@ export function CalendarNav() {
         </div>
       )}
 
-      {isProjects && (
+      {isSchedules && (
         <div className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
-          Harmonogramy
+          {isAttendance ? "Obecności" : "Harmonogramy"}
         </div>
       )}
 
@@ -141,19 +146,34 @@ export function CalendarNav() {
           Przegląd
         </button>
         {schedulesAvailable ? (
-          <button
-            type="button"
-            onClick={openSchedules}
-            className={`rounded px-2 py-0.5 text-xs transition ${
-              settings.mainAreaMode === "projects"
-                ? "bg-accent text-white shadow-glow"
-                : "text-ink-light hover:text-ink"
-            }`}
-            aria-label="Harmonogramy"
-            title="Harmonogramy"
-          >
-            Harmonogramy
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => enterSchedules("attendance")}
+              className={`rounded px-2 py-0.5 text-xs transition ${
+                isAttendance
+                  ? "bg-accent text-white shadow-glow"
+                  : "text-ink-light hover:text-ink"
+              }`}
+              aria-label="Obecności"
+              title="Obecności"
+            >
+              Obecności
+            </button>
+            <button
+              type="button"
+              onClick={() => enterSchedules("projects")}
+              className={`rounded px-2 py-0.5 text-xs transition ${
+                settings.mainAreaMode === "projects"
+                  ? "bg-accent text-white shadow-glow"
+                  : "text-ink-light hover:text-ink"
+              }`}
+              aria-label="Harmonogramy"
+              title="Harmonogramy"
+            >
+              Harmonogramy
+            </button>
+          </>
         ) : null}
         <span className="mx-0.5 h-3 w-px bg-line" aria-hidden />
         {VIEWS.map((v) => (
@@ -165,7 +185,7 @@ export function CalendarNav() {
             }
             className={`rounded px-2 py-0.5 text-xs transition ${
               !isDashboard &&
-              settings.mainAreaMode !== "projects" &&
+              !isSchedules &&
               settings.view === v.key
                 ? "bg-accent text-white shadow-glow"
                 : "text-ink-light hover:text-ink"

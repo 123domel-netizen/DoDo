@@ -6,6 +6,7 @@ import {
   CalendarClock,
   CheckSquare,
   ListChecks,
+  Plus,
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { Item, UserTag } from "@/types";
@@ -15,6 +16,7 @@ import {
   itemDurationMinutes,
 } from "@/lib/factory";
 import { fmt, tint } from "@/lib/format";
+import { groupIdForNewItem } from "@/lib/groups";
 import { isSharedItem, SHARE_CALENDAR_COLOR } from "@/lib/share";
 import { effectiveReminders } from "@/lib/reminders";
 import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
@@ -24,6 +26,8 @@ import { itemSupportsTodoDone } from "@/lib/items";
 import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
 import { ScheduleDashboardWorksSection } from "@/components/dashboard/ScheduleDashboardWorkRow";
 import { DASHBOARD_LEAD_COL } from "@/components/dashboard/dashboardRowLayout";
+import { MobileSectionToggle } from "@/components/mobile/dashboard/MobileSectionToggle";
+import { useMobileSectionExpanded } from "@/components/mobile/dashboard/sectionCollapse";
 
 /** Desktop side-panel „Dziś” — ta sama logika co MobileDashboard. */
 export function TodayDashboardPanel() {
@@ -32,15 +36,49 @@ export function TodayDashboardPanel() {
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
   const patchItem = useStore((s) => s.patchItem);
+  const startDraft = useStore((s) => s.startDraft);
   const setSettings = useStore((s) => s.setSettings);
+
+  const [eventsExpanded, toggleEvents] = useMobileSectionExpanded(
+    "sidebar-events",
+    true,
+  );
+  const [tasksExpanded, toggleTasks] = useMobileSectionExpanded(
+    "sidebar-tasks",
+    true,
+  );
 
   const hasTodaySection = todayEvents.length > 0;
   const hasUpcomingSection = upcomingEvents.length > 0;
+  const eventsCount = todayEvents.length + upcomingEvents.length;
+  const eventsEmpty = eventsCount === 0;
+  const tasksEmpty = tasks.length === 0;
 
   const tagsForItem = (item: Item) => {
     const baseId = baseItemId(item.id);
     const source = itemsMap[baseId] ?? item;
     return resolveItemTags(effectiveTagIds(source, myTagIdsByItem), tagsMap);
+  };
+
+  const addEvent = () => {
+    const start = new Date();
+    start.setMinutes(Math.round(start.getMinutes() / 30) * 30, 0, 0);
+    startDraft({
+      type: "event",
+      start: start.toISOString(),
+      end: new Date(start.getTime() + 3600000).toISOString(),
+      groupId: groupIdForNewItem(),
+    });
+  };
+
+  const addTask = () => {
+    startDraft({
+      type: "task",
+      hasDueDate: false,
+      showInTodo: true,
+      showInCalendar: false,
+      groupId: groupIdForNewItem(),
+    });
   };
 
   return (
@@ -51,19 +89,39 @@ export function TodayDashboardPanel() {
 
       <section className="border-b border-line p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
         <div
-          className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium uppercase tracking-wide text-ink-faint ${
-            hasTodaySection || hasUpcomingSection ? "mb-1.5" : "mb-1"
+          className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+            !eventsExpanded || eventsEmpty ? "mb-0" : "mb-1.5"
           }`}
         >
           <CalendarClock size={14} className="shrink-0" />
-          <span className="shrink-0 text-ink-light">Wydarzenia nadchodzące</span>
-          {!hasTodaySection && !hasUpcomingSection && (
-            <span className="text-xs font-normal normal-case text-ink-faint">
-              Brak wydarzeń
+          <span className="min-w-0 shrink truncate text-sm font-medium uppercase tracking-wide text-ink-light">
+            Wydarzenia nadchodzące
+          </span>
+          <span className="min-w-0 flex-1" aria-hidden />
+          {!eventsExpanded && eventsCount > 0 ? (
+            <span className="rounded-full bg-surface-overlay px-1.5 py-px text-[10px] font-semibold tabular-nums normal-case tracking-normal text-ink-light">
+              {eventsCount}
             </span>
-          )}
+          ) : null}
+          {eventsExpanded && eventsEmpty ? (
+            <span className="text-[10px] font-normal normal-case tracking-normal text-ink-faint">
+              Brak
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={addEvent}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
+          >
+            <Plus size={12} strokeWidth={2.5} />
+            Dodaj
+          </button>
+          <MobileSectionToggle
+            expanded={eventsExpanded}
+            onToggle={toggleEvents}
+          />
         </div>
-        {hasTodaySection ? (
+        {eventsExpanded && hasTodaySection ? (
           <>
             <div className="mb-0.5 text-[10px] font-medium text-ink-faint">
               Dzisiaj
@@ -86,7 +144,7 @@ export function TodayDashboardPanel() {
             </div>
           </>
         ) : null}
-        {hasUpcomingSection ? (
+        {eventsExpanded && hasUpcomingSection ? (
           <>
             <div
               className={`mb-0.5 text-[10px] font-medium text-ink-faint ${
@@ -117,13 +175,37 @@ export function TodayDashboardPanel() {
       </section>
 
       <section className="flex-1 p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
-        <div className="mb-1.5 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-ink-faint">
-          <ListChecks size={14} />
-          <span className="text-ink-light">Zadania</span>
+        <div
+          className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint ${
+            !tasksExpanded || tasksEmpty ? "mb-0" : "mb-1.5"
+          }`}
+        >
+          <ListChecks size={14} className="shrink-0" />
+          <span className="min-w-0 shrink truncate text-sm font-medium uppercase tracking-wide text-ink-light">
+            Zadania
+          </span>
+          <span className="min-w-0 flex-1" aria-hidden />
+          {!tasksExpanded && tasks.length > 0 ? (
+            <span className="rounded-full bg-surface-overlay px-1.5 py-px text-[10px] font-semibold tabular-nums normal-case tracking-normal text-ink-light">
+              {tasks.length}
+            </span>
+          ) : null}
+          {tasksExpanded && tasksEmpty ? (
+            <span className="text-[10px] font-normal normal-case tracking-normal text-ink-faint">
+              Brak
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={addTask}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-grad px-2 py-1 text-[10px] font-semibold normal-case tracking-normal text-white shadow-glow transition hover:brightness-110"
+          >
+            <Plus size={12} strokeWidth={2.5} />
+            Dodaj
+          </button>
+          <MobileSectionToggle expanded={tasksExpanded} onToggle={toggleTasks} />
         </div>
-        {tasks.length === 0 ? (
-          <p className="px-1 py-4 text-center text-sm text-ink-faint">Brak zadań</p>
-        ) : (
+        {tasksExpanded && !tasksEmpty ? (
           <div className="space-y-px">
             {tasks.map((it) => (
               <DashboardTodoRow
@@ -151,7 +233,7 @@ export function TodayDashboardPanel() {
               />
             ))}
           </div>
-        )}
+        ) : null}
       </section>
     </div>
   );
