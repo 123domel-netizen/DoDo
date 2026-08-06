@@ -74,6 +74,20 @@ describe("R2 key scope", () => {
     const k = attachmentKey(ORG, CONV, MSG, ATT, "raport.pdf");
     expect(k.startsWith(`hot/teams/${ORG}/attachments/${CONV}/${MSG}/${ATT}-`)).toBe(true);
   });
+
+  it("attachment keys strip Polish diacritics (Supabase/S3 safe)", () => {
+    const k = attachmentKey(
+      ORG,
+      CONV,
+      MSG,
+      ATT,
+      "Wniosek o pozwolenie na użytkowanie (PB-17).docx",
+    );
+    expect(k).toBe(
+      `hot/teams/${ORG}/attachments/${CONV}/${MSG}/${ATT}-Wniosek_o_pozwolenie_na_uzytkowanie_PB-17.docx`,
+    );
+    expect(k).not.toMatch(/[ąćęłńóśźż ]/i);
+  });
 });
 
 describe("pipeline policy", () => {

@@ -9,6 +9,7 @@ import {
   clientBuildAllowsR2,
   resolveAttachmentPipeline,
 } from "@/lib/media/pipelinePolicy";
+import { storageSafeFileName } from "@/lib/media/storageSafeFileName";
 
 export type AttachSendMode = "photo" | "file";
 /** Office: kopia w czacie vs plik publiczny do edycji na SharePoint. */
@@ -46,7 +47,7 @@ function isRasterImageMime(type: string): boolean {
 }
 
 function sanitizeFileName(name: string): string {
-  return name.replace(/[^\w.\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ ]+/g, "_").slice(0, 80) || "plik";
+  return storageSafeFileName(name);
 }
 
 function fileStem(name: string): string {

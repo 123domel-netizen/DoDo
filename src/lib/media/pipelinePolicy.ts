@@ -3,6 +3,8 @@
  * Używana przez testy i jako kontrakt dla Edge / Workera.
  */
 
+import { storageSafeFileName } from "@/lib/media/storageSafeFileName";
+
 export type MediaPipeline = "legacy_sp" | "r2_sp";
 
 export const GLOBAL_DEFAULT_PIPELINE: MediaPipeline = "legacy_sp";
@@ -236,7 +238,7 @@ export function attachmentKey(
   assertUuidLike(conversationId, "conversationId");
   assertUuidLike(messageId, "messageId");
   assertUuidLike(attId, "attId");
-  const safe = fileName.replace(/[^a-zA-Z0-9._\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+/g, "_").slice(0, 80);
+  const safe = storageSafeFileName(fileName);
   return `hot/teams/${orgId}/attachments/${conversationId}/${messageId}/${attId}-${safe}`;
 }
 

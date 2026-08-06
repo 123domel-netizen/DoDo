@@ -2,6 +2,8 @@
 // Sekrety Edge: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
 // (opcjonalnie R2_PUBLIC_HOST — jeśli custom domain dla GET; domyślnie endpoint S3).
 
+import { storageSafeFileName } from "./storageSafeFileName.ts";
+
 const ACCOUNT_ID = Deno.env.get("R2_ACCOUNT_ID") ?? "";
 const ACCESS_KEY = Deno.env.get("R2_ACCESS_KEY_ID") ?? "";
 const SECRET_KEY = Deno.env.get("R2_SECRET_ACCESS_KEY") ?? "";
@@ -259,6 +261,6 @@ export function attachmentKey(
   attId: string,
   fileName: string,
 ): string {
-  const safe = fileName.replace(/[^a-zA-Z0-9._\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+/g, "_").slice(0, 80);
+  const safe = storageSafeFileName(fileName);
   return `hot/teams/${orgId}/attachments/${conversationId}/${messageId}/${attId}-${safe}`;
 }
