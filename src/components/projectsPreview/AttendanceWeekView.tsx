@@ -615,17 +615,18 @@ function CrewRow({
                   <span className="inline-flex items-center gap-0.5 leading-none">
                     {cell.allConfirmed ? <Check size={9} /> : null}
                     {cell.headcount}
+                    <span className="text-[9px] font-normal text-ink-faint">
+                      {formatHours(cell.laborHours)}RH
+                    </span>
                   </span>
                   {hasEq ? (
                     <span className="mt-0.5 inline-flex items-center gap-0.5 text-[9px] font-normal leading-none text-ink-faint">
                       <Wrench size={8} />
-                      {formatHours(cell.equipmentHours)}
+                      {cell.equipmentQty}
+                      <span aria-hidden>·</span>
+                      {formatHours(cell.equipmentHours)}h
                     </span>
-                  ) : (
-                    <span className="mt-0.5 text-[9px] font-normal leading-none text-ink-faint">
-                      {formatHours(cell.laborHours)}RH
-                    </span>
-                  )}
+                  ) : null}
                 </>
               )}
             </button>

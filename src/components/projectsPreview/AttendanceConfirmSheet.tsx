@@ -40,6 +40,16 @@ function formatRh(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "");
 }
 
+type FlatPerson = {
+  key: string;
+  startTime: string | null;
+  endTime: string | null;
+  hours: number;
+  buildLabel: string;
+  /** Fallback when no shift times — show headcount line. */
+  summaryOnly?: boolean;
+};
+
 /** Read-only attendance summary + confirm / unconfirm status. */
 export function AttendanceConfirmSheet({
   crewLabel,
@@ -70,6 +80,90 @@ export function AttendanceConfirmSheet({
     }
     return map;
   }, [equipment]);
+
+  const crew = rows[0] ? crewById.get(rows[0].crewId) : undefined;
+
+  const people = useMemo(() => {
+    const out: FlatPerson[] = [];
+    for (const row of rows) {
+      const defaultProject = projectById.get(row.projectId);
+      const defaultLabel = defaultProject
+        ? projectLabel(defaultProject)
+        : "Budowa";
+      const workers = row.workers ?? [];
+      if (workers.length === 0) {
+        if (row.headcount > 0 || row.laborHours > 0) {
+          out.push({
+            key: `${row.id}-summary`,
+            startTime: null,
+            endTime: null,
+            hours: row.laborHours,
+            buildLabel: defaultLabel,
+            summaryOnly: true,
+          });
+        }
+        continue;
+      }
+      for (const w of workers) {
+        const pid = (w.projectId ?? "").trim() || row.projectId;
+        const p = projectById.get(pid);
+        out.push({
+          key: w.id,
+          startTime: w.startTime,
+          endTime: w.endTime,
+          hours: shiftHours(w.startTime, w.endTime),
+          buildLabel: p ? projectLabel(p) : defaultLabel,
+        });
+      }
+    }
+    return out;
+  }, [rows, projectById]);
+
+  const totalHeadcount = useMemo(() => {
+    let n = 0;
+    for (const row of rows) {
+      const workers = row.workers ?? [];
+      n += workers.length > 0 ? workers.length : row.headcount;
+    }
+    return n;
+  }, [rows]);
+  const totalRh = useMemo(() => {
+    let sum = 0;
+    for (const row of rows) {
+      const workers = row.workers ?? [];
+      sum +=
+        workers.length > 0 ? totalLaborHours(workers) : row.laborHours;
+    }
+    return sum;
+  }, [rows]);
+
+  const flatEquipment = useMemo(() => {
+    const out: {
+      key: string;
+      label: string;
+      quantity: number;
+      hours: number;
+      buildLabel: string;
+    }[] = [];
+    for (const row of rows) {
+      const project = projectById.get(row.projectId);
+      const build = project ? projectLabel(project) : "Budowa";
+      for (const e of equipmentByAttendance.get(row.id) ?? []) {
+        out.push({
+          key: e.id,
+          label:
+            e.equipmentLabel ||
+            (isEquipmentPresetKey(e.equipmentKey)
+              ? EQUIPMENT_PRESET_LABEL[e.equipmentKey]
+              : e.equipmentKey),
+          quantity: e.quantity,
+          hours: e.hours,
+          buildLabel: build,
+        });
+      }
+    }
+    return out;
+  }, [rows, equipmentByAttendance, projectById]);
 
   const [noteDrafts, setNoteDrafts] = useState(() =>
     Object.fromEntries(rows.map((r) => [r.id, r.note ?? ""])),
@@ -128,128 +222,125 @@ export function AttendanceConfirmSheet({
               </p>
             </InfoField>
 
-            {rows.map((row) => {
-              const crew = crewById.get(row.crewId);
-              const project = projectById.get(row.projectId);
-              const logs = equipmentByAttendance.get(row.id) ?? [];
-              const workers = row.workers ?? [];
-              const rh =
-                workers.length > 0
-                  ? totalLaborHours(workers)
-                  : row.laborHours;
-              const note = noteDrafts[row.id] ?? "";
-
-              return (
-                <div
-                  key={row.id}
-                  className="space-y-2.5 border-t border-line/50 pt-3 first:border-t-0 first:pt-0"
-                >
-                  {rows.length > 1 ? (
-                    <p className="text-[11px] font-semibold text-ink-light">
-                      {project ? projectLabel(project) : "Budowa"}
-                    </p>
+            <InfoField label="Brygada">
+              <div className="flex items-center gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-3 py-2 text-sm text-ink">
+                {crew ? (
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ background: crew.color }}
+                    aria-hidden
+                  />
+                ) : null}
+                <span className="truncate">
+                  {crew?.name ?? crewLabel}
+                  {crew?.company ? (
+                    <span className="text-ink-faint"> · {crew.company}</span>
                   ) : null}
+                </span>
+              </div>
+            </InfoField>
 
-                  <InfoField label="Brygada">
-                    <div className="flex items-center gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-3 py-2 text-sm text-ink">
-                      {crew ? (
-                        <span
-                          className="h-2.5 w-2.5 shrink-0 rounded-full"
-                          style={{ background: crew.color }}
-                          aria-hidden
-                        />
-                      ) : null}
-                      <span className="truncate">
-                        {crew?.name ?? crewLabel}
-                        {crew?.company ? (
+            <div className="space-y-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                  Osoby na budowie
+                </p>
+                <p className="text-[11px] text-ink-faint">
+                  {totalHeadcount} os. · {formatRh(totalRh)} RH
+                </p>
+              </div>
+              {people.length === 0 ? (
+                <p className="rounded-lg border border-line/50 bg-surface-raised/20 px-3 py-2 text-[12px] text-ink-faint">
+                  Brak osób.
+                </p>
+              ) : (
+                <ul className="divide-y divide-line/50 overflow-hidden rounded-lg border border-line/70">
+                  {people.map((person, index) => (
+                    <li
+                      key={person.key}
+                      className="flex items-center gap-1.5 bg-surface-raised/30 px-2.5 py-1.5 text-[12px]"
+                    >
+                      <span className="w-4 shrink-0 text-center font-semibold tabular-nums text-ink-faint">
+                        {index + 1}
+                      </span>
+                      {person.summaryOnly ? (
+                        <span className="min-w-0 flex-1 truncate text-ink-faint">
+                          bez rozbicia na godziny
+                        </span>
+                      ) : (
+                        <>
+                          <span className="shrink-0 font-semibold tabular-nums text-ink">
+                            {person.startTime}
+                          </span>
+                          <span className="shrink-0 text-ink-faint">→</span>
+                          <span className="shrink-0 font-semibold tabular-nums text-ink">
+                            {person.endTime}
+                          </span>
+                        </>
+                      )}
+                      <span
+                        className="min-w-0 flex-1 truncate text-[11px] text-ink-faint"
+                        title={person.buildLabel}
+                      >
+                        [{person.buildLabel}]
+                      </span>
+                      <span className="shrink-0 tabular-nums text-ink-faint">
+                        {formatRh(person.hours)}h
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                Sprzęt ciężki
+              </p>
+              {flatEquipment.length === 0 ? (
+                <p className="text-[12px] text-ink-faint">Brak sprzętu.</p>
+              ) : (
+                <ul className="divide-y divide-line/50 overflow-hidden rounded-lg border border-line/70">
+                  {flatEquipment.map((e) => (
+                    <li
+                      key={e.key}
+                      className="flex items-center gap-2 bg-surface-raised/30 px-2.5 py-1.5 text-[12px] text-ink"
+                    >
+                      <Wrench
+                        size={12}
+                        className="shrink-0 text-ink-faint"
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {e.label}
+                        {rows.length > 1 ? (
                           <span className="text-ink-faint">
                             {" "}
-                            · {crew.company}
+                            [{e.buildLabel}]
                           </span>
                         ) : null}
                       </span>
-                    </div>
-                  </InfoField>
+                      <span className="shrink-0 tabular-nums text-ink-faint">
+                        {e.quantity}× · {formatRh(e.hours)}h
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
-                  <InfoField label="Budowa">
-                    <p className="rounded-lg border border-line/60 bg-surface-raised/40 px-3 py-2 text-sm text-ink">
-                      {project ? projectLabel(project) : "—"}
-                    </p>
-                  </InfoField>
-
-                  <div className="space-y-1.5">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
-                        Osoby na budowie
-                      </p>
-                      <p className="text-[11px] text-ink-faint">
-                        {row.headcount} os. · {formatRh(rh)} RH
-                      </p>
-                    </div>
-                    {workers.length === 0 ? (
-                      <p className="rounded-lg border border-line/50 bg-surface-raised/20 px-3 py-2 text-[12px] text-ink-faint">
-                        {row.headcount} os. · {formatRh(row.laborHours)} RH
-                        (bez rozbicia na godziny)
-                      </p>
-                    ) : (
-                      <ul className="divide-y divide-line/50 overflow-hidden rounded-lg border border-line/70">
-                        {workers.map((w, index) => (
-                          <li
-                            key={w.id}
-                            className="flex items-center gap-2 bg-surface-raised/30 px-2.5 py-1.5 text-[12px]"
-                          >
-                            <span className="w-4 shrink-0 text-center font-semibold tabular-nums text-ink-faint">
-                              {index + 1}
-                            </span>
-                            <span className="font-semibold tabular-nums text-ink">
-                              {w.startTime}
-                            </span>
-                            <span className="text-ink-faint">→</span>
-                            <span className="font-semibold tabular-nums text-ink">
-                              {w.endTime}
-                            </span>
-                            <span className="ml-auto tabular-nums text-ink-faint">
-                              {formatRh(shiftHours(w.startTime, w.endTime))}h
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
-                      Sprzęt ciężki
-                    </p>
-                    {logs.length === 0 ? (
-                      <p className="text-[12px] text-ink-faint">Brak sprzętu.</p>
-                    ) : (
-                      <ul className="divide-y divide-line/50 overflow-hidden rounded-lg border border-line/70">
-                        {logs.map((e) => (
-                          <li
-                            key={e.id}
-                            className="flex items-center gap-2 bg-surface-raised/30 px-2.5 py-1.5 text-[12px] text-ink"
-                          >
-                            <Wrench
-                              size={12}
-                              className="shrink-0 text-ink-faint"
-                            />
-                            <span className="min-w-0 flex-1 truncate">
-                              {e.equipmentLabel ||
-                                (isEquipmentPresetKey(e.equipmentKey)
-                                  ? EQUIPMENT_PRESET_LABEL[e.equipmentKey]
-                                  : e.equipmentKey)}
-                            </span>
-                            <span className="shrink-0 tabular-nums text-ink-faint">
-                              {e.quantity}× · {formatRh(e.hours)}h
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  <InfoField label="Notatka (opcjonalnie)">
+            {rows.map((row) => {
+              const project = projectById.get(row.projectId);
+              const note = noteDrafts[row.id] ?? "";
+              const showBuildInNote = rows.length > 1;
+              return (
+                <div key={row.id} className="space-y-2">
+                  <InfoField
+                    label={
+                      showBuildInNote
+                        ? `Notatka — ${project ? projectLabel(project) : "budowa"}`
+                        : "Notatka (opcjonalnie)"
+                    }
+                  >
                     <textarea
                       value={note}
                       onChange={(e) =>
@@ -263,7 +354,6 @@ export function AttendanceConfirmSheet({
                       placeholder="Opcjonalnie…"
                     />
                   </InfoField>
-
                   {onEdit ? (
                     <button
                       type="button"
@@ -275,6 +365,9 @@ export function AttendanceConfirmSheet({
                     >
                       <Pencil size={12} />
                       Edytuj oświadczenie
+                      {showBuildInNote && project
+                        ? ` (${projectLabel(project)})`
+                        : ""}
                     </button>
                   ) : null}
                 </div>
