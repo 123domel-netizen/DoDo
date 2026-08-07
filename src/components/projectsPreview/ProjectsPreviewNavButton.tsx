@@ -8,6 +8,8 @@ type EntryProps = {
   variant?: "toolbar" | "mobileTab";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Which schedules section to open (mobile + desktop entry). */
+  section?: "board" | "attendance";
 };
 
 const LiveEntry: ComponentType<EntryProps> = lazy(() =>
@@ -16,7 +18,10 @@ const LiveEntry: ComponentType<EntryProps> = lazy(() =>
   })),
 );
 
-const LivePanel: ComponentType<{ onClose: () => void }> = lazy(() =>
+const LivePanel: ComponentType<{
+  onClose: () => void;
+  initialSection?: "board" | "attendance";
+}> = lazy(() =>
   import("./ProjectsPreviewEntry").then((m) => ({
     default: m.ProjectsPreviewMobilePanel,
   })),
@@ -30,17 +35,23 @@ export function ProjectsPreviewNavButton(props: EntryProps) {
   );
 }
 
-/** Full Harmonogramy UI in MobileShell main — bottom nav stays visible. */
-export function ProjectsPreviewMobileHost({ onClose }: { onClose: () => void }) {
+/** Full Harmonogramy / Obecności UI in MobileShell main — bottom nav stays visible. */
+export function ProjectsPreviewMobileHost({
+  onClose,
+  initialSection = "board",
+}: {
+  onClose: () => void;
+  initialSection?: "board" | "attendance";
+}) {
   return (
     <Suspense
       fallback={
         <div className="flex h-full items-center justify-center bg-surface text-sm text-ink-faint">
-          Ładowanie harmonogramów…
+          Ładowanie…
         </div>
       }
     >
-      <LivePanel onClose={onClose} />
+      <LivePanel onClose={onClose} initialSection={initialSection} />
     </Suspense>
   );
 }

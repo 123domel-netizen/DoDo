@@ -45,6 +45,7 @@ type FlatPerson = {
   startTime: string | null;
   endTime: string | null;
   hours: number;
+  personLabel: string;
   buildLabel: string;
   /** Fallback when no shift times — show headcount line. */
   summaryOnly?: boolean;
@@ -98,6 +99,7 @@ export function AttendanceConfirmSheet({
             startTime: null,
             endTime: null,
             hours: row.laborHours,
+            personLabel: "",
             buildLabel: defaultLabel,
             summaryOnly: true,
           });
@@ -112,6 +114,7 @@ export function AttendanceConfirmSheet({
           startTime: w.startTime,
           endTime: w.endTime,
           hours: shiftHours(w.startTime, w.endTime),
+          personLabel: (w.label ?? "").trim(),
           buildLabel: p ? projectLabel(p) : defaultLabel,
         });
       }
@@ -194,7 +197,7 @@ export function AttendanceConfirmSheet({
         aria-label="Zamknij"
         onClick={onClose}
       />
-      <div className="relative z-10 max-h-[90vh] w-full overflow-y-auto thin-scrollbar rounded-t-2xl border border-line bg-surface-overlay p-4 shadow-pop sm:max-w-md sm:rounded-2xl">
+      <div className="relative z-10 max-h-[90vh] w-full overflow-y-auto thin-scrollbar rounded-t-2xl border border-line bg-surface-overlay p-4 shadow-pop sm:max-w-3xl sm:rounded-2xl">
         <div className="mb-3 flex items-center justify-between gap-2">
           <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-ink">
             <ClipboardList size={14} className="shrink-0 text-accent" />
@@ -254,37 +257,47 @@ export function AttendanceConfirmSheet({
                   Brak osób.
                 </p>
               ) : (
-                <ul className="divide-y divide-line/50 overflow-hidden rounded-lg border border-line/70">
+                <ul className="overflow-x-auto rounded-lg border border-line/70 thin-scrollbar">
                   {people.map((person, index) => (
                     <li
                       key={person.key}
-                      className="flex items-center gap-1.5 bg-surface-raised/30 px-2.5 py-1.5 text-[12px]"
+                      className="flex min-w-[32rem] items-center gap-2 border-b border-line/50 bg-surface-raised/30 px-2.5 py-1.5 text-[12px] last:border-b-0"
                     >
                       <span className="w-4 shrink-0 text-center font-semibold tabular-nums text-ink-faint">
                         {index + 1}
                       </span>
                       {person.summaryOnly ? (
-                        <span className="min-w-0 flex-1 truncate text-ink-faint">
+                        <span className="min-w-0 shrink text-ink-faint">
                           bez rozbicia na godziny
                         </span>
                       ) : (
-                        <>
-                          <span className="shrink-0 font-semibold tabular-nums text-ink">
+                        <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
+                          <span className="font-semibold text-ink">
                             {person.startTime}
                           </span>
-                          <span className="shrink-0 text-ink-faint">→</span>
-                          <span className="shrink-0 font-semibold tabular-nums text-ink">
+                          <span className="text-ink-faint">→</span>
+                          <span className="font-semibold text-ink">
                             {person.endTime}
                           </span>
-                        </>
+                        </span>
                       )}
+                      <span
+                        className={`w-[7.5rem] shrink-0 truncate ${
+                          person.personLabel
+                            ? "font-medium text-ink"
+                            : "text-ink-faint"
+                        }`}
+                        title={person.personLabel || undefined}
+                      >
+                        {person.personLabel || "—"}
+                      </span>
                       <span
                         className="min-w-0 flex-1 truncate text-[11px] text-ink-faint"
                         title={person.buildLabel}
                       >
                         [{person.buildLabel}]
                       </span>
-                      <span className="shrink-0 tabular-nums text-ink-faint">
+                      <span className="w-8 shrink-0 text-right tabular-nums text-ink-faint">
                         {formatRh(person.hours)}h
                       </span>
                     </li>

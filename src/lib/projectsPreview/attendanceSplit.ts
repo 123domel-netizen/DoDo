@@ -5,6 +5,8 @@ export type AttendanceWorkerLine = {
   id?: string;
   startTime: string;
   endTime: string;
+  /** Opis osoby (Majster / Uczeń / własne). */
+  label?: string | null;
   /** Empty / null = use defaultProjectId. */
   projectId?: string | null;
 };
@@ -76,10 +78,12 @@ export function splitAttendanceByProject(opts: {
   // (even empty — caller may skip empty groups).
   for (const w of workers) {
     const pid = effectiveProjectId(w.projectId, defaultProjectId);
+    const label = (w.label ?? "").trim();
     ensure(pid).workers.push({
       id: w.id ?? `w-${Math.random().toString(36).slice(2, 9)}`,
       startTime: w.startTime,
       endTime: w.endTime,
+      label: label || null,
     });
   }
   for (const e of equipment) {

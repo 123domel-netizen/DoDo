@@ -28,6 +28,8 @@ Zakładka **Obecność** (obok Brygady):
 
 Tabele: `construction_crew_attendance` (+ `workers` jsonb, migracja `0058`), `construction_crew_equipment_logs`.
 
+W `workers`: opcjonalne `label` (Majster / Uczeń / własne imię) — szybkich etykiet + free text; przy nowym dniu kopiowane z poprzedniego wpisu firmy.
+
 **RLS:** członek org widzi i edytuje obecność całej firmy (`0060_crew_attendance_org_visibility.sql`) — wcześniej tylko uczestnik budowy, więc wpisy koleżanki znikały u osób spoza tej budowy.
 
 ## Włączenie cloud

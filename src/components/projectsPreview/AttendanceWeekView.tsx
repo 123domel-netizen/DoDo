@@ -321,15 +321,6 @@ export function AttendanceWeekView({
           <p className="px-4 py-8 text-center text-sm text-ink-faint">
             Brak brygad — dodaj je w zakładce Brygady, potem wpisuj obecność.
           </p>
-        ) : rangeMode === "day" ? (
-          <DayCrewList
-            workDate={window.start}
-            today={today}
-            rows={rows}
-            onOpen={(row, hasEntries) =>
-              openCell(row.crewId, row.crewLabel, window.start, hasEntries)
-            }
-          />
         ) : (
           <table
             className="w-full border-collapse text-left text-[11px]"
@@ -350,7 +341,11 @@ export function AttendanceWeekView({
                     <th
                       key={iso}
                       className={`px-0.5 py-1 text-center ${
-                        rangeMode === "month" ? "w-7" : "w-[3.2rem]"
+                        rangeMode === "month"
+                          ? "w-7"
+                          : rangeMode === "day"
+                            ? "min-w-[4.5rem]"
+                            : "w-[3.2rem]"
                       } ${weekend} ${isToday ? "text-accent" : ""}`}
                     >
                       <div>{rangeMode === "month" ? dow.charAt(0) : dow}</div>
@@ -471,82 +466,6 @@ export function AttendanceWeekView({
         />
       ) : null}
     </div>
-  );
-}
-
-function DayCrewList({
-  workDate,
-  today,
-  rows,
-  onOpen,
-}: {
-  workDate: string;
-  today: string;
-  rows: CrewAttendanceBoardRow[];
-  onOpen: (row: CrewAttendanceBoardRow, hasEntries: boolean) => void;
-}) {
-  return (
-    <ul className="divide-y divide-line/60 sm:mx-auto sm:max-w-lg">
-      {rows.map((row) => {
-        const cell = row.days[workDate]!;
-        const empty = cell.attendanceIds.length === 0;
-        const isToday = workDate === today;
-        return (
-          <li key={row.crewId}>
-            <button
-              type="button"
-              onClick={() => onOpen(row, !empty)}
-              className={`flex w-full items-center gap-3 px-3 py-3 text-left transition hover:bg-surface-raised/50 ${
-                isToday ? "bg-accent/[0.04]" : ""
-              }`}
-              title={cellTitle(cell, empty)}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-semibold text-ink">
-                  {row.crewLabel}
-                </p>
-                {row.company ? (
-                  <p className="truncate text-[11px] text-ink-faint">
-                    {row.company}
-                  </p>
-                ) : null}
-                {empty ? (
-                  <p className="mt-0.5 text-[12px] text-ink-faint">
-                    Brak wpisu — dodaj obecność
-                  </p>
-                ) : (
-                  <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-ink-light">
-                    <span className="inline-flex items-center gap-1 font-medium text-ink">
-                      {cell.allConfirmed ? (
-                        <Check size={12} className="text-emerald-300" />
-                      ) : null}
-                      {cell.headcount} os. · {formatHours(cell.laborHours)} RH
-                    </span>
-                    {cell.equipmentHours > 0 ? (
-                      <span className="inline-flex items-center gap-1 text-ink-faint">
-                        <Wrench size={11} />
-                        {formatHours(cell.equipmentHours)}h
-                      </span>
-                    ) : null}
-                  </p>
-                )}
-              </div>
-              <span
-                className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
-                  empty
-                    ? "bg-accent/15 text-accent"
-                    : cell.allConfirmed
-                      ? "bg-emerald-500/15 text-emerald-300"
-                      : "bg-surface-raised text-ink-light"
-                }`}
-              >
-                {empty ? "Dodaj" : cell.allConfirmed ? "OK" : "Otwórz"}
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 

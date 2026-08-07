@@ -8,10 +8,15 @@ export const HALF_HOUR_TIMES: string[] = Array.from({ length: 48 }, (_, i) => {
 export const DEFAULT_WORK_START = "07:00";
 export const DEFAULT_WORK_END = "15:00";
 
+/** Szybkie etykiety osoby na budowie. */
+export const PERSON_LABEL_PRESETS = ["Majster", "Uczeń"] as const;
+
 export type WorkerShiftDraft = {
   id: string;
   startTime: string;
   endTime: string;
+  /** Opis osoby (Majster / Uczeń / własne). */
+  label: string;
   /** Empty = default budowa from the form. */
   projectId: string;
 };
@@ -60,11 +65,13 @@ export function newWorkerShift(
   startTime = DEFAULT_WORK_START,
   endTime = DEFAULT_WORK_END,
   projectId = "",
+  label = "",
 ): WorkerShiftDraft {
   return {
     id: `w-${Math.random().toString(36).slice(2, 9)}`,
     startTime: snapToHalfHour(startTime),
     endTime: snapToHalfHour(endTime),
+    label: label.trim(),
     projectId,
   };
 }
@@ -73,6 +80,7 @@ export function cloneWorkersAsDrafts(
   workers: Array<{
     startTime: string;
     endTime: string;
+    label?: string | null;
     projectId?: string | null;
   }>,
   defaultProjectId?: string,
@@ -81,7 +89,12 @@ export function cloneWorkersAsDrafts(
     const raw = (w.projectId ?? "").trim();
     const projectId =
       !raw || (defaultProjectId && raw === defaultProjectId) ? "" : raw;
-    return newWorkerShift(w.startTime, w.endTime, projectId);
+    return newWorkerShift(
+      w.startTime,
+      w.endTime,
+      projectId,
+      (w.label ?? "").trim(),
+    );
   });
 }
 
@@ -181,7 +194,12 @@ export function resolveInitialWorkers(opts: {
           ...row.workers.map((w) => {
             const override =
               row.projectId === def ? "" : row.projectId;
-            return newWorkerShift(w.startTime, w.endTime, override);
+            return newWorkerShift(
+              w.startTime,
+              w.endTime,
+              override,
+              (w.label ?? "").trim(),
+            );
           }),
         );
       } else if (row.headcount > 0) {
@@ -249,7 +267,12 @@ export function normalizeWorkerList(
       typeof projectRaw === "string" && projectRaw.trim()
         ? projectRaw.trim()
         : null;
-    out.push({ id, startTime, endTime, projectId });
+    const labelRaw = rec.label ?? rec.personLabel ?? rec.person_label;
+    const label =
+      typeof labelRaw === "string" && labelRaw.trim()
+        ? labelRaw.trim().slice(0, 80)
+        : null;
+    out.push({ id, startTime, endTime, label, projectId });
   }
   return out;
 }

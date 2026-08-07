@@ -130,6 +130,11 @@ export interface CrewWorkerShift {
   startTime: string;
   endTime: string;
   /**
+   * Opis osoby (np. Majster, Uczeń, Jan Kowalski).
+   * Puste = bez opisu.
+   */
+  label?: string | null;
+  /**
    * Opcjonalne nadpisanie budowy (awaryjnie inna niż oświadczenie).
    * Po zapisie zwykle rozbijane na osobne wiersze obecności per budowa.
    */

@@ -275,8 +275,8 @@ describe("workerShifts", () => {
         headcount: 2,
         laborHours: 14,
         workers: [
-          { id: "w1", startTime: "06:30", endTime: "14:00" },
-          { id: "w2", startTime: "06:30", endTime: "14:00" },
+          { id: "w1", startTime: "06:30", endTime: "14:00", label: "Majster" },
+          { id: "w2", startTime: "06:30", endTime: "14:00", label: "Uczeń" },
         ],
         status: "declared",
         note: "",
@@ -295,6 +295,8 @@ describe("workerShifts", () => {
     expect(next).toHaveLength(2);
     expect(next[0]!.startTime).toBe("06:30");
     expect(next[0]!.endTime).toBe("14:00");
+    expect(next[0]!.label).toBe("Majster");
+    expect(next[1]!.label).toBe("Uczeń");
     expect(next[0]!.id).not.toBe("w1");
   });
 });

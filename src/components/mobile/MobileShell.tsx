@@ -93,7 +93,10 @@ export function MobileShell() {
   const addGroup = useStore((s) => s.addGroup);
 
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [schedulesOpen, setSchedulesOpen] = useState(false);
+  const [schedulesMode, setSchedulesMode] = useState<
+    null | "board" | "attendance"
+  >(null);
+  const schedulesOpen = schedulesMode !== null;
   const [mobileView, setMobileView] = useState<MobileCalendarMode>("today");
   const [sheet, setSheet] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<
@@ -110,13 +113,13 @@ export function MobileShell() {
   // Deep-link (push / chip „→ rozmowa") otwiera rozmowę → przełącz na zakładkę czatu.
   useEffect(() => {
     if (activeConversationId) {
-      setSchedulesOpen(false);
+      setSchedulesMode(null);
       setTab("chat");
     }
   }, [activeConversationId]);
 
   const goChatHome = () => {
-    setSchedulesOpen(false);
+    setSchedulesMode(null);
     setTab("chat");
     if (activeConversationId) {
       setActiveConversation(null);
@@ -125,23 +128,23 @@ export function MobileShell() {
   };
 
   const goDashboard = () => {
-    setSchedulesOpen(false);
+    setSchedulesMode(null);
     setTab("dashboard");
   };
 
   const goCalendar = () => {
-    setSchedulesOpen(false);
+    setSchedulesMode(null);
     setMobileView("today");
     setTab("calendar");
   };
 
   const goTasks = () => {
-    setSchedulesOpen(false);
+    setSchedulesMode(null);
     setTab("tasks");
   };
 
   const goSchedules = () => {
-    setSchedulesOpen(true);
+    setSchedulesMode("board");
   };
 
   const anchor = new Date(settings.anchorDate);
@@ -317,7 +320,13 @@ export function MobileShell() {
       {/* Treść */}
       <main className="min-h-0 flex-1 overflow-hidden">
         {schedulesOpen ? (
-          <ProjectsPreviewMobileHost onClose={() => setSchedulesOpen(false)} />
+          <ProjectsPreviewMobileHost
+            key={schedulesMode}
+            onClose={() => setSchedulesMode(null)}
+            initialSection={
+              schedulesMode === "attendance" ? "attendance" : "board"
+            }
+          />
         ) : tab === "chat" ? (
           <Suspense
             fallback={
@@ -354,7 +363,7 @@ export function MobileShell() {
       {/* Ostatnie korespondencje — tylko na Dashboardzie (nie w czacie / rozmowie). */}
       {!schedulesOpen && tab === "dashboard" && <MobileRecentCorrespondences />}
 
-      {/* Dolne menu: Harmonogramy · Dashboard · Czat */}
+      {/* Dolne menu: Obecności · Dashboard · Czat */}
       <nav
         className="z-30 flex shrink-0 items-stretch border-t border-line bg-surface"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
@@ -362,8 +371,11 @@ export function MobileShell() {
       >
         <ProjectsPreviewNavButton
           variant="mobileTab"
-          open={schedulesOpen}
-          onOpenChange={setSchedulesOpen}
+          section="attendance"
+          open={schedulesMode === "attendance"}
+          onOpenChange={(open) =>
+            setSchedulesMode(open ? "attendance" : null)
+          }
         />
         <BottomTab
           active={tab === "dashboard" && !schedulesOpen}

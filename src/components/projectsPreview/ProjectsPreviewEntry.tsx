@@ -1,25 +1,46 @@
 import { Suspense, useEffect, useState, type ComponentType } from "react";
-import { CalendarRange } from "lucide-react";
+import { CalendarRange, ClipboardList } from "lucide-react";
 import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
 import { isSchedulesModuleEnabled } from "@/lib/schedules/enabled";
 
-type AppProps = { onClose: () => void; embedded?: boolean };
+type AppProps = {
+  onClose: () => void;
+  embedded?: boolean;
+  initialSection?: "board" | "attendance";
+};
+
+type SchedulesSection = "board" | "attendance";
 
 const lazyApp = () =>
   import("./ProjectsPreviewApp").then((m) => ({
     default: m.ProjectsPreviewApp,
   }));
 
-/** Entry to Harmonogramy — visible when useSchedulesAvailable(). */
+function sectionChrome(section: SchedulesSection) {
+  if (section === "attendance") {
+    return {
+      label: "Obecności",
+      Icon: ClipboardList,
+    };
+  }
+  return {
+    label: "Harmonogramy",
+    Icon: CalendarRange,
+  };
+}
+
+/** Entry to Harmonogramy / Obecności — visible when useSchedulesAvailable(). */
 export function ProjectsPreviewEntry({
   variant = "toolbar",
   open: openProp,
   onOpenChange,
+  section = "board",
 }: {
   variant?: "toolbar" | "mobileTab";
   /** Controlled open (mobile shell keeps the bottom nav visible). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  section?: SchedulesSection;
 }) {
   const available = useSchedulesAvailable();
   if (!available) return null;
@@ -28,6 +49,7 @@ export function ProjectsPreviewEntry({
       variant={variant}
       openProp={openProp}
       onOpenChange={onOpenChange}
+      section={section}
     />
   );
 }
@@ -36,10 +58,12 @@ function ProjectsPreviewEntryLive({
   variant,
   openProp,
   onOpenChange,
+  section,
 }: {
   variant: "toolbar" | "mobileTab";
   openProp?: boolean;
   onOpenChange?: (open: boolean) => void;
+  section: SchedulesSection;
 }) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const controlled = openProp !== undefined;
@@ -50,6 +74,7 @@ function ProjectsPreviewEntryLive({
   };
 
   const [App, setApp] = useState<ComponentType<AppProps> | null>(null);
+  const { label, Icon } = sectionChrome(section);
 
   const ensureApp = () => {
     setOpen(true);
@@ -66,11 +91,11 @@ function ProjectsPreviewEntryLive({
   const overlay =
     !hostInShell && open && App ? (
       <Suspense fallback={null}>
-        <App onClose={close} />
+        <App onClose={close} initialSection={section} />
       </Suspense>
     ) : !hostInShell && open ? (
       <div className="fixed inset-0 z-[9000] flex items-center justify-center bg-surface text-sm text-ink-faint">
-        Ładowanie harmonogramów…
+        Ładowanie…
       </div>
     ) : null;
 
@@ -86,14 +111,14 @@ function ProjectsPreviewEntryLive({
           className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 transition ${
             open ? "text-accent" : "text-ink-faint"
           }`}
-          aria-label="Harmonogramy"
+          aria-label={label}
           aria-pressed={open}
         >
           <span className="relative flex h-6 w-6 items-center justify-center">
-            <CalendarRange size={22} strokeWidth={open ? 2.25 : 1.75} />
+            <Icon size={22} strokeWidth={open ? 2.25 : 1.75} />
           </span>
           <span className="max-w-full truncate text-[10px] font-medium leading-none">
-            Harmonogramy
+            {label}
           </span>
         </button>
         {overlay}
@@ -107,12 +132,12 @@ function ProjectsPreviewEntryLive({
         type="button"
         onClick={ensureApp}
         className="rounded-lg px-2 py-1.5 text-xs font-medium text-ink-light transition hover:bg-surface-overlay hover:text-ink"
-        aria-label="Harmonogramy"
-        title="Harmonogramy"
+        aria-label={label}
+        title={label}
       >
         <span className="inline-flex items-center gap-1.5">
-          <CalendarRange size={16} />
-          Harmonogramy
+          <Icon size={16} />
+          {label}
         </span>
       </button>
       {overlay}
@@ -123,8 +148,10 @@ function ProjectsPreviewEntryLive({
 /** Lazy panel for MobileShell main area (keeps bottom nav visible). */
 export function ProjectsPreviewMobilePanel({
   onClose,
+  initialSection = "board",
 }: {
   onClose: () => void;
+  initialSection?: SchedulesSection;
 }) {
   const [App, setApp] = useState<ComponentType<AppProps> | null>(null);
 
@@ -141,7 +168,7 @@ export function ProjectsPreviewMobilePanel({
   if (!App) {
     return (
       <div className="flex h-full items-center justify-center bg-surface text-sm text-ink-faint">
-        Ładowanie harmonogramów…
+        Ładowanie…
       </div>
     );
   }
@@ -149,11 +176,16 @@ export function ProjectsPreviewMobilePanel({
     <Suspense
       fallback={
         <div className="flex h-full items-center justify-center bg-surface text-sm text-ink-faint">
-          Ładowanie harmonogramów…
+          Ładowanie…
         </div>
       }
     >
-      <App onClose={onClose} embedded />
+      <App
+        key={initialSection}
+        onClose={onClose}
+        embedded
+        initialSection={initialSection}
+      />
     </Suspense>
   );
 }

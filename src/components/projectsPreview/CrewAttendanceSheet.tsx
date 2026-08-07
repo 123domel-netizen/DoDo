@@ -29,6 +29,7 @@ import {
   DEFAULT_WORK_END,
   DEFAULT_WORK_START,
   HALF_HOUR_TIMES,
+  PERSON_LABEL_PRESETS,
   defaultShiftTimesFromPrevious,
   findPreviousCompanyAttendance,
   newWorkerShift,
@@ -353,7 +354,7 @@ export function CrewAttendanceSheet({
         aria-label="Zamknij"
         onClick={onClose}
       />
-      <div className="relative z-10 max-h-[90vh] w-full overflow-y-auto thin-scrollbar rounded-t-2xl border border-line bg-surface-overlay p-4 shadow-pop sm:max-w-md sm:rounded-2xl">
+      <div className="relative z-10 max-h-[90vh] w-full overflow-y-auto thin-scrollbar rounded-t-2xl border border-line bg-surface-overlay p-4 shadow-pop sm:max-w-3xl sm:rounded-2xl">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="flex items-center gap-1.5 text-sm font-semibold text-ink">
             <ClipboardList size={14} className="text-accent" />
@@ -463,7 +464,7 @@ export function CrewAttendanceSheet({
                 Brak osób — dodaj wiersz (+).
               </p>
             ) : (
-              <ul className="divide-y divide-line/50 overflow-hidden rounded-lg border border-line/70">
+              <ul className="overflow-x-auto rounded-lg border border-line/70 thin-scrollbar">
                 {workers.map((row, index) => {
                   const hrs = shiftHours(row.startTime, row.endTime);
                   const override =
@@ -471,83 +472,127 @@ export function CrewAttendanceSheet({
                   return (
                     <li
                       key={row.id}
-                      className="space-y-1 bg-surface-raised/30 px-2 py-1.5"
+                      className="flex min-w-[40rem] items-center gap-1.5 border-b border-line/50 bg-surface-raised/30 px-2 py-1.5 last:border-b-0"
                     >
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="w-4 shrink-0 text-center text-[11px] font-semibold tabular-nums text-ink-faint"
-                          title={`Osoba ${index + 1}`}
-                        >
-                          {index + 1}
-                        </span>
-                        <HalfHourControl
-                          value={row.startTime}
-                          kind="start"
-                          onChange={(v) =>
-                            updateWorkerTime(row.id, "startTime", v)
-                          }
-                          aria-label={`Start osoby ${index + 1}`}
-                        />
-                        <span
-                          className="shrink-0 text-[11px] text-ink-faint"
-                          aria-hidden
-                        >
-                          →
-                        </span>
-                        <HalfHourControl
-                          value={row.endTime}
-                          kind="end"
-                          onChange={(v) =>
-                            updateWorkerTime(row.id, "endTime", v)
-                          }
-                          aria-label={`Koniec osoby ${index + 1}`}
-                        />
-                        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-ink-faint">
-                          {formatRh(hrs)}h
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setWorkers((prev) =>
-                              prev.filter((x) => x.id !== row.id),
-                            )
-                          }
-                          className="rounded p-1 text-ink-faint hover:bg-red-950/30 hover:text-red-300"
-                          aria-label={`Usuń osobę ${index + 1}`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-1.5 pl-5">
-                        <span className="shrink-0 text-[10px] text-ink-faint">
-                          Budowa
-                        </span>
-                        <select
-                          value={row.projectId}
-                          onChange={(e) =>
-                            setWorkers((prev) =>
-                              prev.map((x) =>
-                                x.id === row.id
-                                  ? { ...x, projectId: e.target.value }
-                                  : x,
-                              ),
-                            )
-                          }
-                          className={`min-w-0 flex-1 rounded border px-1.5 py-1 text-[11px] ${
-                            override
-                              ? "border-accent/50 bg-accent/10 text-ink"
-                              : "border-line/70 bg-surface-raised text-ink-light"
-                          }`}
-                          aria-label={`Budowa osoby ${index + 1}`}
-                        >
-                          <option value="">Jak wyżej (domyślna)</option>
-                          {projectOptions.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {projectLabel(p)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <span
+                        className="w-4 shrink-0 text-center text-[11px] font-semibold tabular-nums text-ink-faint"
+                        title={`Osoba ${index + 1}`}
+                      >
+                        {index + 1}
+                      </span>
+                      <HalfHourControl
+                        value={row.startTime}
+                        kind="start"
+                        onChange={(v) =>
+                          updateWorkerTime(row.id, "startTime", v)
+                        }
+                        aria-label={`Start osoby ${index + 1}`}
+                      />
+                      <span
+                        className="shrink-0 text-[11px] text-ink-faint"
+                        aria-hidden
+                      >
+                        →
+                      </span>
+                      <HalfHourControl
+                        value={row.endTime}
+                        kind="end"
+                        onChange={(v) =>
+                          updateWorkerTime(row.id, "endTime", v)
+                        }
+                        aria-label={`Koniec osoby ${index + 1}`}
+                      />
+                      <input
+                        value={row.label}
+                        onChange={(e) =>
+                          setWorkers((prev) =>
+                            prev.map((x) =>
+                              x.id === row.id
+                                ? {
+                                    ...x,
+                                    label: e.target.value.slice(0, 80),
+                                  }
+                                : x,
+                            ),
+                          )
+                        }
+                        placeholder="Osoba"
+                        className="min-w-[6.5rem] w-[8rem] shrink rounded border border-line/70 bg-surface-raised px-1.5 py-1 text-[11px] text-ink"
+                        aria-label={`Opis osoby ${index + 1}`}
+                      />
+                      {PERSON_LABEL_PRESETS.map((preset) => {
+                        const active = row.label === preset;
+                        return (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() =>
+                              setWorkers((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? {
+                                        ...x,
+                                        label: active ? "" : preset,
+                                      }
+                                    : x,
+                                ),
+                              )
+                            }
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
+                              active
+                                ? "bg-accent/20 text-accent"
+                                : "bg-surface-overlay text-ink-faint hover:text-ink"
+                            }`}
+                          >
+                            {preset}
+                          </button>
+                        );
+                      })}
+                      <select
+                        value={row.projectId}
+                        onChange={(e) =>
+                          setWorkers((prev) =>
+                            prev.map((x) =>
+                              x.id === row.id
+                                ? { ...x, projectId: e.target.value }
+                                : x,
+                            ),
+                          )
+                        }
+                        className={`min-w-0 flex-1 rounded border px-1.5 py-1 text-[11px] ${
+                          override
+                            ? "border-accent/50 bg-accent/10 text-ink"
+                            : "border-line/70 bg-surface-raised text-ink-light"
+                        }`}
+                        aria-label={`Budowa osoby ${index + 1}`}
+                        title={
+                          row.projectId
+                            ? undefined
+                            : "Budowa — jak wyżej (domyślna)"
+                        }
+                      >
+                        <option value="">Jak wyżej (domyślna)</option>
+                        {projectOptions.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {projectLabel(p)}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-ink-faint">
+                        {formatRh(hrs)}h
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWorkers((prev) =>
+                            prev.filter((x) => x.id !== row.id),
+                          )
+                        }
+                        className="shrink-0 rounded p-1 text-ink-faint hover:bg-red-950/30 hover:text-red-300"
+                        aria-label={`Usuń osobę ${index + 1}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </li>
                   );
                 })}
