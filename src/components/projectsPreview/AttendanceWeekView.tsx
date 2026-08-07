@@ -6,7 +6,6 @@ import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import {
   aggregateAttendanceByCrew,
   type AttendanceDayCell,
-  type CrewAttendanceBoardRow,
 } from "@/lib/projectsPreview/attendanceAggregate";
 import {
   ATTENDANCE_RANGE_LABEL,
