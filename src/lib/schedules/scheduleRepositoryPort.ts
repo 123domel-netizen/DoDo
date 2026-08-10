@@ -121,7 +121,13 @@ export interface ScheduleRepository {
   crewWorkCount(crewId: string): number;
   seedScheduleTemplate(projectId: string): ScheduleBlock[];
 
-  upsertCrew(crew: Omit<PreviewCrew, "id"> & { id?: string }): PreviewCrew;
+  upsertCrew(
+    crew: Omit<PreviewCrew, "id" | "members" | "viewerUserIds"> & {
+      id?: string;
+      members?: import("@/lib/projectsPreview/types").CrewMember[];
+      viewerUserIds?: string[];
+    },
+  ): PreviewCrew;
   deleteCrew(id: string): { ok: true } | { ok: false; error: string };
 
   listAttendance(

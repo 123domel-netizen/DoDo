@@ -260,7 +260,6 @@ describe("workerShifts", () => {
     } = await import("./workerShifts");
     expect(WORKER_ABSENCE_LABEL.U).toBe("Urlop");
     const withLeave = {
-      id: "w1",
       startTime: "07:00",
       endTime: "15:00",
       absence: "U" as const,
@@ -269,7 +268,7 @@ describe("workerShifts", () => {
     expect(
       totalLaborHours([
         withLeave,
-        { id: "w2", startTime: "07:00", endTime: "15:00" },
+        { startTime: "07:00", endTime: "15:00" },
       ]),
     ).toBe(8);
     const parsed = normalizeWorkerList([

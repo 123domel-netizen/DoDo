@@ -32,6 +32,7 @@ import type {
   CrewAttendance,
   CrewAttendanceStatus,
   CrewEquipmentLog,
+  CrewMember,
   CrewWorkerShift,
   DocEventStatus,
   PreviewCrew,
@@ -664,7 +665,13 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
     return created;
   }
 
-  upsertCrew(crew: Omit<PreviewCrew, "id"> & { id?: string }): PreviewCrew {
+  upsertCrew(
+    crew: Omit<PreviewCrew, "id" | "members" | "viewerUserIds"> & {
+      id?: string;
+      members?: CrewMember[];
+      viewerUserIds?: string[];
+    },
+  ): PreviewCrew {
     const id = crew.id ?? uid("crew");
     const headcount =
       crew.headcount == null || Number.isNaN(Number(crew.headcount))

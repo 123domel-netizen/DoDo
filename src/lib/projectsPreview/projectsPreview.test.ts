@@ -788,12 +788,14 @@ describe("projectsPreview crews", () => {
       members: [
         { id: "cm1", name: "Jan Nowak", pinAttendance: true },
       ],
+      viewerUserIds: [],
     });
     expect(created.name).toBe("Ekipa stolarska");
     expect(created.headcount).toBe(5);
     expect(created.supervisor).toBe("Jan");
     expect(created.members).toHaveLength(1);
     expect(created.members[0]!.pinAttendance).toBe(true);
+    expect(created.viewerUserIds).toEqual([]);
     expect(repo.getState().crews.some((c) => c.id === created.id)).toBe(true);
     const updated = repo.upsertCrew({
       id: created.id,
@@ -804,9 +806,11 @@ describe("projectsPreview crews", () => {
       company: "Drewno SA",
       phone: "123",
       members: created.members,
+      viewerUserIds: ["u-admin"],
     });
     expect(updated.name).toBe("Ekipa stolarska 2");
     expect(updated.headcount).toBe(4);
+    expect(updated.viewerUserIds).toEqual(["u-admin"]);
   });
 
   it("blocks deleting a crew that is in use", () => {
