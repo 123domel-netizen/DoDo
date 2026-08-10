@@ -6,8 +6,10 @@ import {
   isEquipmentPresetKey,
 } from "@/lib/projectsPreview/equipmentPresets";
 import {
-  shiftHours,
+  WORKER_ABSENCE_LABEL,
+  isWorkerAbsenceCode,
   totalLaborHours,
+  workerLaborHours,
 } from "@/lib/projectsPreview/workerShifts";
 import {
   projectLabel,
@@ -15,6 +17,7 @@ import {
   type CrewEquipmentLog,
   type PreviewCrew,
   type PreviewProject,
+  type WorkerAbsenceCode,
 } from "@/lib/projectsPreview/types";
 
 interface AttendanceConfirmSheetProps {
@@ -47,6 +50,7 @@ type FlatPerson = {
   hours: number;
   personLabel: string;
   buildLabel: string;
+  absence: WorkerAbsenceCode | null;
   /** Fallback when no shift times — show headcount line. */
   summaryOnly?: boolean;
 };
@@ -101,6 +105,7 @@ export function AttendanceConfirmSheet({
             hours: row.laborHours,
             personLabel: "",
             buildLabel: defaultLabel,
+            absence: null,
             summaryOnly: true,
           });
         }
@@ -113,9 +118,10 @@ export function AttendanceConfirmSheet({
           key: w.id,
           startTime: w.startTime,
           endTime: w.endTime,
-          hours: shiftHours(w.startTime, w.endTime),
+          hours: workerLaborHours(w),
           personLabel: (w.label ?? "").trim(),
           buildLabel: p ? projectLabel(p) : defaultLabel,
+          absence: isWorkerAbsenceCode(w.absence) ? w.absence : null,
         });
       }
     }
@@ -269,6 +275,18 @@ export function AttendanceConfirmSheet({
                       {person.summaryOnly ? (
                         <span className="min-w-0 shrink text-ink-faint">
                           bez rozbicia na godziny
+                        </span>
+                      ) : person.absence ? (
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1.5"
+                          title={WORKER_ABSENCE_LABEL[person.absence]}
+                        >
+                          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200">
+                            {person.absence}
+                          </span>
+                          <span className="text-[11px] text-ink-faint">
+                            {WORKER_ABSENCE_LABEL[person.absence]}
+                          </span>
                         </span>
                       ) : (
                         <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">

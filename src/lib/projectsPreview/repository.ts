@@ -27,6 +27,7 @@ import {
   normalizeWorkerList,
   totalLaborHours,
 } from "./workerShifts";
+import { normalizeCrewMembers } from "./crewMembers";
 import type {
   CrewAttendance,
   CrewAttendanceStatus,
@@ -677,6 +678,8 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
       supervisor: crew.supervisor?.trim() ?? "",
       company: crew.company?.trim() ?? "",
       phone: crew.phone?.trim() ?? "",
+      members: normalizeCrewMembers(crew.members),
+      viewerUserIds: normalizeViewerUserIds(crew.viewerUserIds),
     };
     const exists = this.state.crews.some((c) => c.id === id);
     const crews = exists
@@ -1505,6 +1508,20 @@ function normalizeCategoryMeta(
   };
 }
 
+function normalizeViewerUserIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 function normalizeCrew(
   c: Partial<PreviewCrew> & Pick<PreviewCrew, "id" | "name">,
 ): PreviewCrew {
@@ -1521,6 +1538,12 @@ function normalizeCrew(
     supervisor: c.supervisor ?? "",
     company: c.company ?? "",
     phone: c.phone ?? "",
+    members: normalizeCrewMembers(c.members),
+    viewerUserIds: normalizeViewerUserIds(
+      (c as { viewerUserIds?: unknown; viewer_user_ids?: unknown })
+        .viewerUserIds ??
+        (c as { viewer_user_ids?: unknown }).viewer_user_ids,
+    ),
   };
 }
 

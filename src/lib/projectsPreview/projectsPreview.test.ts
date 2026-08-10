@@ -133,6 +133,16 @@ describe("projectsPreview visibility", () => {
     const asJacek = visibleProjects(projects, "u-jacek");
     expect(asJacek.map((p) => p.number).sort()).toEqual(["114", "115"]);
   });
+
+  it("restricts crews by viewerUserIds", async () => {
+    const { isCrewVisibleTo, visibleCrews } = await import("./search");
+    const open = { viewerUserIds: [] as string[] };
+    const limited = { viewerUserIds: ["u-a", "u-b"] };
+    expect(isCrewVisibleTo(open, "anyone")).toBe(true);
+    expect(isCrewVisibleTo(limited, "u-a")).toBe(true);
+    expect(isCrewVisibleTo(limited, "u-x")).toBe(false);
+    expect(visibleCrews([open, limited], "u-x")).toHaveLength(1);
+  });
 });
 
 describe("projectsPreview bulk parser", () => {
@@ -775,10 +785,15 @@ describe("projectsPreview crews", () => {
       supervisor: "Jan",
       company: "Drewno SA",
       phone: "123",
+      members: [
+        { id: "cm1", name: "Jan Nowak", pinAttendance: true },
+      ],
     });
     expect(created.name).toBe("Ekipa stolarska");
     expect(created.headcount).toBe(5);
     expect(created.supervisor).toBe("Jan");
+    expect(created.members).toHaveLength(1);
+    expect(created.members[0]!.pinAttendance).toBe(true);
     expect(repo.getState().crews.some((c) => c.id === created.id)).toBe(true);
     const updated = repo.upsertCrew({
       id: created.id,
@@ -788,6 +803,7 @@ describe("projectsPreview crews", () => {
       supervisor: "Jan",
       company: "Drewno SA",
       phone: "123",
+      members: created.members,
     });
     expect(updated.name).toBe("Ekipa stolarska 2");
     expect(updated.headcount).toBe(4);

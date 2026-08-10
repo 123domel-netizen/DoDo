@@ -1,3 +1,5 @@
+import type { WorkerAbsenceCode } from "./types";
+
 /** Half-hour clock options HH:mm (00:00 … 23:30). */
 export const HALF_HOUR_TIMES: string[] = Array.from({ length: 48 }, (_, i) => {
   const h = Math.floor(i / 2);
@@ -8,8 +10,33 @@ export const HALF_HOUR_TIMES: string[] = Array.from({ length: 48 }, (_, i) => {
 export const DEFAULT_WORK_START = "07:00";
 export const DEFAULT_WORK_END = "15:00";
 
-/** Szybkie etykiety osoby na budowie. */
+/** Szybkie etykiety osoby na budowie (wartość `label`). */
 export const PERSON_LABEL_PRESETS = ["Majster", "Uczeń"] as const;
+
+/** Skrót na chipie w formularzu obecności. */
+export const PERSON_LABEL_PRESET_SHORT: Record<
+  (typeof PERSON_LABEL_PRESETS)[number],
+  string
+> = {
+  Majster: "M",
+  Uczeń: "U",
+};
+
+export const WORKER_ABSENCE_CODES = ["U", "NU", "NN", "W"] as const;
+
+export const WORKER_ABSENCE_LABEL: Record<WorkerAbsenceCode, string> = {
+  U: "Urlop",
+  NU: "Nieobecność usprawiedliwiona",
+  NN: "Nieobecność nieusprawiedliwiona",
+  W: "Dzień wolny firmowy",
+};
+
+export function isWorkerAbsenceCode(value: unknown): value is WorkerAbsenceCode {
+  return (
+    typeof value === "string" &&
+    (WORKER_ABSENCE_CODES as readonly string[]).includes(value)
+  );
+}
 
 export type WorkerShiftDraft = {
   id: string;
@@ -17,6 +44,8 @@ export type WorkerShiftDraft = {
   endTime: string;
   /** Opis osoby (Majster / Uczeń / własne). */
   label: string;
+  /** Empty = obecność z godzinami; U/NU/NN/W = 0 RH. */
+  absence: WorkerAbsenceCode | "";
   /** Empty = default budowa from the form. */
   projectId: string;
 };
@@ -44,10 +73,24 @@ export function shiftHours(startTime: string, endTime: string): number {
   return (b - a) / 60;
 }
 
+/** RH osoby — przy statusie nieobecności zawsze 0. */
+export function workerLaborHours(w: {
+  startTime: string;
+  endTime: string;
+  absence?: WorkerAbsenceCode | "" | null;
+}): number {
+  if (w.absence) return 0;
+  return shiftHours(w.startTime, w.endTime);
+}
+
 export function totalLaborHours(
-  workers: Array<{ startTime: string; endTime: string }>,
+  workers: Array<{
+    startTime: string;
+    endTime: string;
+    absence?: WorkerAbsenceCode | "" | null;
+  }>,
 ): number {
-  return workers.reduce((sum, w) => sum + shiftHours(w.startTime, w.endTime), 0);
+  return workers.reduce((sum, w) => sum + workerLaborHours(w), 0);
 }
 
 function toMinutes(hhmm: string): number | null {
@@ -66,12 +109,14 @@ export function newWorkerShift(
   endTime = DEFAULT_WORK_END,
   projectId = "",
   label = "",
+  absence: WorkerAbsenceCode | "" = "",
 ): WorkerShiftDraft {
   return {
     id: `w-${Math.random().toString(36).slice(2, 9)}`,
     startTime: snapToHalfHour(startTime),
     endTime: snapToHalfHour(endTime),
     label: label.trim(),
+    absence: isWorkerAbsenceCode(absence) ? absence : "",
     projectId,
   };
 }
@@ -81,6 +126,7 @@ export function cloneWorkersAsDrafts(
     startTime: string;
     endTime: string;
     label?: string | null;
+    absence?: WorkerAbsenceCode | "" | null;
     projectId?: string | null;
   }>,
   defaultProjectId?: string,
@@ -94,6 +140,7 @@ export function cloneWorkersAsDrafts(
       w.endTime,
       projectId,
       (w.label ?? "").trim(),
+      isWorkerAbsenceCode(w.absence) ? w.absence : "",
     );
   });
 }
@@ -199,6 +246,7 @@ export function resolveInitialWorkers(opts: {
               w.endTime,
               override,
               (w.label ?? "").trim(),
+              isWorkerAbsenceCode(w.absence) ? w.absence : "",
             );
           }),
         );
@@ -272,7 +320,9 @@ export function normalizeWorkerList(
       typeof labelRaw === "string" && labelRaw.trim()
         ? labelRaw.trim().slice(0, 80)
         : null;
-    out.push({ id, startTime, endTime, label, projectId });
+    const absenceRaw = rec.absence ?? rec.absenceCode ?? rec.absence_code;
+    const absence = isWorkerAbsenceCode(absenceRaw) ? absenceRaw : null;
+    out.push({ id, startTime, endTime, label, absence, projectId });
   }
   return out;
 }

@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ClipboardList, Plus, Trash2, X } from "lucide-react";
+import { CalendarOff, ClipboardList, Clock, Plus, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { IsoDateInput } from "./IsoDateInput";
 import {
@@ -30,14 +30,19 @@ import {
   DEFAULT_WORK_START,
   HALF_HOUR_TIMES,
   PERSON_LABEL_PRESETS,
+  PERSON_LABEL_PRESET_SHORT,
+  WORKER_ABSENCE_CODES,
+  WORKER_ABSENCE_LABEL,
   defaultShiftTimesFromPrevious,
   findPreviousCompanyAttendance,
   newWorkerShift,
   resolveInitialWorkers,
   shiftHours,
   totalLaborHours,
+  workerLaborHours,
   type WorkerShiftDraft,
 } from "@/lib/projectsPreview/workerShifts";
+import { pinnedAttendanceMembers } from "@/lib/projectsPreview/crewMembers";
 
 type EquipmentDraft = {
   key: string;
@@ -163,6 +168,8 @@ export function CrewAttendanceSheet({
   const [lastEditedWorkerId, setLastEditedWorkerId] = useState<string | null>(
     null,
   );
+  /** Wiersze przełączone na status (bez zapisanego `absence` jeszcze). */
+  const [statusModeIds, setStatusModeIds] = useState(() => new Set<string>());
   const attendanceProjectById = useMemo(() => {
     const m = new Map<string, string>();
     for (const a of batch) m.set(a.id, a.projectId);
@@ -207,17 +214,20 @@ export function CrewAttendanceSheet({
   );
 
   const laborTotal = totalLaborHours(workers);
+  const timedWorkers = workers.filter(
+    (w) => !w.absence && !statusModeIds.has(w.id),
+  );
   const timesMixed =
-    workers.length > 1 &&
-    workers.some(
+    timedWorkers.length > 1 &&
+    timedWorkers.some(
       (w) =>
-        w.startTime !== workers[0]!.startTime ||
-        w.endTime !== workers[0]!.endTime,
+        w.startTime !== timedWorkers[0]!.startTime ||
+        w.endTime !== timedWorkers[0]!.endTime,
     );
   const syncSource =
     (lastEditedWorkerId &&
-      workers.find((w) => w.id === lastEditedWorkerId)) ||
-    workers[0] ||
+      timedWorkers.find((w) => w.id === lastEditedWorkerId)) ||
+    timedWorkers[0] ||
     null;
 
   const addWorker = () => {
@@ -241,6 +251,48 @@ export function CrewAttendanceSheet({
     ]);
   };
 
+  const addPinnedWorker = (name: string) => {
+    const label = name.trim();
+    if (!label) return;
+    if (
+      workers.some(
+        (w) => w.label.trim().toLocaleLowerCase("pl") === label.toLocaleLowerCase("pl"),
+      )
+    ) {
+      return;
+    }
+    const previous = findPreviousCompanyAttendance(
+      attendanceHistory,
+      crews,
+      crew,
+      workDate,
+      existing?.id,
+    );
+    const fromRow = workers[0];
+    const times = fromRow
+      ? { startTime: fromRow.startTime, endTime: fromRow.endTime }
+      : defaultShiftTimesFromPrevious(previous);
+    setWorkers((prev) => [
+      ...prev,
+      newWorkerShift(
+        times.startTime || DEFAULT_WORK_START,
+        times.endTime || DEFAULT_WORK_END,
+        "",
+        label,
+      ),
+    ]);
+  };
+
+  const pinnedMembers = pinnedAttendanceMembers(crew.members);
+  const missingPinned = pinnedMembers.filter(
+    (m) =>
+      !workers.some(
+        (w) =>
+          w.label.trim().toLocaleLowerCase("pl") ===
+          m.name.trim().toLocaleLowerCase("pl"),
+      ),
+  );
+
   const updateWorkerTime = (
     id: string,
     field: "startTime" | "endTime",
@@ -255,11 +307,15 @@ export function CrewAttendanceSheet({
   const applyTimesToAll = () => {
     if (!syncSource) return;
     setWorkers((prev) =>
-      prev.map((w) => ({
-        ...w,
-        startTime: syncSource.startTime,
-        endTime: syncSource.endTime,
-      })),
+      prev.map((w) =>
+        w.absence || statusModeIds.has(w.id)
+          ? w
+          : {
+              ...w,
+              startTime: syncSource.startTime,
+              endTime: syncSource.endTime,
+            },
+      ),
     );
     setLastEditedWorkerId(null);
   };
@@ -284,6 +340,13 @@ export function CrewAttendanceSheet({
       return;
     }
     for (const w of workers) {
+      if (statusModeIds.has(w.id) && !w.absence) {
+        alert(
+          "Wybierz status (U / NU / NN / W) albo przełącz wiersz z powrotem na godziny.",
+        );
+        return;
+      }
+      if (w.absence) continue;
       if (shiftHours(w.startTime, w.endTime) <= 0) {
         alert("Koniec pracy musi być później niż start (ten sam dzień).");
         return;
@@ -441,7 +504,7 @@ export function CrewAttendanceSheet({
           </p>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
                   Osoby na budowie
@@ -450,14 +513,26 @@ export function CrewAttendanceSheet({
                   {workers.length} os. · {formatRh(laborTotal)} RH
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={addWorker}
-                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/10"
-              >
-                <Plus size={12} />
-                Dodaj
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-1">
+                {missingPinned.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => addPinnedWorker(m.name)}
+                    className="rounded-md border border-line/70 bg-surface-raised/60 px-1.5 py-0.5 text-[10px] font-medium text-ink-light transition hover:border-accent/40 hover:text-accent"
+                  >
+                    Dodaj {m.name}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={addWorker}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/10"
+                >
+                  <Plus size={12} />
+                  Dodaj
+                </button>
+              </div>
             </div>
             {workers.length === 0 ? (
               <p className="text-[12px] text-ink-faint">
@@ -466,13 +541,15 @@ export function CrewAttendanceSheet({
             ) : (
               <ul className="overflow-x-auto rounded-lg border border-line/70 thin-scrollbar">
                 {workers.map((row, index) => {
-                  const hrs = shiftHours(row.startTime, row.endTime);
+                  const hrs = workerLaborHours(row);
+                  const statusMode =
+                    statusModeIds.has(row.id) || Boolean(row.absence);
                   const override =
                     row.projectId.trim() && row.projectId !== projectId;
                   return (
                     <li
                       key={row.id}
-                      className="flex min-w-[40rem] items-center gap-1.5 border-b border-line/50 bg-surface-raised/30 px-2 py-1.5 last:border-b-0"
+                      className="flex min-w-[44rem] items-center gap-1.5 border-b border-line/50 bg-surface-raised/30 px-2 py-1.5 last:border-b-0"
                     >
                       <span
                         className="w-4 shrink-0 text-center text-[11px] font-semibold tabular-nums text-ink-faint"
@@ -480,28 +557,109 @@ export function CrewAttendanceSheet({
                       >
                         {index + 1}
                       </span>
-                      <HalfHourControl
-                        value={row.startTime}
-                        kind="start"
-                        onChange={(v) =>
-                          updateWorkerTime(row.id, "startTime", v)
+                      <button
+                        type="button"
+                        title={
+                          statusMode
+                            ? "Przełącz na godziny pracy"
+                            : "Przełącz na status nieobecności"
                         }
-                        aria-label={`Start osoby ${index + 1}`}
-                      />
-                      <span
-                        className="shrink-0 text-[11px] text-ink-faint"
-                        aria-hidden
+                        aria-label={
+                          statusMode
+                            ? `Godziny / status — osoba ${index + 1} (teraz status)`
+                            : `Godziny / status — osoba ${index + 1} (teraz godziny)`
+                        }
+                        aria-pressed={statusMode}
+                        onClick={() => {
+                          if (statusMode) {
+                            setStatusModeIds((prev) => {
+                              const next = new Set(prev);
+                              next.delete(row.id);
+                              return next;
+                            });
+                            setWorkers((prev) =>
+                              prev.map((x) =>
+                                x.id === row.id ? { ...x, absence: "" } : x,
+                              ),
+                            );
+                          } else {
+                            setStatusModeIds((prev) => new Set(prev).add(row.id));
+                          }
+                        }}
+                        className={`shrink-0 rounded p-1 transition ${
+                          statusMode
+                            ? "bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
+                            : "text-ink-faint hover:bg-surface-overlay hover:text-ink"
+                        }`}
                       >
-                        →
-                      </span>
-                      <HalfHourControl
-                        value={row.endTime}
-                        kind="end"
-                        onChange={(v) =>
-                          updateWorkerTime(row.id, "endTime", v)
-                        }
-                        aria-label={`Koniec osoby ${index + 1}`}
-                      />
+                        {statusMode ? (
+                          <CalendarOff size={14} aria-hidden />
+                        ) : (
+                          <Clock size={14} aria-hidden />
+                        )}
+                      </button>
+                      {statusMode ? (
+                        <div
+                          className="flex h-8 shrink-0 items-center gap-0.5"
+                          role="group"
+                          aria-label={`Status obecności osoby ${index + 1}`}
+                        >
+                          {WORKER_ABSENCE_CODES.map((code) => {
+                            const active = row.absence === code;
+                            return (
+                              <button
+                                key={code}
+                                type="button"
+                                title={WORKER_ABSENCE_LABEL[code]}
+                                onClick={() =>
+                                  setWorkers((prev) =>
+                                    prev.map((x) =>
+                                      x.id === row.id
+                                        ? {
+                                            ...x,
+                                            absence: active ? "" : code,
+                                          }
+                                        : x,
+                                    ),
+                                  )
+                                }
+                                className={`inline-flex h-8 min-w-[1.85rem] items-center justify-center rounded-md border px-1.5 text-[11px] font-semibold transition ${
+                                  active
+                                    ? "border-amber-400/50 bg-amber-500/25 text-amber-200"
+                                    : "border-line bg-surface-raised text-ink-faint hover:border-line-strong hover:text-ink"
+                                }`}
+                              >
+                                {code}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex h-8 shrink-0 items-center gap-1.5">
+                          <HalfHourControl
+                            value={row.startTime}
+                            kind="start"
+                            onChange={(v) =>
+                              updateWorkerTime(row.id, "startTime", v)
+                            }
+                            aria-label={`Start osoby ${index + 1}`}
+                          />
+                          <span
+                            className="shrink-0 text-[11px] text-ink-faint"
+                            aria-hidden
+                          >
+                            →
+                          </span>
+                          <HalfHourControl
+                            value={row.endTime}
+                            kind="end"
+                            onChange={(v) =>
+                              updateWorkerTime(row.id, "endTime", v)
+                            }
+                            aria-label={`Koniec osoby ${index + 1}`}
+                          />
+                        </div>
+                      )}
                       <input
                         value={row.label}
                         onChange={(e) =>
@@ -526,6 +684,7 @@ export function CrewAttendanceSheet({
                           <button
                             key={preset}
                             type="button"
+                            title={preset}
                             onClick={() =>
                               setWorkers((prev) =>
                                 prev.map((x) =>
@@ -538,13 +697,13 @@ export function CrewAttendanceSheet({
                                 ),
                               )
                             }
-                            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
                               active
                                 ? "bg-accent/20 text-accent"
                                 : "bg-surface-overlay text-ink-faint hover:text-ink"
                             }`}
                           >
-                            {preset}
+                            {PERSON_LABEL_PRESET_SHORT[preset]}
                           </button>
                         );
                       })}
@@ -578,16 +737,28 @@ export function CrewAttendanceSheet({
                           </option>
                         ))}
                       </select>
-                      <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-ink-faint">
-                        {formatRh(hrs)}h
+                      <span
+                        className="w-10 shrink-0 text-right text-[11px] tabular-nums text-ink-faint"
+                        title={
+                          row.absence
+                            ? WORKER_ABSENCE_LABEL[row.absence]
+                            : undefined
+                        }
+                      >
+                        {row.absence ? row.absence : `${formatRh(hrs)}h`}
                       </span>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          setStatusModeIds((prev) => {
+                            const next = new Set(prev);
+                            next.delete(row.id);
+                            return next;
+                          });
                           setWorkers((prev) =>
                             prev.filter((x) => x.id !== row.id),
-                          )
-                        }
+                          );
+                        }}
                         className="shrink-0 rounded p-1 text-ink-faint hover:bg-red-950/30 hover:text-red-300"
                         aria-label={`Usuń osobę ${index + 1}`}
                       >

@@ -506,6 +506,8 @@ export function ScheduleDashboardWorksSection({
       {crewEdit ? (
         <CrewEditorSheet
           crew={null}
+          users={scheduleState.users}
+          currentUserId={scheduleState.viewAsUserId}
           onClose={() => setCrewEdit(false)}
           onSave={(data) => {
             scheduleRepo.upsertCrew(data);

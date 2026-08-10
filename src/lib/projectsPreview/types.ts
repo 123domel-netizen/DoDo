@@ -118,10 +118,28 @@ export interface PreviewCrew {
   company: string;
   /** Contact phone. */
   phone: string;
+  /** Roster for attendance quick-picks. */
+  members: CrewMember[];
+  /**
+   * Kto widzi brygadę i jej obecności.
+   * Pusta lista = wszyscy w org; niepusta = tylko te user id.
+   */
+  viewerUserIds: string[];
 }
+
+/** Osoba w brygadzie — opcjonalnie przypięta do formularza obecności. */
+export type CrewMember = {
+  id: string;
+  name: string;
+  /** Pokazuj w formularzu obecności jako szybki wybór / „Dodaj …”. */
+  pinAttendance: boolean;
+};
 
 /** Daily RH declaration status. */
 export type CrewAttendanceStatus = "declared" | "confirmed";
+
+/** Status nieobecności / dnia wolnego (osoba bez RH). */
+export type WorkerAbsenceCode = "U" | "NU" | "NN" | "W";
 
 /** Jedna osoba na budowie — własne godziny start/koniec (krok 30 min). */
 export interface CrewWorkerShift {
@@ -134,6 +152,11 @@ export interface CrewWorkerShift {
    * Puste = bez opisu.
    */
   label?: string | null;
+  /**
+   * U / NU / NN / W — bez godzin roboczych (RH = 0).
+   * Puste / brak = obecność z `startTime`–`endTime`.
+   */
+  absence?: WorkerAbsenceCode | null;
   /**
    * Opcjonalne nadpisanie budowy (awaryjnie inna niż oświadczenie).
    * Po zapisie zwykle rozbijane na osobne wiersze obecności per budowa.

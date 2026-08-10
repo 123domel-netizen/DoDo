@@ -59,3 +59,20 @@ export function visibleProjects(
 ): PreviewProject[] {
   return projects.filter((p) => isProjectVisibleTo(p, userId));
 }
+
+/** Pusta lista viewerów = cała org; inaczej tylko wskazani. */
+export function isCrewVisibleTo(
+  crew: { viewerUserIds?: string[] | null },
+  userId: string,
+): boolean {
+  const ids = crew.viewerUserIds ?? [];
+  if (ids.length === 0) return true;
+  return Boolean(userId) && ids.includes(userId);
+}
+
+export function visibleCrews<T extends { viewerUserIds?: string[] | null }>(
+  crews: T[],
+  userId: string,
+): T[] {
+  return crews.filter((c) => isCrewVisibleTo(c, userId));
+}

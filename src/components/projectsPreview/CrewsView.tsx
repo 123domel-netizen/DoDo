@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, ClipboardList, Plus, Users } from "lucide-react";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import { applyCrewAttendanceSave } from "@/lib/projectsPreview/applyAttendanceSave";
+import { visibleCrews } from "@/lib/projectsPreview/search";
 import type { PreviewCrew } from "@/lib/projectsPreview/types";
 import { CrewAttendanceSheet } from "./CrewAttendanceSheet";
 import { CrewEditorSheet } from "./CrewEditorSheet";
@@ -49,6 +50,11 @@ export function CrewsView({
     const wanted = new Set(projectIds);
     return list.filter((p) => wanted.has(p.id));
   }, [state.projects, state.viewAsUserId, projectIds]);
+
+  const crews = useMemo(
+    () => visibleCrews(state.crews, state.viewAsUserId),
+    [state.crews, state.viewAsUserId],
+  );
 
   const closeEditor = () => {
     setEditing(null);
@@ -118,7 +124,7 @@ export function CrewsView({
             </tr>
           </thead>
           <tbody>
-            {state.crews.length === 0 ? (
+            {crews.length === 0 ? (
               <tr>
                 <td
                   colSpan={COLUMN_COUNT}
@@ -139,7 +145,7 @@ export function CrewsView({
                 </td>
               </tr>
             ) : (
-              state.crews.map((crew) => {
+              crews.map((crew) => {
                 const works = repo.crewWorkCount(crew.id);
                 const conflicts = conflictsByCrew.get(crew.id) ?? 0;
                 return (
@@ -220,6 +226,8 @@ export function CrewsView({
         <CrewEditorSheet
           key={editing?.id ?? "new-crew"}
           crew={editing}
+          users={state.users}
+          currentUserId={state.viewAsUserId}
           onClose={closeEditor}
           onSave={(data) => {
             repo.upsertCrew(data);
@@ -244,7 +252,7 @@ export function CrewsView({
         <CrewAttendanceSheet
           key={`att-${attendanceCrew.id}-${attendanceContext.existing?.id ?? "new"}`}
           crew={attendanceCrew}
-          crews={state.crews}
+          crews={crews}
           attendanceHistory={state.crewAttendance}
           projects={visibleProjects}
           blocks={state.scheduleBlocks}

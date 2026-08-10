@@ -17,6 +17,7 @@ import {
 } from "@/lib/projectsPreview/attendanceWindow";
 import { todayIso } from "@/lib/projectsPreview/projectMetrics";
 import { applyCrewAttendanceSave } from "@/lib/projectsPreview/applyAttendanceSave";
+import { visibleCrews } from "@/lib/projectsPreview/search";
 import type { CrewAttendance } from "@/lib/projectsPreview/types";
 import { AttendanceConfirmSheet } from "./AttendanceConfirmSheet";
 import { CrewAttendanceSheet } from "./CrewAttendanceSheet";
@@ -128,6 +129,11 @@ export function AttendanceWeekView({
 
 
 
+  const crews = useMemo(
+    () => visibleCrews(state.crews, state.viewAsUserId),
+    [state.crews, state.viewAsUserId],
+  );
+
   const window = useMemo(
     () => attendanceDaysForMode(focusDate, rangeMode),
     [focusDate, rangeMode],
@@ -138,14 +144,14 @@ export function AttendanceWeekView({
       aggregateAttendanceByCrew(
         state.crewAttendance,
         state.crewEquipmentLogs,
-        state.crews,
+        crews,
         window.days,
         { projectIds },
       ),
     [
       state.crewAttendance,
       state.crewEquipmentLogs,
-      state.crews,
+      crews,
       window.days,
       projectIds,
     ],
@@ -178,13 +184,13 @@ export function AttendanceWeekView({
 
   const addingCrew = useMemo(() => {
     if (!adding) return null;
-    return state.crews.find((c) => c.id === adding.crewId) ?? null;
-  }, [adding, state.crews]);
+    return crews.find((c) => c.id === adding.crewId) ?? null;
+  }, [adding, crews]);
 
   const editingCrew = useMemo(() => {
     if (!editingAttendance) return null;
-    return state.crews.find((c) => c.id === editingAttendance.crewId) ?? null;
-  }, [editingAttendance, state.crews]);
+    return crews.find((c) => c.id === editingAttendance.crewId) ?? null;
+  }, [editingAttendance, crews]);
 
   const confirmEquipment = useMemo(() => {
     if (!confirmRows.length) return [];
@@ -316,7 +322,7 @@ export function AttendanceWeekView({
           : null}
 
       <div className="min-h-0 flex-1 overflow-auto thin-scrollbar">
-        {state.crews.length === 0 ? (
+        {crews.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-ink-faint">
             Brak brygad — dodaj je w zakładce Brygady, potem wpisuj obecność.
           </p>
@@ -382,7 +388,7 @@ export function AttendanceWeekView({
           workDate={confirm.workDate}
           rows={confirmRows}
           equipment={confirmEquipment}
-          crews={state.crews}
+          crews={crews}
           projects={state.projects}
           onClose={() => setConfirm(null)}
           onSaveNote={(id, note) => {
@@ -418,7 +424,7 @@ export function AttendanceWeekView({
         <CrewAttendanceSheet
           key={`add-${adding.crewId}-${adding.workDate}`}
           crew={addingCrew}
-          crews={state.crews}
+          crews={crews}
           attendanceHistory={state.crewAttendance}
           projects={visibleProjects}
           blocks={state.scheduleBlocks}
@@ -435,7 +441,7 @@ export function AttendanceWeekView({
         <CrewAttendanceSheet
           key={`edit-${editingAttendance.id}`}
           crew={editingCrew}
-          crews={state.crews}
+          crews={crews}
           attendanceHistory={state.crewAttendance}
           projects={visibleProjects}
           blocks={state.scheduleBlocks}

@@ -44,6 +44,7 @@ import {
   type ScheduleRevealLevel,
 } from "@/lib/projectsPreview/scheduleRowCollapse";
 import { softenScheduleColor } from "@/lib/projectsPreview/softenScheduleColor";
+import { visibleCrews } from "@/lib/projectsPreview/search";
 import {
   DOC_EVENT_STATUS_LABEL,
   PROJECT_LEVEL_EVENT_CATEGORY,
@@ -243,6 +244,11 @@ export function ScheduleTab({
     [state.projects, state.viewAsUserId],
   );
 
+  const crews = useMemo(
+    () => visibleCrews(state.crews, state.viewAsUserId),
+    [state.crews, state.viewAsUserId],
+  );
+
   /** Budowy currently on the board — one when focused, filtered set otherwise. */
   const scopeProjects = useMemo(() => {
     if (projectId) {
@@ -427,7 +433,7 @@ export function ScheduleTab({
 
   const rows = useMemo(() => {
     if (mode === "byCrew") {
-      return buildByCrewRows(workBlocks, state.crews, state.projects);
+      return buildByCrewRows(workBlocks, crews, state.projects);
     }
     if (mode === "allBuilds") {
       return buildAllBuildsRows(
@@ -457,7 +463,7 @@ export function ScheduleTab({
         })(),
       },
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- crewName derives from state.crews
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- crewName derives from crews
   }, [
     mode,
     workBlocks,
@@ -466,7 +472,7 @@ export function ScheduleTab({
     defaultEventProjectId,
     scopeProjects,
     scheduleEvents,
-    state.crews,
+    crews,
     state.projects,
     state.scheduleCatalog,
     state.catalog,
@@ -937,7 +943,7 @@ export function ScheduleTab({
           <ScheduleMobileList
             mode={mode}
             projects={scopeProjects}
-            crews={state.crews}
+            crews={crews}
             blocks={blocks}
             events={scheduleEvents}
             catalog={state.scheduleCatalog}
@@ -960,7 +966,7 @@ export function ScheduleTab({
           <TimelineBoard
             rows={boardRows}
             range={range}
-            crews={state.crews}
+            crews={crews}
             conflictIds={conflictIds}
             blockById={byId}
             eventsByBlock={eventsByBlock}
@@ -1111,7 +1117,7 @@ export function ScheduleTab({
             ""
           }
           projects={myProjects.length ? myProjects : state.projects}
-          crews={state.crews}
+          crews={crews}
           onAddCrew={() => setCrewEdit("new")}
           scheduleCatalog={state.scheduleCatalog}
           allBlocks={
@@ -1375,6 +1381,8 @@ export function ScheduleTab({
       {crewEdit !== null ? (
         <CrewEditorSheet
           crew={crewEdit === "new" ? null : crewEdit}
+          users={state.users}
+          currentUserId={state.viewAsUserId}
           onClose={() => setCrewEdit(null)}
           onSave={(data) => {
             repo.upsertCrew(data);

@@ -69,6 +69,8 @@ describe("aggregateAttendanceByCrew", () => {
       supervisor: "",
       company: "Firma X",
       phone: "",
+      members: [],
+      viewerUserIds: [],
     },
     {
       id: "c2",
@@ -78,6 +80,8 @@ describe("aggregateAttendanceByCrew", () => {
       supervisor: "",
       company: "Firma X",
       phone: "",
+      members: [],
+      viewerUserIds: [],
     },
     {
       id: "c3",
@@ -87,6 +91,8 @@ describe("aggregateAttendanceByCrew", () => {
       supervisor: "",
       company: "",
       phone: "",
+      members: [],
+      viewerUserIds: [],
     },
   ];
 
@@ -231,6 +237,8 @@ describe("workerShifts", () => {
       supervisor: "",
       company: "Firma X",
       phone: "",
+      members: [],
+      viewerUserIds: [],
     };
     const initial = resolveInitialWorkers({
       existing: null,
@@ -241,6 +249,44 @@ describe("workerShifts", () => {
     });
     expect(initial).toHaveLength(2);
     expect(initial[0]!.startTime).toBe("07:00");
+  });
+
+  it("counts 0 RH for absence codes and normalizes them", async () => {
+    const {
+      normalizeWorkerList,
+      totalLaborHours,
+      workerLaborHours,
+      WORKER_ABSENCE_LABEL,
+    } = await import("./workerShifts");
+    expect(WORKER_ABSENCE_LABEL.U).toBe("Urlop");
+    const withLeave = {
+      id: "w1",
+      startTime: "07:00",
+      endTime: "15:00",
+      absence: "U" as const,
+    };
+    expect(workerLaborHours(withLeave)).toBe(0);
+    expect(
+      totalLaborHours([
+        withLeave,
+        { id: "w2", startTime: "07:00", endTime: "15:00" },
+      ]),
+    ).toBe(8);
+    const parsed = normalizeWorkerList([
+      {
+        id: "a",
+        startTime: "07:00",
+        endTime: "15:00",
+        absence: "NU",
+        label: "Jan",
+      },
+      { id: "b", start_time: "08:00", end_time: "16:00", absence_code: "W" },
+      { id: "c", startTime: "07:00", endTime: "15:00", absence: "nope" },
+    ]);
+    expect(parsed[0]!.absence).toBe("NU");
+    expect(parsed[1]!.absence).toBe("W");
+    expect(parsed[2]!.absence).toBeNull();
+    expect(totalLaborHours(parsed)).toBe(8);
   });
 
   it("clones previous company workers", async () => {
@@ -254,6 +300,8 @@ describe("workerShifts", () => {
         supervisor: "",
         company: "Firma X",
         phone: "",
+        members: [],
+        viewerUserIds: [],
       },
       {
         id: "c2",
@@ -263,6 +311,8 @@ describe("workerShifts", () => {
         supervisor: "",
         company: "Firma X",
         phone: "",
+        members: [],
+        viewerUserIds: [],
       },
     ];
     const attendance: CrewAttendance[] = [

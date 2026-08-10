@@ -9,6 +9,7 @@ import { buildBudowaScheduleCatalog } from "@/lib/projectsPreview/scheduleCatalo
 import type { ScheduleCatalogPreset } from "@/lib/projectsPreview/scheduleCatalog";
 import { buildProjectSchedulePreset } from "@/lib/projectsPreview/schedulePresetSeed";
 import { normalizeProjectCode } from "@/lib/projectsPreview/types";
+import { normalizeCrewMembers } from "@/lib/projectsPreview/crewMembers";
 import { normalizeWorkerList, totalLaborHours } from "@/lib/projectsPreview/workerShifts";
 import type {
   CrewAttendance,
@@ -1339,7 +1340,7 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
   private async syncCrew(row: PreviewCrew) {
     if (!supabase) return;
     if (this.pendingDeletedCrewIds.has(row.id)) return;
-    const { error } = await supabase.from("construction_crews").upsert({
+    const payload = {
       id: row.id,
       org_id: this.orgId,
       name: row.name,
@@ -1348,7 +1349,59 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       supervisor: row.supervisor,
       company: row.company,
       phone: row.phone,
-    });
+      members: row.members,
+      viewer_user_ids: row.viewerUserIds,
+    };
+    const { error } = await supabase.from("construction_crews").upsert(payload);
+    if (error && /viewer_user_ids/i.test(error.message)) {
+      console.warn(
+        "[schedules] crews.viewer_user_ids missing — sync without column (run 0063):",
+        error.message,
+      );
+      const { members: _m, viewer_user_ids: _v, ...withoutViewers } = payload;
+      void _m;
+      void _v;
+      const retryMembers = { ...withoutViewers, members: row.members };
+      const { error: errViewers } = await supabase
+        .from("construction_crews")
+        .upsert(retryMembers);
+      if (errViewers && /members/i.test(errViewers.message)) {
+        console.warn(
+          "[schedules] crews.members missing — sync without column (run 0062):",
+          errViewers.message,
+        );
+        const { error: err2 } = await supabase
+          .from("construction_crews")
+          .upsert(withoutViewers);
+        if (err2) console.warn("[schedules] sync crew failed:", err2.message);
+        return;
+      }
+      if (errViewers) {
+        console.warn("[schedules] sync crew failed:", errViewers.message);
+      }
+      return;
+    }
+    if (error && /members/i.test(error.message)) {
+      console.warn(
+        "[schedules] crews.members missing — sync without column (run 0062):",
+        error.message,
+      );
+      const { members: _m, viewer_user_ids: _v, ...withoutMembers } = payload;
+      void _m;
+      void _v;
+      const { error: err2 } = await supabase
+        .from("construction_crews")
+        .upsert({ ...withoutMembers, viewer_user_ids: row.viewerUserIds });
+      if (err2 && /viewer_user_ids/i.test(err2.message)) {
+        const { error: err3 } = await supabase
+          .from("construction_crews")
+          .upsert(withoutMembers);
+        if (err3) console.warn("[schedules] sync crew failed:", err3.message);
+        return;
+      }
+      if (err2) console.warn("[schedules] sync crew failed:", err2.message);
+      return;
+    }
     if (error) {
       console.warn("[schedules] sync crew failed:", error.message);
     }
@@ -1611,6 +1664,13 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
     supervisor: c.supervisor ?? "",
     company: c.company ?? "",
     phone: c.phone ?? "",
+    members: normalizeCrewMembers(c.members),
+    viewerUserIds: Array.isArray(c.viewer_user_ids)
+      ? c.viewer_user_ids.filter(
+          (id: unknown): id is string =>
+            typeof id === "string" && id.trim().length > 0,
+        )
+      : [],
   }));
 
   const scheduleBlocks: ScheduleBlock[] = (blocksRes.data ?? []).map((b) => ({

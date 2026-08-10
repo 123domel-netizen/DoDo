@@ -1,4 +1,4 @@
-import { totalLaborHours } from "./workerShifts";
+import { isWorkerAbsenceCode, totalLaborHours } from "./workerShifts";
 import type { CrewWorkerShift } from "./types";
 
 export type AttendanceWorkerLine = {
@@ -7,6 +7,8 @@ export type AttendanceWorkerLine = {
   endTime: string;
   /** Opis osoby (Majster / Uczeń / własne). */
   label?: string | null;
+  /** U / NU / NN / W — bez RH. */
+  absence?: import("./types").WorkerAbsenceCode | "" | null;
   /** Empty / null = use defaultProjectId. */
   projectId?: string | null;
 };
@@ -84,6 +86,7 @@ export function splitAttendanceByProject(opts: {
       startTime: w.startTime,
       endTime: w.endTime,
       label: label || null,
+      absence: isWorkerAbsenceCode(w.absence) ? w.absence : null,
     });
   }
   for (const e of equipment) {
