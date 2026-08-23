@@ -76,4 +76,5 @@ begin
 end;
 $$;
 
+revoke all on function public.attach_message_to_thread(uuid, uuid) from public;
 grant execute on function public.attach_message_to_thread(uuid, uuid) to authenticated;

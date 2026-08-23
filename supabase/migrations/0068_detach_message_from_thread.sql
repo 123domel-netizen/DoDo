@@ -39,4 +39,5 @@ begin
 end;
 $$;
 
+revoke all on function public.detach_message_from_thread(uuid) from public;
 grant execute on function public.detach_message_from_thread(uuid) to authenticated;
