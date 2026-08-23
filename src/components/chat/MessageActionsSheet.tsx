@@ -14,10 +14,12 @@ import {
   Forward,
   Gavel,
   History,
+  LogOut,
   MessageSquare,
   MoveRight,
   Pencil,
   StickyNote,
+  Square,
   Trash2,
 } from "lucide-react";
 import type { ChatMessage } from "@/lib/chat/types";
@@ -29,6 +31,8 @@ export type MessageAction =
   | "reply"
   | "forward"
   | "move"
+  | "select"
+  | "detachFromThread"
   | "createTask"
   | "createEvent"
   | "createChecklist"
@@ -56,6 +60,8 @@ interface MessageActionsSheetProps {
   anchor: MessageActionAnchor | null;
   /** Wątki wyłączone w kontekście (np. wewnątrz wątku / dyskusji itemu). */
   allowThread?: boolean;
+  /** Pokaż „Wyłącz z wątku” (odpowiedź w otwartym wątku). */
+  allowDetachFromThread?: boolean;
   onAction: (action: MessageAction, msg: ChatMessage, arg?: string) => void;
   onClose: () => void;
 }
@@ -132,6 +138,7 @@ export function MessageActionsSheet({
   mine,
   anchor,
   allowThread = true,
+  allowDetachFromThread = false,
   onAction,
   onClose,
 }: MessageActionsSheetProps) {
@@ -246,6 +253,18 @@ export function MessageActionsSheet({
               onClick={() => act("openThread")}
             />
           )}
+          {allowDetachFromThread && Boolean(msg.threadRootId) && (
+            <ActionRow
+              icon={<LogOut size={14} />}
+              label="Wyłącz z wątku"
+              onClick={() => act("detachFromThread")}
+            />
+          )}
+          <ActionRow
+            icon={<Square size={14} />}
+            label="Zaznacz wiadomość"
+            onClick={() => act("select")}
+          />
           <ActionRow
             icon={<Forward size={14} />}
             label="Przekaż"

@@ -10,6 +10,7 @@ import type {
   PreviewCrew,
   PreviewUser,
 } from "@/lib/projectsPreview/types";
+import { useStore } from "@/state/store";
 
 /** Soft palette for timeline bars — similar hues sit next to each other. */
 export const CREW_COLORS = [
@@ -53,7 +54,16 @@ interface CrewEditorSheetProps {
   /** Aktualny użytkownik — zawsze w liście przy ograniczeniu. */
   currentUserId: string;
   onClose: () => void;
-  onSave: (data: Omit<PreviewCrew, "id"> & { id?: string }) => void;
+  /**
+   * Kształt zgodny z `ScheduleRepository.upsertCrew`: twórcę ustawiamy tylko
+   * przy zakładaniu brygady, przy edycji pole zostaje nietknięte.
+   */
+  onSave: (
+    data: Omit<PreviewCrew, "id" | "createdByUserId"> & {
+      id?: string;
+      createdByUserId?: string | null;
+    },
+  ) => void;
   onDelete?: () => void;
 }
 
@@ -66,6 +76,16 @@ export function CrewEditorSheet({
   onSave,
   onDelete,
 }: CrewEditorSheetProps) {
+  const isOrgAdmin = useStore((s) => {
+    const org = s.myOrgs.find((o) => o.id === s.activeOrgId);
+    return Boolean(s.isAppAdmin || org?.myRole === "admin");
+  });
+  const canEditVisibility =
+    isOrgAdmin ||
+    !crew ||
+    (Boolean(crew.createdByUserId) &&
+      crew.createdByUserId === currentUserId);
+
   const [name, setName] = useState(crew?.name ?? "");
   const [headcount, setHeadcount] = useState(
     crew?.headcount != null ? String(crew.headcount) : "",
@@ -104,16 +124,21 @@ export function CrewEditorSheet({
       alert("Ilość osób musi być liczbą ≥ 0.");
       return;
     }
-    let viewers: string[] = [];
-    if (restrictVisibility) {
-      viewers = Array.from(
-        new Set(
-          [...viewerUserIds, currentUserId].filter((id) => id.trim().length > 0),
-        ),
-      );
-      if (viewers.length === 0) {
-        alert("Wybierz przynajmniej jedną osobę z dostępem.");
-        return;
+    let viewers = crew?.viewerUserIds ?? [];
+    if (canEditVisibility) {
+      viewers = [];
+      if (restrictVisibility) {
+        viewers = Array.from(
+          new Set(
+            [...viewerUserIds, currentUserId].filter(
+              (id) => id.trim().length > 0,
+            ),
+          ),
+        );
+        if (viewers.length === 0) {
+          alert("Wybierz przynajmniej jedną osobę z dostępem.");
+          return;
+        }
       }
     }
     onSave({
@@ -126,6 +151,9 @@ export function CrewEditorSheet({
       phone: phone.trim(),
       members: normalizeCrewMembers(members),
       viewerUserIds: viewers,
+      ...(crew
+        ? {}
+        : { createdByUserId: currentUserId.trim() || null }),
     });
   };
 
@@ -271,89 +299,91 @@ export function CrewEditorSheet({
             )}
           </div>
 
-          <fieldset>
-            <legend className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
-              Widoczność
-            </legend>
-            <div className="space-y-2 rounded-lg border border-line/70 bg-surface-raised/40 p-2.5">
-              <label className="flex cursor-pointer items-start gap-2 text-[12px] text-ink">
-                <input
-                  type="radio"
-                  name="crew-visibility"
-                  checked={!restrictVisibility}
-                  onChange={() => setRestrictVisibility(false)}
-                  className="mt-0.5 accent-accent"
-                />
-                <span>
-                  <span className="font-medium">Cały zespół</span>
-                  <span className="mt-0.5 block text-[11px] text-ink-faint">
-                    Wszyscy w org widzą brygadę i obecności.
+          {canEditVisibility ? (
+            <fieldset>
+              <legend className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                Widoczność
+              </legend>
+              <div className="space-y-2 rounded-lg border border-line/70 bg-surface-raised/40 p-2.5">
+                <label className="flex cursor-pointer items-start gap-2 text-[12px] text-ink">
+                  <input
+                    type="radio"
+                    name="crew-visibility"
+                    checked={!restrictVisibility}
+                    onChange={() => setRestrictVisibility(false)}
+                    className="mt-0.5 accent-accent"
+                  />
+                  <span>
+                    <span className="font-medium">Cały zespół</span>
+                    <span className="mt-0.5 block text-[11px] text-ink-faint">
+                      Wszyscy w org widzą brygadę i obecności.
+                    </span>
                   </span>
-                </span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 text-[12px] text-ink">
-                <input
-                  type="radio"
-                  name="crew-visibility"
-                  checked={restrictVisibility}
-                  onChange={() => {
-                    setRestrictVisibility(true);
-                    setViewerUserIds((prev) =>
-                      prev.length > 0
-                        ? prev
-                        : currentUserId
-                          ? [currentUserId]
-                          : [],
-                    );
-                  }}
-                  className="mt-0.5 accent-accent"
-                />
-                <span>
-                  <span className="font-medium">Wybrane osoby</span>
-                  <span className="mt-0.5 block text-[11px] text-ink-faint">
-                    Tylko zaznaczeni widzą brygadę i jej obecności.
-                  </span>
-                </span>
-              </label>
-              {restrictVisibility ? (
-                <div className="max-h-40 space-y-1 overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-raised/50 p-2">
-                  {users.length === 0 ? (
-                    <p className="px-1 py-1 text-[12px] text-ink-faint">
-                      Brak listy zespołu.
-                    </p>
-                  ) : (
-                    users.map((u) => {
-                      const isSelf = u.id === currentUserId;
-                      const checked =
-                        isSelf || viewerUserIds.includes(u.id);
-                      return (
-                        <label
-                          key={u.id}
-                          className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={isSelf}
-                            onChange={() => toggleViewer(u.id)}
-                            className="accent-[var(--color-accent,#3b82f6)]"
-                          />
-                          <span className="min-w-0 truncate">
-                            {u.displayName}
-                            {isSelf ? (
-                              <span className="ml-1 text-[10px] text-ink-faint">
-                                (ty)
-                              </span>
-                            ) : null}
-                          </span>
-                        </label>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2 text-[12px] text-ink">
+                  <input
+                    type="radio"
+                    name="crew-visibility"
+                    checked={restrictVisibility}
+                    onChange={() => {
+                      setRestrictVisibility(true);
+                      setViewerUserIds((prev) =>
+                        prev.length > 0
+                          ? prev
+                          : currentUserId
+                            ? [currentUserId]
+                            : [],
                       );
-                    })
-                  )}
-                </div>
-              ) : null}
-            </div>
-          </fieldset>
+                    }}
+                    className="mt-0.5 accent-accent"
+                  />
+                  <span>
+                    <span className="font-medium">Wybrane osoby</span>
+                    <span className="mt-0.5 block text-[11px] text-ink-faint">
+                      Tylko zaznaczeni widzą brygadę i jej obecności.
+                    </span>
+                  </span>
+                </label>
+                {restrictVisibility ? (
+                  <div className="max-h-40 space-y-1 overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-raised/50 p-2">
+                    {users.length === 0 ? (
+                      <p className="px-1 py-1 text-[12px] text-ink-faint">
+                        Brak listy zespołu.
+                      </p>
+                    ) : (
+                      users.map((u) => {
+                        const isSelf = u.id === currentUserId;
+                        const checked =
+                          isSelf || viewerUserIds.includes(u.id);
+                        return (
+                          <label
+                            key={u.id}
+                            className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={isSelf}
+                              onChange={() => toggleViewer(u.id)}
+                              className="accent-[var(--color-accent,#3b82f6)]"
+                            />
+                            <span className="min-w-0 truncate">
+                              {u.displayName}
+                              {isSelf ? (
+                                <span className="ml-1 text-[10px] text-ink-faint">
+                                  (ty)
+                                </span>
+                              ) : null}
+                            </span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </fieldset>
+          ) : null}
 
           <Field label="Kolor na osi">
             <div className="flex flex-wrap gap-2">

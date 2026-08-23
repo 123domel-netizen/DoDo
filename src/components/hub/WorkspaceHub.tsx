@@ -58,7 +58,7 @@ import { GalleryViewer } from "@/components/chat/GalleryViewer";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
 import { ConversationKindMark } from "@/components/chat/PresenceDot";
 import { ReadReceiptTicks } from "@/components/chat/ReadReceiptTicks";
-import { setRouteHash } from "@/lib/navigation";
+import { pushRouteHash } from "@/lib/navigation";
 import type {
   ChatDecision,
   ChatNote,
@@ -560,7 +560,7 @@ export function WorkspaceHub() {
 
   const openRow = (entry: ChatOverviewEntry) => {
     void openConversation(entry.id);
-    setRouteHash({ view: "conversation", conversationId: entry.id });
+    pushRouteHash({ view: "conversation", conversationId: entry.id });
   };
 
   const runSearch = async () => {
@@ -598,7 +598,7 @@ export function WorkspaceHub() {
       return;
     }
     void openConversation(channelId);
-    setRouteHash({ view: "conversation", conversationId: channelId });
+    pushRouteHash({ view: "conversation", conversationId: channelId });
   };
 
   const handleStartContactDm = async (userId: string) => {
@@ -607,7 +607,7 @@ export function WorkspaceHub() {
     setStartingDmUserId(null);
     if (!id) return;
     void openConversation(id);
-    setRouteHash({ view: "conversation", conversationId: id });
+    pushRouteHash({ view: "conversation", conversationId: id });
   };
 
   const renderConvRow = (
@@ -952,7 +952,7 @@ export function WorkspaceHub() {
                       void jumpToMessage(r.conversationId!, r.id);
                     }
                   });
-                  setRouteHash({
+                  pushRouteHash({
                     view: "conversation",
                     conversationId: r.conversationId,
                   });

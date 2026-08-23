@@ -122,10 +122,14 @@ export interface ScheduleRepository {
   seedScheduleTemplate(projectId: string): ScheduleBlock[];
 
   upsertCrew(
-    crew: Omit<PreviewCrew, "id" | "members" | "viewerUserIds"> & {
+    crew: Omit<
+      PreviewCrew,
+      "id" | "members" | "viewerUserIds" | "createdByUserId"
+    > & {
       id?: string;
       members?: import("@/lib/projectsPreview/types").CrewMember[];
       viewerUserIds?: string[];
+      createdByUserId?: string | null;
     },
   ): PreviewCrew;
   deleteCrew(id: string): { ok: true } | { ok: false; error: string };

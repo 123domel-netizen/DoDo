@@ -85,6 +85,7 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
       phone: "+48 500 100 200",
       members: [],
       viewerUserIds: [],
+      createdByUserId: "u-admin",
     },
     {
       id: "crew-dach",
@@ -96,6 +97,7 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
       phone: "+48 501 200 300",
       members: [],
       viewerUserIds: [],
+      createdByUserId: "u-admin",
     },
     {
       id: "crew-inst",
@@ -107,6 +109,7 @@ export function buildDemoState(viewAsUserId = "u-admin"): ProjectsPreviewState {
       phone: "+48 502 300 400",
       members: [],
       viewerUserIds: [],
+      createdByUserId: "u-admin",
     },
   ];
 

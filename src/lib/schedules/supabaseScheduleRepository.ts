@@ -1351,8 +1351,42 @@ export class SupabaseScheduleRepository implements ScheduleRepository {
       phone: row.phone,
       members: row.members,
       viewer_user_ids: row.viewerUserIds,
+      created_by: row.createdByUserId,
     };
     const { error } = await supabase.from("construction_crews").upsert(payload);
+    if (error && /created_by/i.test(error.message)) {
+      console.warn(
+        "[schedules] crews.created_by missing — sync without column (run 0064):",
+        error.message,
+      );
+      const { created_by: _c, ...withoutCreated } = payload;
+      void _c;
+      const { error: errCreated } = await supabase
+        .from("construction_crews")
+        .upsert(withoutCreated);
+      if (errCreated && /viewer_user_ids/i.test(errCreated.message)) {
+        // fall through to existing viewer/members fallbacks below via recursive-ish retry
+        const { members: _m, viewer_user_ids: _v, ...base } = withoutCreated;
+        void _m;
+        void _v;
+        const { error: err2 } = await supabase
+          .from("construction_crews")
+          .upsert({ ...base, members: row.members });
+        if (err2 && /members/i.test(err2.message)) {
+          const { error: err3 } = await supabase
+            .from("construction_crews")
+            .upsert(base);
+          if (err3) console.warn("[schedules] sync crew failed:", err3.message);
+          return;
+        }
+        if (err2) console.warn("[schedules] sync crew failed:", err2.message);
+        return;
+      }
+      if (errCreated) {
+        console.warn("[schedules] sync crew failed:", errCreated.message);
+      }
+      return;
+    }
     if (error && /viewer_user_ids/i.test(error.message)) {
       console.warn(
         "[schedules] crews.viewer_user_ids missing — sync without column (run 0063):",
@@ -1671,6 +1705,10 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
             typeof id === "string" && id.trim().length > 0,
         )
       : [],
+    createdByUserId:
+      typeof c.created_by === "string" && c.created_by.trim()
+        ? c.created_by.trim()
+        : null,
   }));
 
   const scheduleBlocks: ScheduleBlock[] = (blocksRes.data ?? []).map((b) => ({

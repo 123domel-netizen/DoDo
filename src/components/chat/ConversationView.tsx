@@ -52,8 +52,10 @@ import {
   openConversation,
   pinConversation,
   pinThreadMessage,
+  detachMessageFromExistingThread,
   retryFailedMessage,
   saveThreadTitle,
+  attachMessageToExistingThread,
   returnToLatest,
   scheduleOverviewRefresh,
   sendChatMessage,
@@ -76,10 +78,14 @@ import {
 } from "@/lib/chat/api";
 import {
   beginConvertMessageToItem,
+  beginConvertMessagesToItem,
   beginEventFromConversation,
   saveMessageAsDecision,
   saveMessageAsNote,
 } from "@/lib/chat/convert";
+import type { MessageSelectMode } from "@/lib/chat/selectionChecklist";
+import { plainTextFromSelectedMessages } from "@/lib/chat/selectionCopy";
+import { MessageSelectionBar } from "@/components/chat/MessageSelectionBar";
 import { isOnline } from "@/lib/chat/presence";
 import {
   TYPING_EXPIRE_MS,
@@ -88,7 +94,8 @@ import {
   type TypingHandle,
 } from "@/lib/chat/typing";
 import type { ChatMessage, ChatProfile } from "@/lib/chat/types";
-import { setRouteHash } from "@/lib/navigation";
+import { goBackOr, pushRouteHash, setRouteHash } from "@/lib/navigation";
+import { useHistoryBackLayer } from "@/hooks/useHistoryBackLayer";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { MessageComposer, type ReplyTarget } from "@/components/chat/MessageComposer";
 import {
@@ -110,6 +117,7 @@ import { ConversationInfoDialog } from "@/components/chat/ConversationInfoDialog
 import { PinnedThreadsBar } from "@/components/chat/PinnedThreadsBar";
 import { ThreadsSheet } from "@/components/chat/ThreadsSheet";
 import { NameThreadDialog } from "@/components/chat/NameThreadDialog";
+import { ThreadReplyChooserDialog } from "@/components/chat/ThreadReplyChooserDialog";
 import {
   MessageTargetPickerDialog,
   type MessageTargetMode,
@@ -155,6 +163,10 @@ function MessageFeed({
   onOpenRegistry,
   onOpenGallery,
   inThread = false,
+  selectionModes,
+  selectionActive = false,
+  onToggleSelect,
+  onDetachFromThread,
 }: {
   messages: ChatMessage[];
   myUserId: string | null;
@@ -176,6 +188,10 @@ function MessageFeed({
   onOpenRegistry?: (msg: ChatMessage) => void;
   onOpenGallery?: (galleryId: string) => void;
   inThread?: boolean;
+  selectionModes?: Record<string, MessageSelectMode>;
+  selectionActive?: boolean;
+  onToggleSelect?: (msg: ChatMessage, opts?: { forceSplit?: boolean }) => void;
+  onDetachFromThread?: (msg: ChatMessage) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -275,7 +291,7 @@ function MessageFeed({
         if (el.scrollTop < 150) triggerOlder();
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) triggerNewer();
       }}
-      className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-2"
+      className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-3"
     >
       <div ref={contentRef}>
       {hasOlder && onLoadOlder && (
@@ -308,7 +324,7 @@ function MessageFeed({
         const gapMs = prevLast
           ? new Date(itemTime).getTime() - new Date(prevLast.createdAt).getTime()
           : Number.POSITIVE_INFINITY;
-        const showTime = gapMs > 5 * 60_000;
+        const showTime = gapMs > 2 * 60_000;
 
         if (item.type === "threadGroup") {
           const root =
@@ -372,6 +388,10 @@ function MessageFeed({
             onJumpTo={onJumpTo}
             onOpenRegistry={onOpenRegistry}
             onOpenGallery={onOpenGallery}
+            selectMode={selectionModes?.[m.id] ?? null}
+            selectionActive={selectionActive}
+            onToggleSelect={onToggleSelect}
+            onDetachFromThread={onDetachFromThread}
           />
         );
       })}
@@ -419,6 +439,7 @@ export function ConversationView({
     anchor: DOMRect;
   } | null>(null);
   const [nameThreadMsg, setNameThreadMsg] = useState<ChatMessage | null>(null);
+  const [threadChooserMsg, setThreadChooserMsg] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<{ id: string; body: string } | null>(null);
   const [replyTo, setReplyTo] = useState<(ReplyTarget & { threadRootId: string | null }) | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -435,12 +456,38 @@ export function ConversationView({
   const [targetPick, setTargetPick] = useState<{
     mode: MessageTargetMode;
     msg: ChatMessage;
+    /** Zbiorcze przekazywanie — unikalne rooty z zaznaczenia. */
+    bulkMsgs?: ChatMessage[];
   } | null>(null);
   const [targetBusy, setTargetBusy] = useState(false);
   const [targetError, setTargetError] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{
+    modes: Record<string, MessageSelectMode>;
+    order: string[];
+  }>({ modes: {}, order: [] });
+  const selectionModes = selection.modes;
+  const selectionOrder = selection.order;
   const [fetchedQuotes, setFetchedQuotes] = useState<Record<string, ChatMessage | null>>({});
   const [typing, setTyping] = useState<Record<string, { name: string; at: number }>>({});
   const typingHandle = useRef<TypingHandle | null>(null);
+
+  useHistoryBackLayer(infoOpen, () => setInfoOpen(false));
+  useHistoryBackLayer(showThreads, () => setShowThreads(false));
+  useHistoryBackLayer(Boolean(galleryViewerId), () => setGalleryViewerId(null));
+  useHistoryBackLayer(showMedia, () => setShowMedia(false));
+  useHistoryBackLayer(manageOpen, () => setManageOpen(false));
+  useHistoryBackLayer(galleryCreateOpen, () => setGalleryCreateOpen(false));
+  useHistoryBackLayer(Boolean(registryDetail), () => setRegistryDetail(null));
+  useHistoryBackLayer(Boolean(registryMode), () => setRegistryMode(null));
+  useHistoryBackLayer(selectionOrder.length > 0, () => {
+    setSelection({ modes: {}, order: [] });
+  });
+  useHistoryBackLayer(Boolean(targetPick), () => {
+    if (!targetBusy) {
+      setTargetPick(null);
+      setTargetError(null);
+    }
+  });
 
   const entry = overview.find((c) => c.id === conversationId);
   const focus =
@@ -558,6 +605,71 @@ export function ConversationView({
     }
   }, [feedLen, conversationId]);
 
+  // Zmiana rozmowy → wyczyść zaznaczenie.
+  useEffect(() => {
+    setSelection({ modes: {}, order: [] });
+  }, [conversationId]);
+
+  const clearSelection = useCallback(() => {
+    setSelection({ modes: {}, order: [] });
+  }, []);
+
+  const toggleSelect = useCallback(
+    (msg: ChatMessage, opts?: { forceSplit?: boolean }) => {
+      if (msg.deletedAt || msg.kind === "system") return;
+      setSelection((prev) => {
+        const cur = prev.modes[msg.id];
+        const modes = { ...prev.modes };
+        let order = prev.order;
+
+        if (opts?.forceSplit) {
+          modes[msg.id] = "split";
+          if (!order.includes(msg.id)) order = [...order, msg.id];
+          return { modes, order };
+        }
+        if (!cur) {
+          modes[msg.id] = "whole";
+          if (!order.includes(msg.id)) order = [...order, msg.id];
+          return { modes, order };
+        }
+        if (cur === "whole") {
+          modes[msg.id] = "split";
+          return { modes, order };
+        }
+        delete modes[msg.id];
+        return { modes, order: order.filter((id) => id !== msg.id) };
+      });
+    },
+    [],
+  );
+
+  const resolveSelectedEntries = useCallback(() => {
+    const byId = new Map<string, ChatMessage>();
+    for (const m of displayedFeed) byId.set(m.id, m);
+    for (const m of feed) byId.set(m.id, m);
+    if (threadMessages) for (const m of threadMessages) byId.set(m.id, m);
+    const entries: { msg: ChatMessage; mode: MessageSelectMode }[] = [];
+    for (const id of selectionOrder) {
+      const mode = selectionModes[id];
+      const m = byId.get(id);
+      if (mode && m) entries.push({ msg: m, mode });
+    }
+    return entries;
+  }, [displayedFeed, feed, threadMessages, selectionOrder, selectionModes]);
+
+  const copySelectedMessages = useCallback(async () => {
+    const text = plainTextFromSelectedMessages(
+      resolveSelectedEntries().map((e) => e.msg),
+    );
+    if (!text.trim()) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      alert("Nie udało się skopiować do schowka.");
+      return;
+    }
+  }, [resolveSelectedEntries]);
+
   const handleJumpTo = useCallback(
     (messageId: string) => void jumpToMessage(conversationId, messageId),
     [conversationId],
@@ -588,10 +700,23 @@ export function ConversationView({
         (fromArg && fromArg.id === rootId ? fromArg : null) ??
         (messages ?? []).find((m) => m.id === rootId) ??
         null;
-      if (root && !root.threadTitle?.trim()) {
-        setNameThreadMsg(root);
+
+      // Już w wątku jako odpowiedź → otwórz root.
+      if (fromArg?.threadRootId) {
+        void openThread(fromArg.threadRootId);
         return;
       }
+
+      const replyCount = useChatStore.getState().replyCounts[rootId] ?? 0;
+      const isEstablished =
+        replyCount > 0 || Boolean(root?.threadTitle?.trim());
+
+      // Samodzielna wiadomość (jeszcze nie wątek) → wybór: nowy / przypisz.
+      if (root && !isEstablished) {
+        setThreadChooserMsg(root);
+        return;
+      }
+
       void openThread(rootId);
     },
     [displayedFeed, feed, messages],
@@ -756,6 +881,14 @@ export function ConversationView({
         case "openThread":
           handleOpenThread(msg);
           break;
+        case "select":
+          toggleSelect(msg);
+          break;
+        case "detachFromThread":
+          void detachMessageFromExistingThread(msg).then(({ error }) => {
+            if (error) alert(error);
+          });
+          break;
         case "forward":
           setTargetError(null);
           setTargetPick({ mode: "forward", msg });
@@ -778,8 +911,14 @@ export function ConversationView({
           break;
       }
     },
-    [profiles, handleReply, handleOpenThread],
+    [profiles, handleReply, handleOpenThread, toggleSelect],
   );
+
+  const handleDetachFromThread = useCallback((msg: ChatMessage) => {
+    void detachMessageFromExistingThread(msg).then(({ error }) => {
+      if (error) alert(error);
+    });
+  }, []);
 
   const handleSaveEdit = useCallback(
     (id: string, body: string, mentions: string[]) => {
@@ -849,12 +988,64 @@ export function ConversationView({
     />
   ) : null;
 
+  const threadChooserDialog = threadChooserMsg ? (
+    <ThreadReplyChooserDialog
+      msg={threadChooserMsg}
+      onCancel={() => setThreadChooserMsg(null)}
+      onCreateNew={() => {
+        const root = threadChooserMsg;
+        setThreadChooserMsg(null);
+        setNameThreadMsg(root);
+      }}
+      onAssign={async (targetRootId) => {
+        const root = threadChooserMsg;
+        const { error } = await attachMessageToExistingThread(root, targetRootId);
+        if (error) throw new Error(error);
+        setThreadChooserMsg(null);
+      }}
+    />
+  ) : null;
+
   const handleTargetPick = useCallback(
     async (targetConversationId: string) => {
       if (!targetPick) return;
       setTargetBusy(true);
       setTargetError(null);
-      const { mode, msg } = targetPick;
+      const { mode, msg, bulkMsgs } = targetPick;
+
+      if (mode === "forward" && bulkMsgs?.length) {
+        const roots = new Map<string, ChatMessage>();
+        for (const m of bulkMsgs) {
+          const rootId = m.threadRootId ?? m.id;
+          if (!roots.has(rootId)) roots.set(rootId, m);
+        }
+        const errors: string[] = [];
+        for (const m of roots.values()) {
+          const res = await forwardChatThread(m, targetConversationId);
+          if (res.error) errors.push(res.error);
+        }
+        setTargetBusy(false);
+        if (errors.length) {
+          setTargetError(
+            errors.length === roots.size
+              ? errors[0]!
+              : `Część nie przeszła (${errors.length}/${roots.size}): ${errors[0]}`,
+          );
+          if (errors.length < roots.size) {
+            clearSelection();
+          }
+          return;
+        }
+        setTargetPick(null);
+        clearSelection();
+        void openConversation(targetConversationId);
+        pushRouteHash({
+          view: "conversation",
+          conversationId: targetConversationId,
+        });
+        return;
+      }
+
       const res =
         mode === "forward"
           ? await forwardChatThread(msg, targetConversationId)
@@ -867,11 +1058,15 @@ export function ConversationView({
       setTargetPick(null);
       if (mode === "forward") {
         void openConversation(targetConversationId);
+        pushRouteHash({
+          view: "conversation",
+          conversationId: targetConversationId,
+        });
       } else if (threadRootId) {
         setActiveThread(null);
       }
     },
-    [targetPick, threadRootId, setActiveThread],
+    [targetPick, threadRootId, setActiveThread, clearSelection],
   );
 
   const targetPickerDialog = targetPick ? (
@@ -907,8 +1102,10 @@ export function ConversationView({
           <button
             type="button"
             onClick={() => {
-              setActiveThread(null);
-              setRouteHash({ view: "conversation", conversationId });
+              goBackOr(() => {
+                setActiveThread(null);
+                setRouteHash({ view: "conversation", conversationId });
+              });
             }}
             className={headerIconBtn}
             aria-label="Wróć do rozmowy"
@@ -959,9 +1156,40 @@ export function ConversationView({
           onOpenRegistry={handleOpenRegistry}
           onOpenGallery={(id) => setGalleryViewerId(id)}
           inThread
+          selectionModes={selectionModes}
+          selectionActive={selectionOrder.length > 0}
+          onToggleSelect={toggleSelect}
+          onDetachFromThread={handleDetachFromThread}
         />
         {typingText && (
           <div className="px-3 pb-0.5 text-[11px] text-ink-faint">{typingText}</div>
+        )}
+        {selectionOrder.length > 0 && (
+          <MessageSelectionBar
+            count={selectionOrder.length}
+            busy={targetBusy}
+            onClear={clearSelection}
+            onCopy={() => void copySelectedMessages()}
+            onForward={() => {
+              const entries = resolveSelectedEntries();
+              const first = entries[0]?.msg;
+              if (!first) return;
+              setTargetError(null);
+              setTargetPick({
+                mode: "forward",
+                msg: first,
+                bulkMsgs: entries.map((e) => e.msg),
+              });
+            }}
+            onCreateTask={() => {
+              beginConvertMessagesToItem(resolveSelectedEntries(), "task");
+              clearSelection();
+            }}
+            onCreateEvent={() => {
+              beginConvertMessagesToItem(resolveSelectedEntries(), "event");
+              clearSelection();
+            }}
+          />
         )}
         {entry?.kind === "channel" && entry.myArchivedAt ? (
           <div className="border-t border-line px-3 py-2 text-center text-[12px] text-ink-faint">
@@ -979,6 +1207,7 @@ export function ConversationView({
           anchor={actionTarget?.anchor ?? null}
           mine={actionTarget?.msg.authorUserId === myUserId}
           allowThread={false}
+          allowDetachFromThread
           onAction={handleAction}
           onClose={() => setActionTarget(null)}
         />
@@ -988,6 +1217,7 @@ export function ConversationView({
           onClose={() => setHistoryMsg(null)}
         />
         {nameThreadDialog}
+        {threadChooserDialog}
         {targetPickerDialog}
         {galleryViewerId && (
           <GalleryViewer
@@ -1313,6 +1543,9 @@ export function ConversationView({
         onJumpTo={handleJumpTo}
         onOpenRegistry={handleOpenRegistry}
         onOpenGallery={(id) => setGalleryViewerId(id)}
+        selectionModes={selectionModes}
+        selectionActive={selectionOrder.length > 0}
+        onToggleSelect={toggleSelect}
       />
 
       {focus && (
@@ -1327,6 +1560,34 @@ export function ConversationView({
 
       {typingText && (
         <div className="px-3 pb-0.5 text-[11px] text-ink-faint">{typingText}</div>
+      )}
+
+      {selectionOrder.length > 0 && (
+        <MessageSelectionBar
+          count={selectionOrder.length}
+          busy={targetBusy}
+          onClear={clearSelection}
+          onCopy={() => void copySelectedMessages()}
+          onForward={() => {
+            const entries = resolveSelectedEntries();
+            const first = entries[0]?.msg;
+            if (!first) return;
+            setTargetError(null);
+            setTargetPick({
+              mode: "forward",
+              msg: first,
+              bulkMsgs: entries.map((e) => e.msg),
+            });
+          }}
+          onCreateTask={() => {
+            beginConvertMessagesToItem(resolveSelectedEntries(), "task");
+            clearSelection();
+          }}
+          onCreateEvent={() => {
+            beginConvertMessagesToItem(resolveSelectedEntries(), "event");
+            clearSelection();
+          }}
+        />
       )}
 
       {entry?.kind === "channel" && entry.myArchivedAt ? (
@@ -1401,6 +1662,7 @@ export function ConversationView({
         />
       )}
       {nameThreadDialog}
+      {threadChooserDialog}
       {targetPickerDialog}
 
       <GalleryCreateDialog

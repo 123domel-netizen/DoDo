@@ -3,33 +3,17 @@ import { Bell, BellOff } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import {
   enableNotificationsFlow,
+  ensurePushSubscription,
   hasActivePushSubscription,
+  isNotificationsMarkedEnabled,
+  isNotificationsNeverAsk,
+  markNotificationsEnabled,
+  markNotificationsNeverAsk,
   pushSupported,
 } from "@/lib/push";
 import { cloudEnabled } from "@/lib/supabase";
 
 const SESSION_DISMISS_KEY = "dodo-notif-prompt-session";
-const SNOOZE_KEY = "dodo-notif-prompt-snooze";
-const SNOOZE_MS = 3 * 24 * 60 * 60 * 1000; // 3 dni
-
-function isSnoozed(): boolean {
-  try {
-    const raw = localStorage.getItem(SNOOZE_KEY);
-    if (!raw) return false;
-    const until = Number(raw);
-    return Number.isFinite(until) && until > Date.now();
-  } catch {
-    return false;
-  }
-}
-
-function snooze() {
-  try {
-    localStorage.setItem(SNOOZE_KEY, String(Date.now() + SNOOZE_MS));
-  } catch {
-    /* private mode */
-  }
-}
 
 function dismissSession() {
   try {
@@ -59,15 +43,27 @@ export function NotificationPermissionPrompt() {
 
   useEffect(() => {
     if (!cloudEnabled || !pushSupported()) return;
-    if (dismissedThisSession() || isSnoozed()) return;
+    if (isNotificationsNeverAsk() || dismissedThisSession()) return;
 
     let cancelled = false;
     const t = window.setTimeout(() => {
       void (async () => {
         if (cancelled) return;
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          if (await hasActivePushSubscription()) return;
+        if (typeof Notification !== "undefined") {
+          if (Notification.permission === "granted") {
+            if (await hasActivePushSubscription()) {
+              markNotificationsEnabled();
+              return;
+            }
+            // Cicha odnowa subskrypcji zamiast spamowania modalem.
+            if (await ensurePushSubscription()) return;
+            if (isNotificationsMarkedEnabled()) return;
+            if (!cancelled) setOpen(true);
+            return;
+          }
+          if (Notification.permission === "denied") return;
         }
+        if (isNotificationsMarkedEnabled()) return;
         if (!cancelled) setOpen(true);
       })();
     }, 1200);
@@ -83,8 +79,8 @@ export function NotificationPermissionPrompt() {
     setOpen(false);
   };
 
-  const closeSnooze = () => {
-    snooze();
+  const closeNever = () => {
+    markNotificationsNeverAsk();
     dismissSession();
     setOpen(false);
   };
@@ -96,11 +92,6 @@ export function NotificationPermissionPrompt() {
     setBusy(false);
     if (res.mode === "push" || res.mode === "local") {
       dismissSession();
-      try {
-        localStorage.removeItem(SNOOZE_KEY);
-      } catch {
-        /* ignore */
-      }
       setOpen(false);
       return;
     }
@@ -148,10 +139,10 @@ export function NotificationPermissionPrompt() {
           <button
             type="button"
             disabled={busy}
-            onClick={closeSnooze}
+            onClick={closeNever}
             className="px-1 py-1 text-[11px] text-ink-faint transition hover:text-ink-light"
           >
-            Nie pytaj przez 3 dni
+            Nie pytaj więcej
           </button>
         </div>
       </div>

@@ -666,17 +666,28 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
   }
 
   upsertCrew(
-    crew: Omit<PreviewCrew, "id" | "members" | "viewerUserIds"> & {
+    crew: Omit<PreviewCrew, "id" | "members" | "viewerUserIds" | "createdByUserId"> & {
       id?: string;
       members?: CrewMember[];
       viewerUserIds?: string[];
+      createdByUserId?: string | null;
     },
   ): PreviewCrew {
     const id = crew.id ?? uid("crew");
+    const previous = this.state.crews.find((c) => c.id === id);
     const headcount =
       crew.headcount == null || Number.isNaN(Number(crew.headcount))
         ? null
         : Math.max(0, Math.floor(Number(crew.headcount)));
+    const createdByRaw =
+      previous?.createdByUserId ??
+      crew.createdByUserId ??
+      this.state.viewAsUserId ??
+      null;
+    const createdByUserId =
+      typeof createdByRaw === "string" && createdByRaw.trim()
+        ? createdByRaw.trim()
+        : null;
     const row: PreviewCrew = {
       id,
       name: crew.name.trim() || "Nowa brygada",
@@ -686,9 +697,14 @@ export class ProjectsPreviewRepository implements ScheduleRepository {
       company: crew.company?.trim() ?? "",
       phone: crew.phone?.trim() ?? "",
       members: normalizeCrewMembers(crew.members),
-      viewerUserIds: normalizeViewerUserIds(crew.viewerUserIds),
+      viewerUserIds: normalizeViewerUserIds(
+        crew.viewerUserIds !== undefined
+          ? crew.viewerUserIds
+          : previous?.viewerUserIds,
+      ),
+      createdByUserId,
     };
-    const exists = this.state.crews.some((c) => c.id === id);
+    const exists = Boolean(previous);
     const crews = exists
       ? this.state.crews.map((c) => (c.id === id ? row : c))
       : [...this.state.crews, row];
@@ -1551,6 +1567,13 @@ function normalizeCrew(
         .viewerUserIds ??
         (c as { viewer_user_ids?: unknown }).viewer_user_ids,
     ),
+    createdByUserId: (() => {
+      const raw =
+        (c as { createdByUserId?: unknown; created_by?: unknown })
+          .createdByUserId ??
+        (c as { created_by?: unknown }).created_by;
+      return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    })(),
   };
 }
 

@@ -6,6 +6,7 @@ import { initThemeEarly } from "@/lib/theme";
 import { initCloudSync } from "@/lib/cloud";
 import { initChat } from "@/lib/chat/init";
 import { initNavigation } from "@/lib/navigation";
+import { initPushSubscriptionLifecycle } from "@/lib/push";
 
 // In dev, purge any service worker + caches left over from a previous PWA build
 // so we never serve stale assets (this is the usual "I don't see my changes" bug).
@@ -22,6 +23,7 @@ initThemeEarly();
 initCloudSync();
 initNavigation();
 initChat();
+initPushSubscriptionLifecycle();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

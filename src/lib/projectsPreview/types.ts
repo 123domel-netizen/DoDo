@@ -125,6 +125,8 @@ export interface PreviewCrew {
    * Pusta lista = wszyscy w org; niepusta = tylko te user id.
    */
   viewerUserIds: string[];
+  /** Twórca brygady — może edytować widoczność (obok admina org). */
+  createdByUserId: string | null;
 }
 
 /** Osoba w brygadzie — opcjonalnie przypięta do formularza obecności. */

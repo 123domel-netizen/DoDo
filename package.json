@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Kalendarz + ToDo PWA w stylu Notion Calendar",
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.9.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:projects-preview": "vite --mode projects-preview",
@@ -17,7 +21,12 @@
     "worker:dev": "npm run dev --prefix worker",
     "icons:generate": "node scripts/generate-icons.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc -b",
+    "check:guards": "node scripts/check-repo-guards.mjs",
+    "check:rpc-exposure": "node scripts/verify-rpc-exposure.mjs",
+    "audit:incident": "node scripts/audit-security-incident.mjs",
+    "verify": "npm run check:guards && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

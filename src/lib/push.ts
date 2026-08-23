@@ -2,6 +2,9 @@ import { cloudEnabled, supabase } from "@/lib/supabase";
 
 const VAPID_PUBLIC = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 
+export const NOTIF_NEVER_KEY = "dodo-notif-prompt-never";
+export const NOTIF_ENABLED_KEY = "dodo-notif-enabled";
+
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -9,6 +12,51 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
+}
+
+function lsGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function lsSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* private mode */
+  }
+}
+
+function lsRemove(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function isNotificationsNeverAsk(): boolean {
+  return lsGet(NOTIF_NEVER_KEY) === "1";
+}
+
+export function markNotificationsNeverAsk() {
+  lsSet(NOTIF_NEVER_KEY, "1");
+}
+
+export function isNotificationsMarkedEnabled(): boolean {
+  return lsGet(NOTIF_ENABLED_KEY) === "1";
+}
+
+export function markNotificationsEnabled() {
+  lsSet(NOTIF_ENABLED_KEY, "1");
+  lsRemove(NOTIF_NEVER_KEY);
+}
+
+export function clearNotificationsEnabled() {
+  lsRemove(NOTIF_ENABLED_KEY);
 }
 
 export function pushSupported(): boolean {
@@ -82,19 +130,59 @@ export async function enablePush(): Promise<{ ok: boolean; reason?: string }> {
 }
 
 /**
+ * Jeśli permission=granted — upewnij się, że jest lokalna subskrypcja + wiersz w DB.
+ * Nie pokazuje promptu permission.
+ */
+export async function ensurePushSubscription(): Promise<boolean> {
+  if (!pushSupported() || !pushConfigured() || !supabase || !VAPID_PUBLIC) return false;
+  if (!("Notification" in window)) return false;
+  if (Notification.permission === "denied") {
+    clearNotificationsEnabled();
+    return false;
+  }
+  if (Notification.permission !== "granted") return false;
+  try {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user?.id) return false;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC) as BufferSource,
+      });
+    }
+    const res = await upsertSubscription(data.user.id, sub);
+    if (res.ok) markNotificationsEnabled();
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Po logowaniu: jeśli przeglądarka ma już subskrypcję, dopisz ją do bazy.
- * (Bez tego push z serwera idzie w próżnię — 0 wierszy w push_subscriptions.)
+ * Gdy granted bez subskrypcji — cicho odnów (np. po rotacji endpointu).
  */
 export async function syncExistingPushSubscription(): Promise<void> {
   if (!pushSupported() || !pushConfigured() || !supabase) return;
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "denied") {
+    clearNotificationsEnabled();
+    return;
+  }
+  if (Notification.permission !== "granted") return;
   try {
     const { data } = await supabase.auth.getUser();
     if (!data.user?.id) return;
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
-    if (!sub) return;
-    await upsertSubscription(data.user.id, sub);
+    if (sub) {
+      await upsertSubscription(data.user.id, sub);
+      markNotificationsEnabled();
+      return;
+    }
+    await ensurePushSubscription();
   } catch {
     /* ignore */
   }
@@ -112,8 +200,7 @@ export type NotificationsMode = "push" | "local" | "none";
 
 /**
  * Wspólny przepływ włączania powiadomień (dzwonek w pasku, desktop i mobile).
- * Zwraca tryb, który realnie działa, oraz komunikat dla użytkownika — żeby nie
- * sugerować, że push działa, gdy udało się włączyć tylko powiadomienia lokalne.
+ * Zwraca tryb, który realnie działa, oraz komunikat dla użytkownika.
  */
 export async function enableNotificationsFlow(): Promise<{
   mode: NotificationsMode;
@@ -139,6 +226,7 @@ export async function enableNotificationsFlow(): Promise<{
   if (cloudEnabled && pushSupported()) {
     const res = await enablePush();
     if (res.ok) {
+      markNotificationsEnabled();
       return {
         mode: "push",
         message:
@@ -147,6 +235,7 @@ export async function enableNotificationsFlow(): Promise<{
     }
     const local = await ensureLocalNotificationPermission();
     if (local) {
+      markNotificationsEnabled();
       return {
         mode: "local",
         message: `Uwaga: działają tylko powiadomienia lokalne (przy otwartej karcie). Push nieaktywny — ${res.reason ?? "nieznany błąd"}`,
@@ -157,6 +246,7 @@ export async function enableNotificationsFlow(): Promise<{
 
   const ok = await ensureLocalNotificationPermission();
   if (ok) {
+    markNotificationsEnabled();
     return {
       mode: "local",
       message:
@@ -164,6 +254,16 @@ export async function enableNotificationsFlow(): Promise<{
     };
   }
   return { mode: "none", message: "Brak zgody na powiadomienia w przeglądarce." };
+}
+
+/** Nasłuchaj rotacji subskrypcji z service workera. */
+export function initPushSubscriptionLifecycle() {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
+    const data = e.data as { type?: string } | null;
+    if (data?.type !== "pushsubscriptionchange") return;
+    void ensurePushSubscription();
+  });
 }
 
 export function showLocalNotification(

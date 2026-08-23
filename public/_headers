@@ -1,0 +1,43 @@
+# Nagłówki bezpieczeństwa Cloudflare Pages (SEC-04).
+#
+# Plik trafia z `public/` do korzenia `dist/` i jest interpretowany przez Pages
+# przy każdym żądaniu. Kolejność ma znaczenie: reguły bardziej szczegółowe
+# nadpisują `/*` dla pasujących ścieżek.
+#
+# CSP działa CELOWO w trybie Report-Only. Aplikacja korzysta z kilku origin-ów
+# zewnętrznych (Supabase, R2, Tenor/GIPHY, DiceBear) oraz z podglądów linków,
+# które wskazują na dowolne hosty. Najpierw zbieramy naruszenia, dopiero potem
+# przełączamy na `Content-Security-Policy`.
+#
+# Procedura przełączenia na tryb egzekwowania opisana w docs/SECURITY.md.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), gyroscope=(), interest-cohort=(), magnetometer=(), midi=(), payment=(), usb=(), xr-spatial-tracking=(), geolocation=(), microphone=(self)
+  Content-Security-Policy-Report-Only: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; worker-src 'self' blob:; manifest-src 'self'; connect-src 'self' blob: data: https://*.supabase.co wss://*.supabase.co https://*.r2.cloudflarestorage.com https://tenor.googleapis.com https://media.tenor.com https://api.giphy.com https://api.dicebear.com
+
+# index.html musi być zawsze świeży, inaczej PWA nie zobaczy nowego buildu.
+/
+  Cache-Control: no-cache, must-revalidate
+
+/index.html
+  Cache-Control: no-cache, must-revalidate
+
+# Service worker: nigdy z cache, inaczej aktualizacja aplikacji się zacina.
+/sw.js
+  Cache-Control: no-cache, must-revalidate
+  Service-Worker-Allowed: /
+
+/registerSW.js
+  Cache-Control: no-cache, must-revalidate
+
+/manifest.webmanifest
+  Cache-Control: no-cache, must-revalidate
+
+# Assety mają hash w nazwie — mogą być cache'owane na stałe.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

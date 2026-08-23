@@ -22,7 +22,8 @@ import { fetchMyMentions, joinChannel, searchAll } from "@/lib/chat/api";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
 import { ConversationKindMark } from "@/components/chat/PresenceDot";
 import { ReadReceiptTicks } from "@/components/chat/ReadReceiptTicks";
-import { setRouteHash } from "@/lib/navigation";
+import { pushRouteHash } from "@/lib/navigation";
+import { useHistoryBackLayer } from "@/hooks/useHistoryBackLayer";
 import { formatFileSize } from "@/lib/chat/upload";
 import type {
   ChatDecision,
@@ -265,6 +266,12 @@ export function MobileChatHub() {
   const [eligiblePeople, setEligiblePeople] = useState<ChatEligiblePerson[]>([]);
   const [startingDmUserId, setStartingDmUserId] = useState<string | null>(null);
 
+  useHistoryBackLayer(showNew, () => setShowNew(false));
+  useHistoryBackLayer(showMentions, () => setShowMentions(false));
+  useHistoryBackLayer(Boolean(registryDetail), () => setRegistryDetail(null));
+  useHistoryBackLayer(Boolean(mediaConvId), () => setMediaConvId(null));
+  useHistoryBackLayer(Boolean(galleryViewerId), () => setGalleryViewerId(null));
+
   const hubTab = mode.kind === "tab" ? mode.id : "chat";
   const {
     overview,
@@ -321,7 +328,7 @@ export function MobileChatHub() {
 
   const openRow = (entry: ChatOverviewEntry) => {
     void openConversation(entry.id);
-    setRouteHash({ view: "conversation", conversationId: entry.id });
+    pushRouteHash({ view: "conversation", conversationId: entry.id });
   };
 
   const handleJoin = async (channelId: string) => {
@@ -331,7 +338,7 @@ export function MobileChatHub() {
       return;
     }
     void openConversation(channelId);
-    setRouteHash({ view: "conversation", conversationId: channelId });
+    pushRouteHash({ view: "conversation", conversationId: channelId });
   };
 
   const handleStartContactDm = async (userId: string) => {
@@ -340,7 +347,7 @@ export function MobileChatHub() {
     setStartingDmUserId(null);
     if (!id) return;
     void openConversation(id);
-    setRouteHash({ view: "conversation", conversationId: id });
+    pushRouteHash({ view: "conversation", conversationId: id });
   };
 
   const openMention = (msg: ChatMessage) => {
@@ -348,7 +355,7 @@ export function MobileChatHub() {
     void openConversation(msg.conversationId).then(() => {
       void jumpToMessage(msg.conversationId, msg.threadRootId ?? msg.id);
     });
-    setRouteHash({ view: "conversation", conversationId: msg.conversationId });
+    pushRouteHash({ view: "conversation", conversationId: msg.conversationId });
   };
 
   const runListSearch = async () => {
@@ -1116,7 +1123,7 @@ export function MobileChatHub() {
             void openConversation(cid).then(() => {
               void jumpToMessage(cid, messageId);
             });
-            setRouteHash({ view: "conversation", conversationId: cid });
+            pushRouteHash({ view: "conversation", conversationId: cid });
           }}
         />
       )}
@@ -1167,7 +1174,7 @@ function SearchResults({
             void openConversation(r.conversationId).then(() => {
               if (r.resultType === "message") void jumpToMessage(r.conversationId!, r.id);
             });
-            setRouteHash({ view: "conversation", conversationId: r.conversationId });
+            pushRouteHash({ view: "conversation", conversationId: r.conversationId });
           }}
           className="flex w-full flex-col gap-0.5 border-b border-line/50 px-3 py-2.5 text-left transition hover:bg-surface-raised"
         >

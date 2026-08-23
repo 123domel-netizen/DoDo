@@ -9,7 +9,7 @@ import {
 import { jumpToMessage, openConversation } from "@/lib/chat/init";
 import { fetchRecentItemLinks, type RecentItemLink } from "@/lib/chat/api";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
-import { setRouteHash } from "@/lib/navigation";
+import { pushRouteHash } from "@/lib/navigation";
 import { itemMatchesGroupFilter } from "@/lib/groups";
 import {
   EMPTY_HUB_LIST_FILTERS,
@@ -144,7 +144,7 @@ export function HubLinksPane({
                 void openConversation(row.conversationId).then(() => {
                   void jumpToMessage(row.conversationId, row.messageId);
                 });
-                setRouteHash({
+                pushRouteHash({
                   view: "conversation",
                   conversationId: row.conversationId,
                 });

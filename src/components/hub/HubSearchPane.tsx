@@ -2,7 +2,7 @@ import { useStore } from "@/state/store";
 import { jumpToMessage, openConversation } from "@/lib/chat/init";
 import type { ChatSearchResult } from "@/lib/chat/types";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
-import { setRouteHash } from "@/lib/navigation";
+import { pushRouteHash } from "@/lib/navigation";
 
 /** Wyniki globalnego wyszukiwania (pole szukania jest w belce hubu). */
 export function HubSearchPane({
@@ -23,7 +23,7 @@ export function HubSearchPane({
     void openConversation(r.conversationId).then(() => {
       if (r.resultType === "message") void jumpToMessage(r.conversationId!, r.id);
     });
-    setRouteHash({ view: "conversation", conversationId: r.conversationId });
+    pushRouteHash({ view: "conversation", conversationId: r.conversationId });
   };
 
   return (

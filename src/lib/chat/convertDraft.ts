@@ -1,6 +1,15 @@
 import type { ChecklistItem, Item } from "@/types";
-import type { ChatChecklistItem, MessageKind, MessagePayload } from "@/lib/chat/types";
+import type {
+  ChatChecklistItem,
+  ChatMessage,
+  MessageKind,
+  MessagePayload,
+} from "@/lib/chat/types";
 import { uid } from "@/lib/factory";
+import {
+  pointsFromSelection,
+  type MessageSelectMode,
+} from "@/lib/chat/selectionChecklist";
 
 /**
  * Prefill draftu itemu z treści wiadomości (CHAT2-LINK / CHAT5).
@@ -31,6 +40,14 @@ function checklistFromMiniPayload(
     id: uid(),
     text: it.text.trim().slice(0, 200) || "…",
     done: Boolean(it.done),
+  }));
+}
+
+function toChecklistItems(texts: string[]): ChecklistItem[] {
+  return texts.map((text) => ({
+    id: uid(),
+    text: text.slice(0, 200) || "…",
+    done: false,
   }));
 }
 
@@ -111,5 +128,49 @@ export function draftFromMessage(
     showInCalendar: true,
     showInTodo: false,
     ...(miniChecklist ? { checklist: miniChecklist } : {}),
+  };
+}
+
+/** Prefill zadania/wydarzenia z wielu zaznaczonych wiadomości (punkty checklisty). */
+export function draftFromSelectedMessages(
+  entries: { msg: ChatMessage; mode: MessageSelectMode }[],
+  target: "task" | "event",
+  now: Date = new Date(),
+): Partial<Item> {
+  const points = pointsFromSelection(entries);
+  const checklist = toChecklistItems(points.length ? points : ["…"]);
+  const first = entries[0]?.msg;
+  const title =
+    first?.body.split("\n")[0]?.trim().slice(0, 120) ||
+    (target === "event" ? "Wydarzenie" : "Zadanie");
+  const n = entries.length;
+  const description =
+    n <= 1 ? `— z wiadomości` : `— z ${n} wiadomości`;
+
+  if (target === "event") {
+    const start = new Date(now);
+    start.setMinutes(0, 0, 0);
+    start.setHours(start.getHours() + 1);
+    const end = new Date(start.getTime() + 3600_000);
+    return {
+      type: "event",
+      title,
+      description,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      showInCalendar: true,
+      showInTodo: false,
+      checklist,
+    };
+  }
+
+  return {
+    type: "task",
+    title,
+    description,
+    hasDueDate: false,
+    showInTodo: true,
+    showInCalendar: false,
+    checklist,
   };
 }
