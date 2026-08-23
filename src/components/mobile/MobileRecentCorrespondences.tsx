@@ -4,7 +4,7 @@ import { useStore } from "@/state/store";
 import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
 import { openConversation } from "@/lib/chat/init";
-import { setRouteHash } from "@/lib/navigation";
+import { pushRouteHash } from "@/lib/navigation";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
@@ -55,7 +55,7 @@ export function MobileRecentCorrespondences() {
 
   const open = (id: string) => {
     void openConversation(id);
-    setRouteHash({ view: "conversation", conversationId: id });
+    pushRouteHash({ view: "conversation", conversationId: id });
   };
 
   return (

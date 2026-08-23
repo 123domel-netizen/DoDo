@@ -3,7 +3,6 @@ import { Clock, MessageSquare, Pin } from "lucide-react";
 import { fetchPinnedMessages, fetchThreadsList } from "@/lib/chat/api";
 import { openThread } from "@/lib/chat/init";
 import { threadDisplayTitle } from "@/lib/chat/feed";
-import { setRouteHash } from "@/lib/navigation";
 import type { ChatMessage } from "@/lib/chat/types";
 import { loadRecentThreads } from "@/lib/chat/recentThreads";
 
@@ -154,11 +153,6 @@ export function HubThreadsStrip({ conversationId }: HubThreadsStripProps) {
 
   const open = async (rootId: string) => {
     if (!conversationId) return;
-    setRouteHash({
-      view: "conversation",
-      conversationId,
-      threadRootId: rootId,
-    });
     await openThread(rootId);
     setRecentTick((n) => n + 1);
   };

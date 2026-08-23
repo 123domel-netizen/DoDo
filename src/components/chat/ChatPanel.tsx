@@ -26,7 +26,7 @@ import {
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
 import { ConversationKindMark } from "@/components/chat/PresenceDot";
 import { ReadReceiptTicks } from "@/components/chat/ReadReceiptTicks";
-import { setRouteHash } from "@/lib/navigation";
+import { goBackOr, pushRouteHash, setRouteHash } from "@/lib/navigation";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import type {
   ChatMessage,
@@ -149,7 +149,7 @@ function SearchResults({
       void openConversation(r.conversationId).then(() => {
         if (r.resultType === "message") void jumpToMessage(r.conversationId!, r.id);
       });
-      setRouteHash({ view: "conversation", conversationId: r.conversationId });
+      pushRouteHash({ view: "conversation", conversationId: r.conversationId });
     }
   };
 
@@ -309,8 +309,10 @@ export function ChatPanel() {
           key={activeId}
           conversationId={activeId}
           onBack={() => {
-            setActiveConversation(null);
-            setRouteHash({ view: "chat" });
+            goBackOr(() => {
+              setActiveConversation(null);
+              setRouteHash({ view: "chat" });
+            });
           }}
         />
       </div>
@@ -346,12 +348,12 @@ export function ChatPanel() {
       return;
     }
     void openConversation(channelId);
-    setRouteHash({ view: "conversation", conversationId: channelId });
+    pushRouteHash({ view: "conversation", conversationId: channelId });
   };
 
   const openRow = (entry: ChatOverviewEntry) => {
     void openConversation(entry.id);
-    setRouteHash({ view: "conversation", conversationId: entry.id });
+    pushRouteHash({ view: "conversation", conversationId: entry.id });
   };
 
   const openMention = (msg: ChatMessage) => {
@@ -359,7 +361,7 @@ export function ChatPanel() {
     void openConversation(msg.conversationId).then(() => {
       void jumpToMessage(msg.conversationId, msg.threadRootId ?? msg.id);
     });
-    setRouteHash({ view: "conversation", conversationId: msg.conversationId });
+    pushRouteHash({ view: "conversation", conversationId: msg.conversationId });
   };
 
   const titleOf = (entry: ChatOverviewEntry) =>

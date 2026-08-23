@@ -55,6 +55,7 @@ import { SyncSettings } from "@/components/settings/SyncSettings";
 import { useChatStore } from "@/lib/chat/store";
 import { totalUnread } from "@/lib/chat/feed";
 import { setRouteHash } from "@/lib/navigation";
+import { useHistoryBackLayer } from "@/hooks/useHistoryBackLayer";
 
 const ChatPanel = lazy(() =>
   import("@/components/chat/ChatPanel").then((m) => ({ default: m.ChatPanel })),
@@ -105,6 +106,12 @@ export function MobileShell() {
   const isAppAdmin = useStore((s) => s.isAppAdmin);
   const [showManage, setShowManage] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
+
+  useHistoryBackLayer(schedulesOpen, () => setSchedulesMode(null));
+  useHistoryBackLayer(sheet, () => setSheet(false));
+  useHistoryBackLayer(showManage, () => setShowManage(false));
+  useHistoryBackLayer(showAddGroup, () => setShowAddGroup(false));
+  useHistoryBackLayer(Boolean(editingId), () => useStore.getState().closeEditor());
 
   const chatUnread = useChatStore((s) => (cloudEnabled ? totalUnread(s.overview) : 0));
   const activeConversationId = useChatStore((s) => s.activeConversationId);

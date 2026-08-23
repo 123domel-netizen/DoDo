@@ -3,7 +3,8 @@ import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { addDecision, addNote, createItemLink, deleteDecision, deleteNote, upsertRegistryLabels } from "@/lib/chat/api";
 import { sendChatMessage } from "@/lib/chat/init";
-import { draftFromMessage, type ConvertTarget } from "@/lib/chat/convertDraft";
+import { draftFromMessage, draftFromSelectedMessages, type ConvertTarget } from "@/lib/chat/convertDraft";
+import type { MessageSelectMode } from "@/lib/chat/selectionChecklist";
 import { participantsFromConversationMembers } from "@/lib/chat/conversationParticipants";
 import { overviewTitle } from "@/lib/chat/feed";
 import { groupIdForNewItem } from "@/lib/groups";
@@ -289,6 +290,45 @@ export function beginConvertMessageToItem(msg: ChatMessage, target: ConvertTarge
     },
     target,
   );
+}
+
+/**
+ * Wiele zaznaczonych wiadomości → jedno zadanie/wydarzenie z checklistą punktów.
+ * Link `created_from` tylko do pierwszej zaznaczonej.
+ */
+export function beginConvertMessagesToItem(
+  entries: { msg: ChatMessage; mode: MessageSelectMode }[],
+  target: "task" | "event",
+) {
+  if (!entries.length) return;
+  const first = entries[0]!.msg;
+  const store = useStore.getState();
+  store.startDraft(draftFromSelectedMessages(entries, target));
+  const draft = useStore.getState().draft;
+  if (!draft) return;
+
+  clearPending();
+  pending = {
+    messageId: first.id,
+    conversationId: first.conversationId,
+    itemId: draft.id,
+    target,
+  };
+
+  unsubscribe = useStore.subscribe((s) => {
+    if (!pending) return;
+    const committed = s.items[pending.itemId];
+    if (committed) {
+      const p = pending;
+      clearPending();
+      void finalizeConversion(p, committed);
+      return;
+    }
+    const draftGone = !s.draft || s.draft.id !== pending.itemId;
+    if (draftGone && s.editingId !== pending.itemId) {
+      clearPending();
+    }
+  });
 }
 
 /**

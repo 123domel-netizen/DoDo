@@ -965,6 +965,47 @@ export async function dissolveEmptyThread(
   return { error: error.message };
 }
 
+/** Przypisz samodzielną wiadomość do istniejącego wątku (SECURITY DEFINER). */
+export async function attachMessageToThread(
+  messageId: string,
+  threadRootId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("attach_message_to_thread", {
+    p_message_id: messageId,
+    p_thread_root_id: threadRootId,
+  });
+  if (!error) return {};
+  if (/already has thread replies/i.test(error.message)) {
+    return { error: "Ta wiadomość ma już odpowiedzi — otwórz jej wątek." };
+  }
+  if (/already a thread reply/i.test(error.message)) {
+    return { error: "Wiadomość jest już w wątku." };
+  }
+  if (/not a thread root/i.test(error.message)) {
+    return { error: "Wybrany cel nie jest wątkiem." };
+  }
+  if (/different conversation/i.test(error.message)) {
+    return { error: "Wątek jest w innej rozmowie." };
+  }
+  return { error: error.message };
+}
+
+/** Wyłącz odpowiedź z wątku → wraca do feedu głównego. */
+export async function detachMessageFromThread(
+  messageId: string,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("detach_message_from_thread", {
+    p_message_id: messageId,
+  });
+  if (!error) return {};
+  if (/not a thread reply/i.test(error.message)) {
+    return { error: "To nie jest odpowiedź w wątku." };
+  }
+  return { error: error.message };
+}
+
 /** Przypięte wątki rozmowy (najnowsze przypięcia pierwsze). */
 export async function fetchPinnedMessages(
   conversationId: string,

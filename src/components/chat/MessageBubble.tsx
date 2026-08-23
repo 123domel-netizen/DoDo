@@ -10,12 +10,16 @@ import {
   Download,
   ExternalLink,
   Forward,
+  ListTree,
+  LogOut,
   MessageSquare,
   MoreHorizontal,
   Pin,
   RotateCw,
+  Square,
   X,
 } from "lucide-react";
+import type { MessageSelectMode } from "@/lib/chat/selectionChecklist";
 import { format, isToday } from "date-fns";
 import { pl } from "date-fns/locale";
 import type {
@@ -270,7 +274,7 @@ function MovedStubBubble({
   return (
     <div className="my-2.5 flex justify-center px-3">
       <div
-        className={`max-w-[min(88%,22rem)] opacity-[0.72] ${
+        className={`max-w-[min(85%,28rem)] opacity-[0.72] ${
           isGallery ? "w-full max-w-[min(96%,18.5rem)]" : ""
         }`}
       >
@@ -282,7 +286,7 @@ function MovedStubBubble({
             className={
               isGallery
                 ? "overflow-visible bg-transparent p-0"
-                : "rounded-2xl border border-line/60 bg-surface-raised/50 px-2.5 py-[7px] text-[14.5px] leading-[1.35] text-ink shadow-card"
+                : "rounded-2xl border border-line/60 bg-surface-raised/50 px-3.5 py-2 text-[15px] leading-[1.45] text-ink shadow-card"
             }
           >
             <MessageContentPreview
@@ -787,8 +791,11 @@ function HoverToolbar({
   mine,
   onReply,
   onOpenThread,
+  onDetachFromThread,
   onOpenActions,
   onToggleReaction,
+  onToggleSelect,
+  selectMode,
   msg,
   replyCount,
   inThread,
@@ -797,11 +804,16 @@ function HoverToolbar({
   msg: ChatMessage;
   replyCount: number;
   inThread: boolean;
+  selectMode?: MessageSelectMode | null;
   onReply?: (msg: ChatMessage) => void;
   onOpenThread?: (rootId: string) => void;
+  onDetachFromThread?: (msg: ChatMessage) => void;
   onOpenActions?: (msg: ChatMessage, anchor: DOMRect) => void;
   onToggleReaction?: (msg: ChatMessage, emoji: string) => void;
+  onToggleSelect?: (msg: ChatMessage, opts?: { forceSplit?: boolean }) => void;
 }) {
+  const canDetach = Boolean(inThread && msg.threadRootId && onDetachFromThread);
+
   return (
     // Wrapper z „mostkiem” (pb) wypełnia lukę do bąbelka — inaczej hover ginie w drodze.
     <div
@@ -856,6 +868,53 @@ function HoverToolbar({
             )}
           </button>
         )}
+        {canDetach && (
+          <button
+            type="button"
+            title="Wyłącz z wątku"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDetachFromThread?.(msg);
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-light transition hover:bg-ink/5 hover:text-ink dark:hover:bg-white/[0.08]"
+          >
+            <LogOut size={14} />
+          </button>
+        )}
+        {onToggleSelect && (
+          <button
+            type="button"
+            title={
+              selectMode === "split"
+                ? "Odznacz (wiele punktów)"
+                : selectMode === "whole"
+                  ? "Wiele punktów (klik) / odznacz"
+                  : "Zaznacz wiadomość"
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelect(msg);
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onToggleSelect(msg, { forceSplit: true });
+            }}
+            className={`flex h-7 w-7 items-center justify-center rounded-lg transition hover:bg-ink/5 dark:hover:bg-white/[0.08] ${
+              selectMode
+                ? "text-accent"
+                : "text-ink-light hover:text-ink"
+            }`}
+          >
+            {selectMode === "split" ? (
+              <ListTree size={14} />
+            ) : selectMode === "whole" ? (
+              <CheckSquare size={14} />
+            ) : (
+              <Square size={14} />
+            )}
+          </button>
+        )}
         {onOpenActions && (
           <button
             type="button"
@@ -889,6 +948,7 @@ interface MessageBubbleProps {
   replyCount?: number;
   inThread?: boolean;
   onOpenThread?: (rootId: string) => void;
+  onDetachFromThread?: (msg: ChatMessage) => void;
   onOpenActions?: (msg: ChatMessage, anchor: DOMRect) => void;
   onReply?: (msg: ChatMessage) => void;
   onRetry?: (messageId: string) => void;
@@ -898,6 +958,11 @@ interface MessageBubbleProps {
   onJumpTo?: (messageId: string) => void;
   onOpenRegistry?: (msg: ChatMessage) => void;
   onOpenGallery?: (galleryId: string) => void;
+  /** Tryb zaznaczenia: null = niezaznaczona. */
+  selectMode?: MessageSelectMode | null;
+  /** Czy w rozmowie jest już jakieś zaznaczenie (klik w bańkę przełącza). */
+  selectionActive?: boolean;
+  onToggleSelect?: (msg: ChatMessage, opts?: { forceSplit?: boolean }) => void;
 }
 
 export function MessageBubble({
@@ -914,6 +979,7 @@ export function MessageBubble({
   replyCount = 0,
   inThread = false,
   onOpenThread,
+  onDetachFromThread,
   onOpenActions,
   onReply,
   onRetry,
@@ -923,6 +989,9 @@ export function MessageBubble({
   onJumpTo,
   onOpenRegistry,
   onOpenGallery,
+  selectMode = null,
+  selectionActive = false,
+  onToggleSelect,
 }: MessageBubbleProps) {
   const setEditing = useStore((s) => s.setEditing);
   const items = useStore((s) => s.items);
@@ -1063,7 +1132,7 @@ export function MessageBubble({
           : `${pad} rounded-2xl rounded-bl-[5px] bg-surface-raised text-ink shadow-card`;
     }
   } else {
-    const pad = "px-2.5 py-[7px]";
+    const pad = "px-3.5 py-2";
     if (mine) {
       bubbleClass = threadUnread
         ? `${pad} rounded-2xl rounded-br-[5px] border-l-4 border-thread bg-thread/45 text-ink shadow-card ring-1 ring-thread/35`
@@ -1085,7 +1154,7 @@ export function MessageBubble({
     <div
       data-message-id={msg.id}
       className={`group relative z-0 flex gap-2 px-3 hover:z-30 focus-within:z-30 ${
-        showAuthor ? "mt-3" : "mt-0.5"
+        showAuthor ? "mt-4" : "mt-1.5"
       } ${mine ? "flex-row-reverse" : "flex-row"}`}
     >
       {/* Awatar — tylko po stronie rozmówcy; placeholder gdy ciąg dalszy */}
@@ -1110,7 +1179,7 @@ export function MessageBubble({
         } ${
           msg.kind === "gallery" && !deleted
             ? "max-w-[min(96%,18.5rem)]"
-            : "max-w-[min(88%,22rem)]"
+            : "max-w-[min(85%,28rem)]"
         }`}
       >
         {showAuthor && (
@@ -1126,16 +1195,19 @@ export function MessageBubble({
         <div
           className={`relative max-w-full ${attachmentsStretch ? "w-full" : ""}`}
         >
-          {canAct && (onOpenActions || onReply || onToggleReaction) && (
+          {canAct && (onOpenActions || onReply || onToggleReaction || onToggleSelect) && (
             <HoverToolbar
               mine={mine}
               msg={msg}
               replyCount={replyCount}
               inThread={inThread}
+              selectMode={selectMode}
               onReply={onReply}
               onOpenThread={onOpenThread}
+              onDetachFromThread={onDetachFromThread}
               onOpenActions={onOpenActions}
               onToggleReaction={onToggleReaction}
+              onToggleSelect={onToggleSelect}
             />
           )}
 
@@ -1148,14 +1220,50 @@ export function MessageBubble({
                   }
                 : undefined
             }
-            className={`chat-msg-bubble relative box-border max-w-full min-w-0 overflow-hidden flow-root text-[14.5px] leading-[1.35] transition-colors ${
+            onClick={
+              canAct && onToggleSelect && (selectionActive || selectMode)
+                ? (e) => {
+                    const t = e.target as HTMLElement;
+                    if (t.closest("a,button,input,textarea,[role='button']")) return;
+                    onToggleSelect(msg);
+                  }
+                : undefined
+            }
+            className={`chat-msg-bubble relative box-border max-w-full min-w-0 overflow-hidden flow-root text-[15px] leading-[1.45] transition-colors ${
               attachmentsStretch ? "w-full" : ""
             } ${bubbleClass} ${pending ? "opacity-60" : ""} ${
               failed ? "ring-1 ring-inset ring-red-500/50" : ""
             } ${
               flash ? "ring-2 ring-accent ring-offset-1 ring-offset-surface" : ""
+            } ${
+              selectMode === "split"
+                ? "ring-2 ring-thread ring-offset-1 ring-offset-surface"
+                : selectMode === "whole"
+                  ? "ring-2 ring-accent/70 ring-offset-1 ring-offset-surface"
+                  : ""
+            } ${
+              canAct && onToggleSelect && (selectionActive || selectMode)
+                ? "cursor-pointer"
+                : ""
             }`}
           >
+            {selectMode ? (
+              <div
+                className={`mb-1.5 flex items-center gap-1 text-[10px] font-medium ${
+                  selectMode === "split" ? "text-thread" : "text-accent"
+                }`}
+              >
+                {selectMode === "split" ? (
+                  <>
+                    <ListTree size={11} /> wiele punktów
+                  </>
+                ) : (
+                  <>
+                    <CheckSquare size={11} /> zaznaczona
+                  </>
+                )}
+              </div>
+            ) : null}
             {deleted ? (
               <span className="italic text-ink-faint">Wiadomość usunięta</span>
             ) : (

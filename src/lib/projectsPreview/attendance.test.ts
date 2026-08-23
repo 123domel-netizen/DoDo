@@ -71,6 +71,7 @@ describe("aggregateAttendanceByCrew", () => {
       phone: "",
       members: [],
       viewerUserIds: [],
+      createdByUserId: null,
     },
     {
       id: "c2",
@@ -82,6 +83,7 @@ describe("aggregateAttendanceByCrew", () => {
       phone: "",
       members: [],
       viewerUserIds: [],
+      createdByUserId: null,
     },
     {
       id: "c3",
@@ -93,6 +95,7 @@ describe("aggregateAttendanceByCrew", () => {
       phone: "",
       members: [],
       viewerUserIds: [],
+      createdByUserId: null,
     },
   ];
 
@@ -239,6 +242,7 @@ describe("workerShifts", () => {
       phone: "",
       members: [],
       viewerUserIds: [],
+      createdByUserId: null,
     };
     const initial = resolveInitialWorkers({
       existing: null,
@@ -301,6 +305,7 @@ describe("workerShifts", () => {
         phone: "",
         members: [],
         viewerUserIds: [],
+      createdByUserId: null,
       },
       {
         id: "c2",
@@ -312,6 +317,7 @@ describe("workerShifts", () => {
         phone: "",
         members: [],
         viewerUserIds: [],
+      createdByUserId: null,
       },
     ];
     const attendance: CrewAttendance[] = [

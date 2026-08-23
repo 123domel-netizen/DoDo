@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Nowy push do tego samego PR anuluje poprzedni run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend (test, typecheck, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Wersja Node pochodzi z .nvmrc, żeby CI i maszyny deweloperskie
+      # rozwiązywały zależności identycznie (przyczyna BUILD-01).
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install (clean, lockfile-driven)
+        run: npm ci
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Runtime dependency advisories
+        run: npm audit --omit=dev --audit-level=high
+
+  worker:
+    name: Media sync worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - run: npm ci --prefix worker
+      - run: npm run typecheck --prefix worker
+      - run: npm test --prefix worker
+
+      - name: Runtime dependency advisories
+        run: npm audit --prefix worker --omit=dev --audit-level=high
+
+  repository-guards:
+    name: Repository guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Kontrola .env potrzebuje indeksu git, nie tylko drzewa plików.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Migrations, RLS, secrets and SECURITY DEFINER grants
+        run: node scripts/check-repo-guards.mjs
+
+      - name: Whitespace and conflict markers
+        run: git diff --check ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD
+        continue-on-error: true
+
+  database:
+    name: Supabase migrations from scratch
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Odtworzenie bazy od zera wykrywa migracje, które przechodzą tylko na
+      # istniejącym środowisku (OPS-01), oraz uruchamia bramki weryfikacyjne
+      # zaszyte w 0065/0066.
+      - name: supabase db start
+        run: supabase start --exclude realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector
+
+      - name: Assert function grants, search_path and RLS
+        run: |
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/security_definer_grants.sql
+
+      # Dowodzi, że odebranie praw helperom nie odcina funkcji opakowujących
+      # (forward/move) — regresja tego niezmiennika psuje czat po cichu.
+      - name: Assert nested SECURITY DEFINER call model
+        run: |
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/nested_call_model.sql
+
+      - name: supabase stop
+        if: always()
+        run: supabase stop --no-backup

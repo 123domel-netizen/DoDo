@@ -36,7 +36,7 @@ import { isShareGroup } from "@/lib/share";
 import { useStore } from "@/state/store";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
 import { TagIdsEditor } from "@/components/tags/TagIdsEditor";
-import { setRouteHash } from "@/lib/navigation";
+import { pushRouteHash } from "@/lib/navigation";
 
 export type RegistryFocus = {
   kind: "decision" | "note";
@@ -358,7 +358,7 @@ function RegistryDetailBody({
       return;
     }
     await openConversation(focus.conversationId);
-    setRouteHash({ view: "conversation", conversationId: focus.conversationId });
+    pushRouteHash({ view: "conversation", conversationId: focus.conversationId });
     if (focus.messageId) void jumpToMessage(focus.conversationId, focus.messageId);
   };
 

@@ -124,4 +124,17 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
   );
 });
 
+/** Endpoint push się zmienił — poproś otwarte okna o ponowną subskrypcję. */
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        for (const client of clients) {
+          client.postMessage({ type: "pushsubscriptionchange" });
+        }
+      }),
+  );
+});
+
 export {};

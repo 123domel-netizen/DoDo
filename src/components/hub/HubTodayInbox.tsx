@@ -25,7 +25,7 @@ import {
 } from "@/lib/chat/api";
 import type { ChatDecision, ChatMessage } from "@/lib/chat/types";
 import { formatMessageTime } from "@/components/chat/MessageBubble";
-import { setRouteHash } from "@/lib/navigation";
+import { pushRouteHash } from "@/lib/navigation";
 
 function isSameDayIso(iso: string, day: Date): boolean {
   return isToday(new Date(iso)) || startOfDay(new Date(iso)).getTime() === day.getTime();
@@ -173,7 +173,7 @@ export function HubTodayInbox() {
                 void openConversation(msg.conversationId).then(() => {
                   void jumpToMessage(msg.conversationId, msg.threadRootId ?? msg.id);
                 });
-                setRouteHash({
+                pushRouteHash({
                   view: "conversation",
                   conversationId: msg.conversationId,
                 });

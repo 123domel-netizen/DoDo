@@ -2,7 +2,12 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { uid } from "@/lib/factory";
 import { useStore } from "@/state/store";
-import { onRouteChange, setRouteHash } from "@/lib/navigation";
+import {
+  onRouteChange,
+  parseAppHash,
+  pushRouteHash,
+  setRouteHash,
+} from "@/lib/navigation";
 import * as api from "@/lib/chat/api";
 import { uploadAttachmentsForMessage, uploadChannelIcon } from "@/lib/chat/upload";
 import {
@@ -336,6 +341,128 @@ export async function dissolveThread(msg: ChatMessage): Promise<{ error?: string
   return {};
 }
 
+/**
+ * Przypisz samodzielną wiadomość (root bez odpowiedzi) do istniejącego wątku,
+ * potem otwórz ten wątek.
+ */
+export async function attachMessageToExistingThread(
+  msg: ChatMessage,
+  threadRootId: string,
+): Promise<{ error?: string }> {
+  if (msg.id === threadRootId) {
+    return { error: "Nie można przypisać wiadomości do samej siebie." };
+  }
+  if (msg.threadRootId) {
+    return { error: "Wiadomość jest już w wątku." };
+  }
+
+  const st = useChatStore.getState();
+  if ((st.replyCounts[msg.id] ?? 0) > 0) {
+    return { error: "Ta wiadomość ma już odpowiedzi — otwórz jej wątek." };
+  }
+
+  const previous: ChatMessage = { ...msg };
+  const previousReplyCount = st.replyCounts[threadRootId] ?? 0;
+  const previousLast = st.threadLastReply[threadRootId];
+  const optimistic: ChatMessage = {
+    ...msg,
+    threadRootId,
+    threadTitle: null,
+    pinnedAt: null,
+    pinnedBy: null,
+    threadArchivedAt: null,
+  };
+
+  st.markMessageState(optimistic);
+  useChatStore.setState((s) => {
+    const { [msg.id]: _drop, ...restThreads } = s.threadByRoot;
+    const nextLast = (() => {
+      if (previousLast && msg.createdAt < previousLast.at) {
+        return s.threadLastReply;
+      }
+      return {
+        ...s.threadLastReply,
+        [threadRootId]: {
+          at: msg.createdAt,
+          authorUserId: msg.authorUserId,
+        },
+      };
+    })();
+    return {
+      threadByRoot: restThreads,
+      replyCounts: {
+        ...s.replyCounts,
+        [threadRootId]: previousReplyCount + 1,
+        [msg.id]: 0,
+      },
+      threadLastReply: nextLast,
+    };
+  });
+
+  const { error } = await api.attachMessageToThread(msg.id, threadRootId);
+  if (error) {
+    useChatStore.getState().markMessageState(previous);
+    useChatStore.setState((s) => ({
+      replyCounts: {
+        ...s.replyCounts,
+        [threadRootId]: previousReplyCount,
+      },
+      threadLastReply: previousLast
+        ? { ...s.threadLastReply, [threadRootId]: previousLast }
+        : (() => {
+            const { [threadRootId]: _, ...rest } = s.threadLastReply;
+            return rest;
+          })(),
+    }));
+    return { error };
+  }
+
+  await openThread(threadRootId);
+  return {};
+}
+
+/** Wyłącz odpowiedź z wątku — wraca jako normalna wiadomość w feedzie. */
+export async function detachMessageFromExistingThread(
+  msg: ChatMessage,
+): Promise<{ error?: string }> {
+  const rootId = msg.threadRootId;
+  if (!rootId) {
+    return { error: "To nie jest odpowiedź w wątku." };
+  }
+
+  const st = useChatStore.getState();
+  const previous: ChatMessage = { ...msg };
+  const previousReplyCount = st.replyCounts[rootId] ?? 0;
+  const previousThread = st.threadByRoot[rootId] ?? [];
+  const optimistic: ChatMessage = { ...msg, threadRootId: null };
+
+  st.markMessageState(optimistic);
+  useChatStore.setState((s) => {
+    const thread = (s.threadByRoot[rootId] ?? []).filter((m) => m.id !== msg.id);
+    return {
+      threadByRoot: { ...s.threadByRoot, [rootId]: thread },
+      replyCounts: {
+        ...s.replyCounts,
+        [rootId]: Math.max(0, previousReplyCount - 1),
+      },
+    };
+  });
+
+  const { error } = await api.detachMessageFromThread(msg.id);
+  if (error) {
+    useChatStore.getState().markMessageState(previous);
+    useChatStore.setState((s) => ({
+      threadByRoot: { ...s.threadByRoot, [rootId]: previousThread },
+      replyCounts: {
+        ...s.replyCounts,
+        [rootId]: previousReplyCount,
+      },
+    }));
+    return { error };
+  }
+  return {};
+}
+
 export async function loadOlderMessages(conversationId: string) {
   const list = useChatStore.getState().messagesByConv[conversationId] ?? [];
   const oldest = list.find((m) => !m.sendState);
@@ -368,11 +495,21 @@ export async function openThread(rootId: string) {
   }
 
   if (convId) {
-    setRouteHash({
-      view: "conversation",
-      conversationId: convId,
-      threadRootId: rootId,
-    });
+    const cur =
+      typeof window !== "undefined"
+        ? parseAppHash(window.location.hash)
+        : null;
+    const already =
+      cur?.view === "conversation" &&
+      cur.conversationId === convId &&
+      cur.threadRootId === rootId;
+    if (!already) {
+      pushRouteHash({
+        view: "conversation",
+        conversationId: convId,
+        threadRootId: rootId,
+      });
+    }
     rememberRecentThread(
       root ?? {
         id: rootId,

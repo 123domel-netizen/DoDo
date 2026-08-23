@@ -428,7 +428,7 @@ export function MessageComposer({
 
   return (
     <div
-      className={`relative border-t border-line bg-surface px-2 py-2 transition-colors ${
+      className={`relative border-t border-line bg-surface px-3 py-2.5 transition-colors ${
         fileDragOver ? "border-accent/50 bg-accent/10" : ""
       }`}
       onDragEnter={onComposerDragEnter}
@@ -642,7 +642,7 @@ export function MessageComposer({
           </button>
         </div>
       ) : (
-        <div className="flex items-end gap-1">
+        <div className="flex items-end gap-1.5">
           <div className="relative shrink-0 self-center">
             <button
               type="button"
@@ -704,7 +704,7 @@ export function MessageComposer({
                 if (!sending) void submit();
               }
             }}
-            className="min-h-[40px] max-h-[132px] flex-1 resize-none rounded-[1.25rem] border border-line bg-surface-raised px-3.5 py-2.5 text-sm leading-snug text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/40 disabled:opacity-50"
+            className="min-h-[44px] max-h-[132px] flex-1 resize-none rounded-[1.25rem] border border-line bg-surface-raised px-3.5 py-2.5 text-[15px] leading-[1.45] text-ink outline-none transition placeholder:text-ink-faint focus:border-accent/40 disabled:opacity-50"
           />
 
           {(onSendPoll ||

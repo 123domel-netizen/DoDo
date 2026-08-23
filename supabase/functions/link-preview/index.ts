@@ -5,13 +5,17 @@
 //
 // Bezpieczeństwo:
 //  - verify_jwt = true (domyślne) — wywołania tylko z ważną sesją użytkownika;
-//  - guard SSRF: wyłącznie http(s), blokada localhost / adresów prywatnych;
+//  - guard SSRF w `_shared/urlPolicy.ts`: wyłącznie http(s), tylko porty 80/443,
+//    blokada userinfo, localhost, adresów prywatnych IPv4/IPv6 i metadanych
+//    chmury; przekierowania obsługiwane ręcznie i walidowane na każdym skoku;
 //  - limit 512 kB odpowiedzi i 5 s timeoutu.
 //
 // Wdrożenie: supabase functions deploy link-preview
 
+import { DEFAULT_TIMEOUT_MS, evaluateUrl, safeFetch } from "../_shared/urlPolicy.ts";
+
 const MAX_BYTES = 512 * 1024;
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = DEFAULT_TIMEOUT_MS;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -24,24 +28,6 @@ function json(data: unknown, status = 200) {
     status,
     headers: { "content-type": "application/json", ...CORS_HEADERS },
   });
-}
-
-function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
-  // IPv4 literal
-  const ipv4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;
-    return false;
-  }
-  // IPv6 literal (uproszczony guard)
-  if (h.includes(":")) return true;
-  return false;
 }
 
 function decodeEntities(s: string): string {
@@ -74,18 +60,19 @@ function metaContent(html: string, key: string): string | null {
   return null;
 }
 
-async function fetchHtml(url: string): Promise<string | null> {
+async function fetchHtml(url: string): Promise<{ html: string; finalUrl: URL } | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const result = await safeFetch(url, {
       signal: ctrl.signal,
-      redirect: "follow",
       headers: {
         "user-agent": "Mozilla/5.0 (compatible; DoDoLinkPreview/1.0)",
         accept: "text/html,application/xhtml+xml",
       },
     });
+    if (!result.ok) return null;
+    const { response: res, finalUrl } = result;
     if (!res.ok) return null;
     const type = res.headers.get("content-type") ?? "";
     if (!type.includes("html")) return null;
@@ -108,7 +95,7 @@ async function fetchHtml(url: string): Promise<string | null> {
       offset += c.byteLength;
       if (offset >= received) break;
     }
-    return new TextDecoder("utf-8", { fatal: false }).decode(merged);
+    return { html: new TextDecoder("utf-8", { fatal: false }).decode(merged), finalUrl };
   } catch {
     return null;
   } finally {
@@ -130,21 +117,15 @@ Deno.serve(async (req) => {
   }
   if (!url) return json({ error: "url required" }, 400);
 
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return json({ error: "invalid url" }, 400);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return json({ error: "unsupported protocol" }, 400);
-  }
-  if (isPrivateHost(parsed.hostname)) {
-    return json({ error: "blocked host" }, 400);
-  }
+  const verdict = evaluateUrl(url);
+  if (!verdict.ok) return json({ error: verdict.reason }, 400);
 
-  const html = await fetchHtml(parsed.toString());
-  if (!html) return json({ title: null, description: null, imageUrl: null, siteName: null });
+  const fetched = await fetchHtml(verdict.url.toString());
+  if (!fetched) {
+    return json({ title: null, description: null, imageUrl: null, siteName: null });
+  }
+  // Adresy względne rozwiązujemy względem OSTATNIEGO skoku, nie pierwotnego URL.
+  const { html, finalUrl } = fetched;
 
   const title =
     metaContent(html, "og:title") ??
@@ -159,12 +140,10 @@ Deno.serve(async (req) => {
   let imageUrl =
     metaContent(html, "og:image") ?? metaContent(html, "twitter:image");
   if (imageUrl) {
-    try {
-      imageUrl = new URL(imageUrl, parsed).toString();
-      if (!imageUrl.startsWith("http")) imageUrl = null;
-    } catch {
-      imageUrl = null;
-    }
+    // Miniatura trafia do <img src> u każdego uczestnika rozmowy, więc musi
+    // przejść tę samą politykę co pobierany dokument.
+    const img = evaluateUrl(imageUrl, finalUrl);
+    imageUrl = img.ok ? img.url.toString() : null;
   }
   const siteName = metaContent(html, "og:site_name");
 
