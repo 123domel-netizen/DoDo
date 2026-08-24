@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cloudEnabled } from "@/lib/supabase";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { sortOverview } from "@/lib/chat/feed";
+import { sortOverview, isSelfNotesConversation } from "@/lib/chat/feed";
 import {
   fetchAttachmentsForConversations,
   fetchDecisionsForConversations,
@@ -32,6 +32,7 @@ export function useHubRegistryLists(opts: {
 }) {
   const { hubTab, enabled = true } = opts;
   const overviewAll = useChatStore((s) => s.overview);
+  const myUserId = useChatStore((s) => s.userId);
   const overview = useMemo(
     () => overviewAll.filter((c) => !c.myArchivedAt),
     [overviewAll],
@@ -55,13 +56,19 @@ export function useHubRegistryLists(opts: {
   const [mediaSubTab, setMediaSubTab] = useState<MediaSubTab>("media");
   const [hubTagFilter, setHubTagFilter] = useState<string | null>(null);
 
-  const sorted = useMemo(() => sortOverview(overview), [overview]);
+  /** Notatnik ma osobny pin — nie mieszamy go z listą osób / ALL. */
+  const withoutNotebook = useMemo(
+    () => overview.filter((c) => !isSelfNotesConversation(c, myUserId)),
+    [overview, myUserId],
+  );
+
+  const sorted = useMemo(() => sortOverview(withoutNotebook), [withoutNotebook]);
   const allByRecent = useMemo(
     () =>
-      [...overview].sort((a, b) =>
+      [...withoutNotebook].sort((a, b) =>
         (b.lastMessageAt ?? b.createdAt).localeCompare(a.lastMessageAt ?? a.createdAt),
       ),
-    [overview],
+    [withoutNotebook],
   );
   const people = useMemo(() => sorted.filter((c) => c.kind === "dm"), [sorted]);
   const channels = useMemo(() => sorted.filter((c) => c.kind === "channel"), [sorted]);

@@ -963,6 +963,17 @@ export async function pinConversation(conversationId: string, pinned: boolean) {
 }
 
 export async function archiveConversation(conversationId: string, archived: boolean) {
+  const entry = useChatStore.getState().overview.find((c) => c.id === conversationId);
+  const myUserId = useChatStore.getState().userId;
+  if (
+    archived &&
+    entry &&
+    entry.kind === "dm" &&
+    entry.members.length === 1 &&
+    entry.members[0]?.userId === myUserId
+  ) {
+    return { error: "Notatnika nie można archiwizować." };
+  }
   useChatStore.getState().patchOverviewEntry(conversationId, {
     myArchivedAt: archived ? new Date().toISOString() : null,
   });
@@ -1178,6 +1189,44 @@ export async function startDm(memberIds: string[]): Promise<string | null> {
     return null;
   }
   await refreshOverview();
+  return id;
+}
+
+/**
+ * Idempotentnie tworzy / odzyskuje prywatny Notatnik (solo-DM).
+ * RPC dokleja callera → memberIds: [] daje dm_key = userId.
+ */
+export async function ensureSelfNotes(): Promise<string | null> {
+  const myUserId = useChatStore.getState().userId;
+  if (!myUserId) return null;
+  const existing = useChatStore
+    .getState()
+    .overview.find(
+      (e) =>
+        e.kind === "dm" &&
+        e.members.length === 1 &&
+        e.members[0]?.userId === myUserId,
+    );
+  if (existing) {
+    if (existing.myArchivedAt) {
+      await archiveConversation(existing.id, false);
+    }
+    return existing.id;
+  }
+  const { id, error } = await api.createConversation("dm", { memberIds: [] });
+  if (error || !id) {
+    console.warn("[chat] self notes create failed:", error);
+    return null;
+  }
+  await refreshOverview();
+  return id;
+}
+
+/** Otwórz Notatnik (utwórz jeśli brak). */
+export async function openSelfNotes(): Promise<string | null> {
+  const id = await ensureSelfNotes();
+  if (!id) return null;
+  await openConversation(id);
   return id;
 }
 

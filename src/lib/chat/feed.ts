@@ -329,6 +329,26 @@ export function sortOverview(overview: ChatOverviewEntry[]): ChatOverviewEntry[]
   });
 }
 
+/** Solo-DM = prywatny Notatnik użytkownika (tylko Ty w rozmowie). */
+export function isSelfNotesConversation(
+  entry: Pick<ChatOverviewEntry, "kind" | "members">,
+  myUserId: string | null,
+): boolean {
+  if (entry.kind !== "dm" || !myUserId) return false;
+  const active = entry.members.filter((m) => m.userId);
+  if (active.length !== 1) return false;
+  return active[0]!.userId === myUserId;
+}
+
+/** Znajdź wpis Notatnika w overview (jeśli już istnieje). */
+export function findSelfNotesEntry(
+  overview: ChatOverviewEntry[],
+  myUserId: string | null,
+): ChatOverviewEntry | undefined {
+  if (!myUserId) return undefined;
+  return overview.find((e) => isSelfNotesConversation(e, myUserId));
+}
+
 /** Nazwa rozmowy do wyświetlenia. */
 export function overviewTitle(
   entry: ChatOverviewEntry,
@@ -340,8 +360,9 @@ export function overviewTitle(
     const title = entry.itemId ? itemTitleLookup(entry.itemId) : undefined;
     return title?.trim() ? title : "Dyskusja wpisu";
   }
+  if (isSelfNotesConversation(entry, myUserId)) return "Notatnik";
   const others = entry.members.filter((m) => m.userId !== myUserId);
-  if (!others.length) return "Notatki (ja)";
+  if (!others.length) return "Notatnik";
   return others.map((m) => m.displayName || "Bez nazwy").join(", ");
 }
 

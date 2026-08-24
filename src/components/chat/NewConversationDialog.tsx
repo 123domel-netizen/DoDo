@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Hash, User } from "lucide-react";
+import { BookMarked, Hash, User } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { useChatStore } from "@/lib/chat/store";
 import { useStore } from "@/state/store";
 import { loadChatEligiblePeople } from "@/lib/contacts";
-import { createChannel, openConversation, startDm } from "@/lib/chat/init";
+import { createChannel, openConversation, openSelfNotes, startDm } from "@/lib/chat/init";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { pushRouteHash } from "@/lib/navigation";
 
 interface NewConversationDialogProps {
   open: boolean;
@@ -91,6 +92,36 @@ export function NewConversationDialog({ open, onClose }: NewConversationDialogPr
     <Modal open={open} onClose={onClose} width={420}>
       <div className="p-4">
         <div className="mb-3 text-sm font-semibold text-ink">Nowa rozmowa</div>
+
+        <button
+          type="button"
+          disabled={busy || myOrgs.length === 0}
+          onClick={() => {
+            setBusy(true);
+            void openSelfNotes()
+              .then((id) => {
+                if (!id) {
+                  setError("Nie udało się otworzyć Notatnika.");
+                  return;
+                }
+                reset();
+                onClose();
+                pushRouteHash({ view: "conversation", conversationId: id });
+              })
+              .finally(() => setBusy(false));
+          }}
+          className="mb-3 flex w-full items-center gap-2.5 rounded-xl border border-accent/30 bg-accent/10 px-3 py-2.5 text-left transition hover:border-accent/50 disabled:opacity-50"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/20 text-accent">
+            <BookMarked size={15} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-ink">Otwórz Notatnik</span>
+            <span className="block text-[11px] text-ink-faint">
+              Prywatne notatki, decyzje i galerie
+            </span>
+          </span>
+        </button>
 
         <div className="mb-3 flex gap-1 rounded-lg border border-line bg-surface-raised p-0.5">
           <button

@@ -3,8 +3,10 @@ import {
   applyFocusIncoming,
   applyMessageToOverview,
   defaultThreadTitle,
+  findSelfNotesEntry,
   groupThreadAnnotations,
   isMuted,
+  isSelfNotesConversation,
   markOverviewRead,
   mergeMessages,
   overviewTitle,
@@ -303,7 +305,7 @@ describe("isMuted / sortOverview", () => {
 });
 
 describe("overviewTitle", () => {
-  it("kanał → nazwa; item → tytuł itemu; dm → pozostali członkowie", () => {
+  it("kanał → nazwa; item → tytuł itemu; dm → pozostali członkowie; solo → Notatnik", () => {
     expect(overviewTitle(entry({ kind: "channel", name: "Budowa" }), "me", () => undefined)).toBe(
       "Budowa",
     );
@@ -328,6 +330,43 @@ describe("overviewTitle", () => {
         () => undefined,
       ),
     ).toBe("Ola");
+    expect(
+      overviewTitle(
+        entry({
+          kind: "dm",
+          name: null,
+          members: [
+            { userId: "me", role: "owner", displayName: "Ja", avatarUrl: null, lastReadAt: null },
+          ],
+        }),
+        "me",
+        () => undefined,
+      ),
+    ).toBe("Notatnik");
+  });
+});
+
+describe("isSelfNotesConversation / findSelfNotesEntry", () => {
+  it("wykrywa solo-DM należący do mnie", () => {
+    const notebook = entry({
+      id: "nb",
+      kind: "dm",
+      members: [
+        { userId: "me", role: "owner", displayName: "Ja", avatarUrl: null, lastReadAt: null },
+      ],
+    });
+    const dm = entry({
+      id: "dm1",
+      kind: "dm",
+      members: [
+        { userId: "me", role: "member", displayName: "Ja", avatarUrl: null, lastReadAt: null },
+        { userId: "u2", role: "member", displayName: "Ola", avatarUrl: null, lastReadAt: null },
+      ],
+    });
+    expect(isSelfNotesConversation(notebook, "me")).toBe(true);
+    expect(isSelfNotesConversation(dm, "me")).toBe(false);
+    expect(findSelfNotesEntry([dm, notebook], "me")?.id).toBe("nb");
+    expect(findSelfNotesEntry([dm], "me")).toBeUndefined();
   });
 });
 

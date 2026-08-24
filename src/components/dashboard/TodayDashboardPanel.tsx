@@ -25,6 +25,7 @@ import { deadlineIconDimmed } from "@/lib/deadlines";
 import { itemSupportsTodoDone } from "@/lib/items";
 import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
 import { ScheduleDashboardWorksSection } from "@/components/dashboard/ScheduleDashboardWorkRow";
+import { NotebookDashboardSection } from "@/components/dashboard/NotebookDashboardSection";
 import { DASHBOARD_LEAD_COL } from "@/components/dashboard/dashboardRowLayout";
 import { MobileSectionToggle } from "@/components/mobile/dashboard/MobileSectionToggle";
 import { useMobileSectionExpanded } from "@/components/mobile/dashboard/sectionCollapse";
@@ -86,6 +87,10 @@ export function TodayDashboardPanel() {
       <ScheduleDashboardWorksSection
         onOpenSchedules={() => setSettings({ mainAreaMode: "projects" })}
       />
+
+      <div className="border-b border-line p-3">
+        <NotebookDashboardSection dense />
+      </div>
 
       <section className="border-b border-line p-3 xl:px-3.5 xl:py-3.5 2xl:px-4">
         <div
