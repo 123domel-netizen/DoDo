@@ -1223,10 +1223,22 @@ export async function ensureSelfNotes(): Promise<string | null> {
 }
 
 /** Otwórz Notatnik (utwórz jeśli brak). */
-export async function openSelfNotes(): Promise<string | null> {
+export type SelfNotesOpenIntent = "compose" | "gallery";
+
+export async function openSelfNotes(opts?: {
+  intent?: SelfNotesOpenIntent;
+}): Promise<string | null> {
+  const st = useChatStore.getState();
+  if (opts?.intent) st.setPendingOpenIntent(opts.intent);
   const id = await ensureSelfNotes();
-  if (!id) return null;
+  if (!id) {
+    useChatStore.getState().setPendingOpenIntent(null);
+    return null;
+  }
   await openConversation(id);
+  const after = useChatStore.getState();
+  after.setHubCollapsed(false);
+  if (opts?.intent) after.setActiveThread(null);
   return id;
 }
 

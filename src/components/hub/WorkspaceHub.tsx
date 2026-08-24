@@ -42,7 +42,6 @@ import {
   openRegistryInPanel,
   startDm,
 } from "@/lib/chat/init";
-import { NotebookHubPin } from "@/components/chat/NotebookHubPin";
 import {
   fetchAttachmentsForConversations,
   fetchDecisionsForConversations,
@@ -988,11 +987,6 @@ export function WorkspaceHub() {
       )
     ) : (
       <div className="thin-scrollbar flex min-h-0 flex-1 flex-col overflow-hidden">
-        {chatBrowse !== "archive" && !hubMatchGroup && (
-          <div className="shrink-0 border-b border-line/60">
-            <NotebookHubPin />
-          </div>
-        )}
         {hubChatFolders.filter((f) => !isArchiveHubFolder(f)).length > 0 && (
           <div className="shrink-0 border-b border-line/60">
             {hubChatFolders

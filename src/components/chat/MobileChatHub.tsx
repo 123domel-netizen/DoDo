@@ -18,7 +18,6 @@ import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { isMuted, overviewTitle } from "@/lib/chat/feed";
 import { jumpToMessage, openConversation, startDm } from "@/lib/chat/init";
-import { NotebookHubPin } from "@/components/chat/NotebookHubPin";
 import { fetchMyMentions, joinChannel, searchAll } from "@/lib/chat/api";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
 import { ConversationKindMark } from "@/components/chat/PresenceDot";
@@ -1086,7 +1085,6 @@ export function MobileChatHub() {
           )
         ) : mode.kind === "browse" ? (
           <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pb-1">
-            {mode.id !== "archive" && <NotebookHubPin compact />}
             {browseBody()}
           </div>
         ) : mode.id === "decisions" ? (

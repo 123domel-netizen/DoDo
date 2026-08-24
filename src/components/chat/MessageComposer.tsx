@@ -95,6 +95,8 @@ interface MessageComposerProps {
   disabled?: boolean;
   allowFiles?: boolean;
   autoFocus?: boolean;
+  /** Zmiana wartości wymusza focus (np. CTA „Szybka notatka”). */
+  focusToken?: number;
 }
 
 export function MessageComposer({
@@ -118,6 +120,7 @@ export function MessageComposer({
   disabled = false,
   allowFiles = true,
   autoFocus = false,
+  focusToken = 0,
 }: MessageComposerProps) {
   const [body, setBody] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -160,6 +163,11 @@ export function MessageComposer({
   useEffect(() => {
     if (autoFocus && !isMobile) taRef.current?.focus();
   }, [autoFocus, isMobile]);
+
+  useEffect(() => {
+    if (!focusToken) return;
+    requestAnimationFrame(() => taRef.current?.focus());
+  }, [focusToken]);
 
   useEffect(
     () => () => {

@@ -56,7 +56,7 @@ export function useHubRegistryLists(opts: {
   const [mediaSubTab, setMediaSubTab] = useState<MediaSubTab>("media");
   const [hubTagFilter, setHubTagFilter] = useState<string | null>(null);
 
-  /** Notatnik ma osobny pin — nie mieszamy go z listą osób / ALL. */
+  /** Notatnik otwierany z Przeglądu — nie mieszamy go z listą osób / ALL. */
   const withoutNotebook = useMemo(
     () => overview.filter((c) => !isSelfNotesConversation(c, myUserId)),
     [overview, myUserId],

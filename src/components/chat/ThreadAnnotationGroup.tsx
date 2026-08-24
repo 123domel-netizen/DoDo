@@ -15,6 +15,8 @@ interface ThreadAnnotationGroupProps {
   showTime: boolean;
   flashMessageId?: string | null;
   onOpenThread?: (rootId: string) => void;
+  /** Minimalny chip zamiast podglądu treści (główna taśma, preferencja rozmowy). */
+  compact?: boolean;
 }
 
 function linePreview(msg: ChatMessage): string {
@@ -34,6 +36,7 @@ export function ThreadAnnotationGroup({
   showTime,
   flashMessageId,
   onOpenThread,
+  compact = false,
 }: ThreadAnnotationGroupProps) {
   const last = messages[messages.length - 1]!;
   const resolvedThreadTitle = useChatStore((s) => {
@@ -57,17 +60,42 @@ export function ThreadAnnotationGroup({
       )
     : null;
 
+  if (compact) {
+    return (
+      <button
+        type="button"
+        data-message-id={last.id}
+        onClick={() => onOpenThread?.(rootId)}
+        title="Otwórz wątek"
+        className={`mx-3 my-0.5 inline-flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-md border-l-[3px] border-thread bg-thread/10 px-2 py-1 text-left text-[11px] leading-none text-thread transition hover:bg-thread/20 ${
+          flash ? "ring-2 ring-thread/50 ring-offset-1 ring-offset-surface" : ""
+        } ${allMine ? "ml-auto mr-3" : ""}`}
+      >
+        <MessageSquare size={11} className="shrink-0" />
+        <span className="min-w-0 truncate font-semibold">
+          {resolvedThreadTitle || "Wątek"}
+        </span>
+        {messages.length > 1 && (
+          <span className="shrink-0 tabular-nums text-ink-faint">{messages.length}</span>
+        )}
+        {timeLabel && (
+          <span className="shrink-0 tabular-nums text-ink-faint">{timeLabel}</span>
+        )}
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
       data-message-id={last.id}
       onClick={() => onOpenThread?.(rootId)}
       title="Otwórz wątek"
-      className={`mx-3 my-0.5 flex w-[calc(100%-1.5rem)] max-w-full flex-col gap-0.5 rounded-lg border-l-[3px] border-thread bg-thread/12 px-2.5 py-1.5 text-left transition hover:bg-thread/20 ${
+      className={`mx-3 my-0.5 flex w-[calc(100%-1.5rem)] max-w-full flex-col gap-0 rounded-lg border-l-[3px] border-thread bg-thread/12 px-2.5 py-1.5 text-left transition hover:bg-thread/20 ${
         flash ? "ring-2 ring-thread/50 ring-offset-1 ring-offset-surface" : ""
       } ${allMine ? "ml-auto mr-3" : ""}`}
     >
-      <div className="flex min-w-0 items-center gap-1.5 text-[10px] leading-none text-thread">
+      <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[10px] leading-none text-thread">
         <MessageSquare size={10} className="shrink-0" />
         <span className="min-w-0 truncate font-semibold">
           {resolvedThreadTitle || "Wątek"}
@@ -85,7 +113,9 @@ export function ThreadAnnotationGroup({
           <div
             key={msg.id}
             data-message-id={msg.id}
-            className="line-clamp-2 min-w-0 text-[12px] leading-snug text-ink-light"
+            className={`line-clamp-2 min-w-0 text-[12px] leading-snug text-ink-light ${
+              i > 0 ? "mt-1 border-t border-thread/20 pt-1" : ""
+            }`}
           >
             {showAuthorName ? (
               <>

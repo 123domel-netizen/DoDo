@@ -478,6 +478,8 @@ export function ConversationView({
   const [showThreads, setShowThreads] = useState(false);
   const [galleryCreateOpen, setGalleryCreateOpen] = useState(false);
   const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
+  const [composerFocusToken, setComposerFocusToken] = useState(0);
+  const pendingOpenIntent = useChatStore((s) => s.pendingOpenIntent);
   const [hideThreadPreviews, toggleHideThreadPreviews] = useHideThreadPreviews(
     myUserId,
     conversationId,
@@ -546,6 +548,19 @@ export function ConversationView({
   // DM: obecność drugiej osoby (zielona kropka w nagłówku).
   const dmOther = dmPeerMember(entry?.members ?? [], myUserId, entry?.kind);
   const dmOtherOnline = Boolean(dmOther && isOnline(profiles[dmOther.userId]?.lastSeenAt));
+
+  // CTA z Przeglądu: fokus composera / dialog nowej galerii.
+  useEffect(() => {
+    if (!pendingOpenIntent || embedded) return;
+    useChatStore.getState().setPendingOpenIntent(null);
+    if (pendingOpenIntent === "gallery") {
+      setGalleryCreateOpen(true);
+      return;
+    }
+    if (pendingOpenIntent === "compose") {
+      setComposerFocusToken((n) => n + 1);
+    }
+  }, [pendingOpenIntent, embedded, conversationId]);
 
   // Wskaźnik „X pisze…" (Realtime broadcast, wygasa po TYPING_EXPIRE_MS).
   useEffect(() => {
@@ -1642,6 +1657,7 @@ export function ConversationView({
         <MessageComposer
           onSend={handleSend}
           autoFocus={!embedded}
+          focusToken={composerFocusToken}
           onSendPoll={(q, opts) => void sendPollMessage(conversationId, q, opts)}
           onSendChecklist={(title, items) =>
             void sendChecklistMessage(conversationId, title, items)
