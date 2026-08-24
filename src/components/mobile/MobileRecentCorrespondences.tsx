@@ -1,15 +1,15 @@
 import { useMemo } from "react";
-import { MessageCircle, User, Users } from "lucide-react";
+import { BookMarked, MessageCircle, User, Users } from "lucide-react";
 import { useStore } from "@/state/store";
 import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
-import { openConversation } from "@/lib/chat/init";
+import { openConversation, openSelfNotes } from "@/lib/chat/init";
 import { pushRouteHash } from "@/lib/navigation";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { dmPeerMember } from "@/lib/avatar";
-import { overviewTitle } from "@/lib/chat/feed";
+import { findSelfNotesEntry, isSelfNotesConversation, overviewTitle } from "@/lib/chat/feed";
 
 const MAX_AVATARS = 5;
 const AVATAR = 40;
@@ -17,13 +17,13 @@ const AVATAR = 40;
 function shortLabel(title: string): string {
   const t = title.trim();
   if (!t) return "…";
-  // Kanały często zaczynają się od # — zostaw znak.
   if (t.length <= 9) return t;
   return `${t.slice(0, 8)}…`;
 }
 
 /**
  * Pasek awatarów ostatnich korespondencji — nad dolnymi belkami mobilnymi.
+ * Notatnik jest zawsze pierwszym skrótem.
  */
 export function MobileRecentCorrespondences() {
   const myUserId = useChatStore((s) => s.userId);
@@ -34,28 +34,41 @@ export function MobileRecentCorrespondences() {
   );
   const profiles = useChatStore((s) => s.profiles);
   const itemsMap = useStore((s) => s.items);
+  const notebook = useMemo(
+    () => findSelfNotesEntry(overview, myUserId),
+    [overview, myUserId],
+  );
 
   const rows = useMemo(() => {
-    const byRecent = [...overview].sort((a, b) =>
+    const rest = overview.filter((c) => !isSelfNotesConversation(c, myUserId));
+    const byRecent = [...rest].sort((a, b) =>
       (b.lastMessageAt ?? b.createdAt).localeCompare(a.lastMessageAt ?? a.createdAt),
     );
     const unread = byRecent.filter((c) => c.unreadCount > 0 || c.myMarkedUnread);
     const seen = new Set(unread.map((c) => c.id));
     const result: ChatOverviewEntry[] = [...unread];
+    const slot = MAX_AVATARS - 1; // 1 slot na Notatnik
     for (const c of byRecent) {
-      if (result.length >= MAX_AVATARS) break;
+      if (result.length >= slot) break;
       if (seen.has(c.id)) continue;
       result.push(c);
       seen.add(c.id);
     }
-    return result.slice(0, MAX_AVATARS);
-  }, [overview]);
+    return result.slice(0, slot);
+  }, [overview, myUserId]);
 
-  if (!cloudEnabled || !myUserId || rows.length === 0) return null;
+  if (!cloudEnabled || !myUserId) return null;
 
   const open = (id: string) => {
     void openConversation(id);
     pushRouteHash({ view: "conversation", conversationId: id });
+  };
+
+  const openNotebook = () => {
+    void openSelfNotes().then((id) => {
+      if (!id) return;
+      pushRouteHash({ view: "conversation", conversationId: id });
+    });
   };
 
   return (
@@ -65,6 +78,29 @@ export function MobileRecentCorrespondences() {
         role="list"
         aria-label="Ostatnie korespondencje"
       >
+        <button
+          type="button"
+          role="listitem"
+          onClick={openNotebook}
+          className="flex w-[4.25rem] flex-col items-center gap-1 rounded-lg px-0.5 py-0.5 transition active:scale-[0.97] active:bg-surface-overlay/60"
+          title="Notatnik"
+        >
+          <span className="relative inline-flex shrink-0">
+            <span
+              className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-accent/15 text-accent transition ${
+                notebook
+                  ? "ring-1 ring-accent/40"
+                  : "ring-1 ring-dashed ring-accent/50"
+              }`}
+            >
+              <BookMarked size={18} />
+            </span>
+          </span>
+          <span className="w-full truncate text-center text-[10px] font-semibold leading-tight text-ink">
+            Notatnik
+          </span>
+        </button>
+
         {rows.map((entry) => {
           const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
           const peer = dmPeerMember(entry.members, myUserId, entry.kind);

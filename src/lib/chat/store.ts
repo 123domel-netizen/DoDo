@@ -76,6 +76,11 @@ interface ChatState {
   flashMessageId: string | null;
   /** Desktop: tryb prawego panelu (hub otwiera detal). */
   panelMode: "todo" | "conversation" | "decision" | "note" | "media";
+  /**
+   * Jednorazowy intent po otwarciu rozmowy (np. CTA z Przeglądu).
+   * Nie persystowany — konsumowany przez ConversationView.
+   */
+  pendingOpenIntent: "compose" | "gallery" | null;
   /** Desktop: aktywna zakładka hubu pod kalendarzem. */
   hubTab: "chat" | "decisions" | "notes" | "media" | "search";
   /** Hub zajmuje więcej wysokości (kalendarz się kurczy). */
@@ -147,6 +152,7 @@ interface ChatState {
   setActiveThread: (rootId: string | null) => void;
   markReadLocal: (conversationId: string, atIso: string) => void;
   setPanelMode: (mode: ChatState["panelMode"]) => void;
+  setPendingOpenIntent: (intent: ChatState["pendingOpenIntent"]) => void;
   setHubTab: (tab: ChatState["hubTab"]) => void;
   setHubExpanded: (on: boolean) => void;
   toggleHubExpanded: () => void;
@@ -291,6 +297,7 @@ export const useChatStore = create<ChatState>()(
       hydrated: false,
       userId: null,
       panelMode: "todo",
+      pendingOpenIntent: null,
       hubTab: "chat",
       hubExpanded: true,
       hubCollapsed: false,
@@ -603,6 +610,8 @@ export const useChatStore = create<ChatState>()(
               : {}),
         }),
 
+      setPendingOpenIntent: (intent) => set({ pendingOpenIntent: intent }),
+
       setHubTab: (tab) => set({ hubTab: tab }),
 
       setHubExpanded: (on) => set({ hubExpanded: on, ...(on ? { hubCollapsed: false } : {}) }),
@@ -715,6 +724,7 @@ export const useChatStore = create<ChatState>()(
         set({
           userId: null,
           panelMode: "todo",
+          pendingOpenIntent: null,
           hubTab: "chat",
           hubExpanded: true,
           hubCollapsed: false,

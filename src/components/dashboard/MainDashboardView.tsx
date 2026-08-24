@@ -9,6 +9,7 @@ import { itemSupportsTodoDone } from "@/lib/items";
 import { effectiveTagIds, resolveItemTags } from "@/lib/tags";
 import { useTodayDashboardData } from "@/hooks/useTodayDashboardData";
 import { ScheduleDashboardWorksSection } from "@/components/dashboard/ScheduleDashboardWorkRow";
+import { NotebookDashboardSection } from "@/components/dashboard/NotebookDashboardSection";
 import {
   DashboardEventRow,
   DashboardTodoRow,
@@ -90,6 +91,8 @@ export function MainDashboardView() {
             onOpenSchedules={() => setSettings({ mainAreaMode: "projects" })}
           />
         </div>
+
+        <NotebookDashboardSection />
 
         <div className="grid gap-5 lg:grid-cols-2 lg:gap-6">
           <section className="rounded-2xl border border-line bg-surface-raised/40 p-4 sm:p-5">

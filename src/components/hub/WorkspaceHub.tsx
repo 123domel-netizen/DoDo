@@ -29,6 +29,7 @@ import { useChatStore } from "@/lib/chat/store";
 import {
   filterOverviewForHubGroup,
   isMuted,
+  isSelfNotesConversation,
   overviewTitle,
   sortFavoritesAndNew,
   sortOverview,
@@ -411,10 +412,19 @@ export function WorkspaceHub() {
     [activeOverview],
   );
   const discoverable = publicChannels.filter((c) => !joinedIds.has(c.id) && !hubMatchGroup);
-  const sorted = useMemo(() => sortOverview(activeOverview), [activeOverview]);
+  const sorted = useMemo(
+    () =>
+      sortOverview(activeOverview.filter((c) => !isSelfNotesConversation(c, myUserId))),
+    [activeOverview, myUserId],
+  );
   const favorites = useMemo(
-    () => sortFavoritesAndNew(activeOverview, new Date(), monthCounts ?? undefined),
-    [activeOverview, monthCounts],
+    () =>
+      sortFavoritesAndNew(
+        activeOverview.filter((c) => !isSelfNotesConversation(c, myUserId)),
+        new Date(),
+        monthCounts ?? undefined,
+      ),
+    [activeOverview, monthCounts, myUserId],
   );
   const people = sorted.filter((c) => c.kind === "dm");
   const channels = sorted.filter((c) => c.kind === "channel");

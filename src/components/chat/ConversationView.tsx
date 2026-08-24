@@ -8,6 +8,8 @@ import {
   BellOff,
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
   FolderOpen,
   Gavel,
   LogOut,
@@ -27,12 +29,14 @@ import { useChatStore } from "@/lib/chat/store";
 import {
   groupThreadAnnotations,
   isMuted,
+  isSelfNotesConversation,
   mergeMessages,
   overviewTitle,
   threadDisplayTitle,
 } from "@/lib/chat/feed";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { ThreadAnnotationGroup } from "@/components/chat/ThreadAnnotationGroup";
+import { useHideThreadPreviews } from "@/lib/chat/threadPreviewPref";
 import { dmPeerMember } from "@/lib/avatar";
 import {
   MUTE_PRESETS,
@@ -167,6 +171,8 @@ function MessageFeed({
   selectionActive = false,
   onToggleSelect,
   onDetachFromThread,
+  notebookEmpty = false,
+  hideThreadPreviews = false,
 }: {
   messages: ChatMessage[];
   myUserId: string | null;
@@ -192,6 +198,10 @@ function MessageFeed({
   selectionActive?: boolean;
   onToggleSelect?: (msg: ChatMessage, opts?: { forceSplit?: boolean }) => void;
   onDetachFromThread?: (msg: ChatMessage) => void;
+  /** Pusty Notatnik — podpowiedzi zamiast generycznego „napisz pierwszą”. */
+  notebookEmpty?: boolean;
+  /** Główna taśma: minimalny chip zamiast bogatego podglądu wątku. */
+  hideThreadPreviews?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -306,8 +316,22 @@ function MessageFeed({
         </div>
       )}
       {messages.length === 0 && (
-        <div className="flex h-full items-center justify-center px-6 text-center text-xs text-ink-faint">
-          Brak wiadomości — napisz pierwszą.
+        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-10 text-center text-xs text-ink-faint">
+          {notebookEmpty ? (
+            <>
+              <p className="text-sm font-medium text-ink-light">Twój Notatnik</p>
+              <p className="max-w-xs leading-relaxed">
+                Prywatne miejsce na myśli, decyzje i galerie — tylko Ty to widzisz.
+              </p>
+              <ul className="mt-1 space-y-1 text-left text-[11px] text-ink-faint">
+                <li>· Napisz myśl w polu poniżej</li>
+                <li>· Zrób galerię zdjęć (np. podłogówka 3.3)</li>
+                <li>· Zapisz wiadomość jako decyzję z menu ⋯</li>
+              </ul>
+            </>
+          ) : (
+            "Brak wiadomości — napisz pierwszą."
+          )}
         </div>
       )}
       {feedItems.map((item, i) => {
@@ -341,6 +365,7 @@ function MessageFeed({
               showTime={showTime}
               flashMessageId={flashMessageId}
               onOpenThread={onOpenThread}
+              compact={hideThreadPreviews}
             />
           );
         }
@@ -453,6 +478,12 @@ export function ConversationView({
   const [showThreads, setShowThreads] = useState(false);
   const [galleryCreateOpen, setGalleryCreateOpen] = useState(false);
   const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
+  const [composerFocusToken, setComposerFocusToken] = useState(0);
+  const pendingOpenIntent = useChatStore((s) => s.pendingOpenIntent);
+  const [hideThreadPreviews, toggleHideThreadPreviews] = useHideThreadPreviews(
+    myUserId,
+    conversationId,
+  );
   const [targetPick, setTargetPick] = useState<{
     mode: MessageTargetMode;
     msg: ChatMessage;
@@ -490,6 +521,7 @@ export function ConversationView({
   });
 
   const entry = overview.find((c) => c.id === conversationId);
+  const isNotebook = Boolean(entry && isSelfNotesConversation(entry, myUserId));
   const focus =
     !embedded && focusFeedRaw?.conversationId === conversationId ? focusFeedRaw : null;
   // Główny feed: rooty + kompaktowe adnotacje odpowiedzi z wątków (chronologicznie).
@@ -516,6 +548,19 @@ export function ConversationView({
   // DM: obecność drugiej osoby (zielona kropka w nagłówku).
   const dmOther = dmPeerMember(entry?.members ?? [], myUserId, entry?.kind);
   const dmOtherOnline = Boolean(dmOther && isOnline(profiles[dmOther.userId]?.lastSeenAt));
+
+  // CTA z Przeglądu: fokus composera / dialog nowej galerii.
+  useEffect(() => {
+    if (!pendingOpenIntent || embedded) return;
+    useChatStore.getState().setPendingOpenIntent(null);
+    if (pendingOpenIntent === "gallery") {
+      setGalleryCreateOpen(true);
+      return;
+    }
+    if (pendingOpenIntent === "compose") {
+      setComposerFocusToken((n) => n + 1);
+    }
+  }, [pendingOpenIntent, embedded, conversationId]);
 
   // Wskaźnik „X pisze…" (Realtime broadcast, wygasa po TYPING_EXPIRE_MS).
   useEffect(() => {
@@ -1426,7 +1471,19 @@ export function ConversationView({
                   <MailOpen size={14} /> Oznacz jako nieprzeczytane
                 </button>
 
-                {(entry.kind !== "channel" || isChannelAdmin) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleHideThreadPreviews();
+                    setMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-ink transition hover:bg-surface-raised"
+                >
+                  {hideThreadPreviews ? <Eye size={14} /> : <EyeOff size={14} />}
+                  {hideThreadPreviews ? "Pokaż podgląd wątków" : "Ukryj podgląd wątków"}
+                </button>
+
+                {(entry.kind !== "channel" || isChannelAdmin) && !isNotebook && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1475,7 +1532,7 @@ export function ConversationView({
                   </button>
                 )}
 
-                {entry.kind !== "item" && (
+                {entry.kind !== "item" && !isNotebook && (
                   <button
                     type="button"
                     onClick={() => void handleLeave()}
@@ -1546,6 +1603,8 @@ export function ConversationView({
         selectionModes={selectionModes}
         selectionActive={selectionOrder.length > 0}
         onToggleSelect={toggleSelect}
+        notebookEmpty={isNotebook && !focus && displayedFeed.length === 0}
+        hideThreadPreviews={hideThreadPreviews}
       />
 
       {focus && (
@@ -1598,6 +1657,7 @@ export function ConversationView({
         <MessageComposer
           onSend={handleSend}
           autoFocus={!embedded}
+          focusToken={composerFocusToken}
           onSendPoll={(q, opts) => void sendPollMessage(conversationId, q, opts)}
           onSendChecklist={(title, items) =>
             void sendChecklistMessage(conversationId, title, items)
