@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AtSign,
   BellOff,
@@ -66,6 +66,14 @@ import { useHubRegistryLists } from "@/hooks/useHubRegistryLists";
 import { cloudEnabled } from "@/lib/supabase";
 
 type RegistryFocus = NonNullable<ReturnType<typeof useChatStore.getState>["registryFocus"]>;
+
+/** Minimalna liczba widocznych wierszy w sekcji ALL (osoby + kanały). */
+const MOBILE_CHAT_MIN_ROWS = 3;
+/** ~ConversationRow (py-2.5 + avatar). */
+const MOBILE_CHAT_ROW_PX = 56;
+const MOBILE_CHAT_SECTION_HEADER_PX = 30;
+const MOBILE_CHAT_SECTION_MIN_PX =
+  MOBILE_CHAT_SECTION_HEADER_PX + MOBILE_CHAT_MIN_ROWS * MOBILE_CHAT_ROW_PX;
 
 function MediaThumb({
   att,
@@ -514,14 +522,23 @@ export function MobileChatHub() {
       );
     }
 
-    // ALL: sekcje DM / Kanały (nie jedna mieszana lista).
+    // ALL: sekcje DM / Kanały — każda ma własny scroll i min. ~3 wiersze widoczne.
     if (mode.id === "all") {
-      const sectionBlock = (title: string, entries: typeof list, emptyHint?: string) => {
+      const splitSectionBlock = (
+        title: string,
+        entries: typeof list,
+        emptyHint?: string,
+        footer?: ReactNode,
+      ) => {
         const secPinned = entries.filter((c) => c.myPinnedAt);
         const secRest = entries.filter((c) => !c.myPinnedAt);
         return (
-          <section key={title}>
-            <div className="sticky top-0 z-[1] border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
+          <section
+            key={title}
+            className="flex min-h-0 flex-1 flex-col border-b border-line/60 last:border-b-0"
+            style={{ minHeight: MOBILE_CHAT_SECTION_MIN_PX }}
+          >
+            <div className="shrink-0 border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
                 {title}
                 {entries.length > 0 && (
@@ -529,16 +546,21 @@ export function MobileChatHub() {
                 )}
               </div>
             </div>
-            {entries.length === 0 ? (
-              emptyHint ? (
-                <div className="px-3 py-3 text-[11px] leading-relaxed text-ink-faint">{emptyHint}</div>
-              ) : null
-            ) : (
-              <>
-                {secPinned.map(renderMobileRow)}
-                {secRest.map(renderMobileRow)}
-              </>
-            )}
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
+              {entries.length === 0 ? (
+                emptyHint ? (
+                  <div className="px-3 py-3 text-[11px] leading-relaxed text-ink-faint">
+                    {emptyHint}
+                  </div>
+                ) : null
+              ) : (
+                <>
+                  {secPinned.map(renderMobileRow)}
+                  {secRest.map(renderMobileRow)}
+                </>
+              )}
+              {footer}
+            </div>
           </section>
         );
       };
@@ -546,46 +568,48 @@ export function MobileChatHub() {
       const dms = list.filter((c) => c.kind === "dm");
       const chans = list.filter((c) => c.kind === "channel" || c.kind === "item");
 
+      const discoverableFooter =
+        discoverable.length > 0 ? (
+          <>
+            <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+              Kanały publiczne
+            </div>
+            {discoverable.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
+                  <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 32 : 15} />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.name}</span>
+                <button
+                  type="button"
+                  onClick={() => void handleJoin(c.id)}
+                  className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
+                >
+                  Dołącz
+                </button>
+              </div>
+            ))}
+          </>
+        ) : null;
+
       return (
         <>
-          {sectionBlock(
+          {splitSectionBlock(
             "Wiadomości",
             dms,
             "Brak rozmów prywatnych. Dodaj osobę przez +.",
+            idleContacts.length > 0 ? (
+              <ContactDiscoverSection
+                contacts={idleContacts}
+                onStart={(uid) => void handleStartContactDm(uid)}
+                busyUserId={startingDmUserId}
+              />
+            ) : null,
           )}
-          <ContactDiscoverSection
-            contacts={idleContacts}
-            onStart={(uid) => void handleStartContactDm(uid)}
-            busyUserId={startingDmUserId}
-          />
-          {sectionBlock("Kanały", chans, "Brak kanałów.")}
-          {discoverable.length > 0 && (
-            <>
-              <div className="sticky top-0 z-[1] border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-                  Kanały publiczne
-                </div>
-              </div>
-              {discoverable.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
-                    <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 32 : 15} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleJoin(c.id)}
-                    className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
-                  >
-                    Dołącz
-                  </button>
-                </div>
-              ))}
-            </>
-          )}
+          {splitSectionBlock("Kanały", chans, "Brak kanałów.", discoverableFooter)}
         </>
       );
     }
@@ -1083,6 +1107,10 @@ export function MobileChatHub() {
           ) : (
             <SearchResults results={results} onClose={() => setResults(null)} />
           )
+        ) : mode.kind === "browse" && mode.id === "all" ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1">
+            {browseBody()}
+          </div>
         ) : mode.kind === "browse" ? (
           <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pb-1">
             {browseBody()}
