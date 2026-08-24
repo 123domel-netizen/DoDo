@@ -10,9 +10,9 @@ import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { dmPeerMember } from "@/lib/avatar";
 import { findSelfNotesEntry, isSelfNotesConversation, overviewTitle } from "@/lib/chat/feed";
+import { mobileCorrespondenceAvatarLayout } from "@/lib/chat/conversationRowVisual";
 
 const MAX_AVATARS = 5;
-const AVATAR = 40;
 
 function shortLabel(title: string): string {
   const t = title.trim();
@@ -74,7 +74,7 @@ export function MobileRecentCorrespondences() {
   return (
     <div className="shrink-0 border-t border-line bg-surface-raised/80 px-2 pt-2 pb-1.5">
       <div
-        className="mx-auto flex max-w-md items-start justify-evenly gap-1"
+        className="mx-auto flex max-w-md items-end justify-evenly gap-1"
         role="list"
         aria-label="Ostatnie korespondencje"
       >
@@ -103,6 +103,7 @@ export function MobileRecentCorrespondences() {
 
         {rows.map((entry) => {
           const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
+          const layout = mobileCorrespondenceAvatarLayout(showUnread);
           const peer = dmPeerMember(entry.members, myUserId, entry.kind);
           const peerAvatar = peer
             ? (profiles[peer.userId]?.avatarUrl ?? peer.avatarUrl)
@@ -119,7 +120,7 @@ export function MobileRecentCorrespondences() {
             >
               <span className="relative inline-flex shrink-0">
                 <span
-                  className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-surface-overlay transition ${
+                  className={`flex items-center justify-center overflow-hidden rounded-full bg-surface-overlay transition ${layout.shell} ${
                     showUnread
                       ? "ring-2 ring-accent ring-offset-2 ring-offset-surface-raised"
                       : "ring-1 ring-line"
@@ -128,21 +129,21 @@ export function MobileRecentCorrespondences() {
                   {entry.kind === "channel" ? (
                     <ChannelIcon
                       iconUrl={entry.iconUrl}
-                      size={entry.iconUrl ? AVATAR : 18}
+                      size={entry.iconUrl ? layout.person : layout.fallback}
                     />
                   ) : entry.kind === "item" ? (
-                    <MessageCircle size={18} className="text-ink-faint" />
+                    <MessageCircle size={layout.fallback} className="text-ink-faint" />
                   ) : entry.members.length > 2 ? (
-                    <Users size={18} className="text-ink-faint" />
+                    <Users size={layout.fallback} className="text-ink-faint" />
                   ) : peer ? (
                     <PersonAvatar
                       userId={peer.userId}
                       avatarUrl={peerAvatar}
-                      size={AVATAR}
+                      size={layout.person}
                       className="border-0"
                     />
                   ) : (
-                    <User size={18} className="text-ink-faint" />
+                    <User size={layout.fallback} className="text-ink-faint" />
                   )}
                 </span>
                 {showUnread ? (

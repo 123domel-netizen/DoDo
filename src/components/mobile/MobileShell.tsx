@@ -11,6 +11,7 @@ import {
 import { addDays, addMonths, startOfDay } from "date-fns";
 import {
   Bell,
+  BookMarked,
   ChevronLeft,
   ChevronRight,
   LayoutDashboard,
@@ -53,8 +54,9 @@ import { AppAdminSettings } from "@/components/settings/AppAdminSettings";
 import { TagsSettings } from "@/components/settings/TagsSettings";
 import { SyncSettings } from "@/components/settings/SyncSettings";
 import { useChatStore } from "@/lib/chat/store";
-import { totalUnread } from "@/lib/chat/feed";
-import { setRouteHash } from "@/lib/navigation";
+import { findSelfNotesEntry, totalUnread } from "@/lib/chat/feed";
+import { openSelfNotes } from "@/lib/chat/init";
+import { pushRouteHash, setRouteHash } from "@/lib/navigation";
 import { useHistoryBackLayer } from "@/hooks/useHistoryBackLayer";
 
 const ChatPanel = lazy(() =>
@@ -116,6 +118,13 @@ export function MobileShell() {
   const chatUnread = useChatStore((s) => (cloudEnabled ? totalUnread(s.overview) : 0));
   const activeConversationId = useChatStore((s) => s.activeConversationId);
   const setActiveConversation = useChatStore((s) => s.setActiveConversation);
+  const myUserId = useChatStore((s) => s.userId);
+  const overview = useChatStore((s) => s.overview);
+  const notebookId = findSelfNotesEntry(overview, myUserId)?.id ?? null;
+  const notebookOpen =
+    Boolean(activeConversationId) &&
+    Boolean(notebookId) &&
+    activeConversationId === notebookId;
 
   // Deep-link (push / chip „→ rozmowa") otwiera rozmowę → przełącz na zakładkę czatu.
   useEffect(() => {
@@ -137,6 +146,16 @@ export function MobileShell() {
   const goDashboard = () => {
     setSchedulesMode(null);
     setTab("dashboard");
+  };
+
+  const goNotebook = () => {
+    if (!cloudEnabled) return;
+    setSchedulesMode(null);
+    void openSelfNotes().then((id) => {
+      if (!id) return;
+      setTab("chat");
+      pushRouteHash({ view: "conversation", conversationId: id });
+    });
   };
 
   const goCalendar = () => {
@@ -370,7 +389,7 @@ export function MobileShell() {
       {/* Ostatnie korespondencje — tylko na Dashboardzie (nie w czacie / rozmowie). */}
       {!schedulesOpen && tab === "dashboard" && <MobileRecentCorrespondences />}
 
-      {/* Dolne menu: Obecności · Dashboard · Czat */}
+      {/* Dolne menu: Obecności · Notatnik · Dashboard · Czat */}
       <nav
         className="z-30 flex shrink-0 items-stretch border-t border-line bg-surface"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
@@ -384,6 +403,19 @@ export function MobileShell() {
             setSchedulesMode(open ? "attendance" : null)
           }
         />
+        {cloudEnabled && (
+          <BottomTab
+            active={notebookOpen && !schedulesOpen}
+            onSelect={goNotebook}
+            icon={
+              <BookMarked
+                size={22}
+                strokeWidth={notebookOpen && !schedulesOpen ? 2.25 : 1.75}
+              />
+            }
+            label="Notatnik"
+          />
+        )}
         <BottomTab
           active={tab === "dashboard" && !schedulesOpen}
           onSelect={goDashboard}
@@ -397,13 +429,14 @@ export function MobileShell() {
         />
         {cloudEnabled && (
           <BottomTab
-            active={tab === "chat" && !schedulesOpen}
+            active={tab === "chat" && !schedulesOpen && !notebookOpen}
             onSelect={goChatHome}
             icon={
               <MessageCircle
                 size={22}
                 strokeWidth={
-                  (tab === "chat" && !schedulesOpen) || chatUnread > 0
+                  (tab === "chat" && !schedulesOpen && !notebookOpen) ||
+                  chatUnread > 0
                     ? 2.25
                     : 1.75
                 }

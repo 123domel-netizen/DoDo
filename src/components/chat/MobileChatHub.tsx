@@ -67,6 +67,14 @@ import { cloudEnabled } from "@/lib/supabase";
 
 type RegistryFocus = NonNullable<ReturnType<typeof useChatStore.getState>["registryFocus"]>;
 
+/** Widoczne wiersze w dolnej sekcji Kanały (ALL) — reszta w scrollu. */
+const MOBILE_CHAT_MIN_CHANNEL_ROWS = 3;
+/** ~ConversationRow (py-2.5 + avatar). */
+const MOBILE_CHAT_ROW_PX = 56;
+const MOBILE_CHAT_SECTION_HEADER_PX = 30;
+const MOBILE_CHAT_CHANNELS_PANEL_PX =
+  MOBILE_CHAT_SECTION_HEADER_PX + MOBILE_CHAT_MIN_CHANNEL_ROWS * MOBILE_CHAT_ROW_PX;
+
 function MediaThumb({
   att,
 }: {
@@ -514,78 +522,95 @@ export function MobileChatHub() {
       );
     }
 
-    // ALL: sekcje DM / Kanały (nie jedna mieszana lista).
+    // ALL: osoby zajmują resztę ekranu; kanały — stałe ~3 wiersze + scroll.
     if (mode.id === "all") {
-      const sectionBlock = (title: string, entries: typeof list, emptyHint?: string) => {
+      const renderEntries = (entries: typeof list) => {
         const secPinned = entries.filter((c) => c.myPinnedAt);
         const secRest = entries.filter((c) => !c.myPinnedAt);
         return (
-          <section key={title}>
-            <div className="sticky top-0 z-[1] border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-                {title}
-                {entries.length > 0 && (
-                  <span className="ml-1.5 font-normal opacity-70">{entries.length}</span>
-                )}
-              </div>
-            </div>
-            {entries.length === 0 ? (
-              emptyHint ? (
-                <div className="px-3 py-3 text-[11px] leading-relaxed text-ink-faint">{emptyHint}</div>
-              ) : null
-            ) : (
-              <>
-                {secPinned.map(renderMobileRow)}
-                {secRest.map(renderMobileRow)}
-              </>
-            )}
-          </section>
+          <>
+            {secPinned.map(renderMobileRow)}
+            {secRest.map(renderMobileRow)}
+          </>
         );
       };
+
+      const sectionHeader = (title: string, count: number) => (
+        <div className="shrink-0 border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            {title}
+            {count > 0 && <span className="ml-1.5 font-normal opacity-70">{count}</span>}
+          </div>
+        </div>
+      );
 
       const dms = list.filter((c) => c.kind === "dm");
       const chans = list.filter((c) => c.kind === "channel" || c.kind === "item");
 
+      const discoverableFooter =
+        discoverable.length > 0 ? (
+          <>
+            <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+              Kanały publiczne
+            </div>
+            {discoverable.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
+                  <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 32 : 15} />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.name}</span>
+                <button
+                  type="button"
+                  onClick={() => void handleJoin(c.id)}
+                  className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
+                >
+                  Dołącz
+                </button>
+              </div>
+            ))}
+          </>
+        ) : null;
+
       return (
         <>
-          {sectionBlock(
-            "Wiadomości",
-            dms,
-            "Brak rozmów prywatnych. Dodaj osobę przez +.",
-          )}
-          <ContactDiscoverSection
-            contacts={idleContacts}
-            onStart={(uid) => void handleStartContactDm(uid)}
-            busyUserId={startingDmUserId}
-          />
-          {sectionBlock("Kanały", chans, "Brak kanałów.")}
-          {discoverable.length > 0 && (
-            <>
-              <div className="sticky top-0 z-[1] border-b border-line/60 bg-canvas/95 px-3 py-1.5 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-                  Kanały publiczne
+          <section className="flex min-h-0 flex-1 flex-col border-b border-line/60">
+            {sectionHeader("Wiadomości", dms.length)}
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
+              {dms.length === 0 ? (
+                <div className="px-3 py-3 text-[11px] leading-relaxed text-ink-faint">
+                  Brak rozmów prywatnych. Dodaj osobę przez +.
                 </div>
-              </div>
-              {discoverable.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex items-center gap-2.5 border-b border-line/50 px-3 py-2"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-line text-ink-faint">
-                    <ChannelIcon iconUrl={c.iconUrl} size={c.iconUrl ? 32 : 15} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleJoin(c.id)}
-                    className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs text-ink-light transition hover:border-line-strong hover:text-ink"
-                  >
-                    Dołącz
-                  </button>
+              ) : (
+                renderEntries(dms)
+              )}
+              {idleContacts.length > 0 ? (
+                <ContactDiscoverSection
+                  contacts={idleContacts}
+                  onStart={(uid) => void handleStartContactDm(uid)}
+                  busyUserId={startingDmUserId}
+                />
+              ) : null}
+            </div>
+          </section>
+          <section
+            className="flex shrink-0 flex-col overflow-hidden"
+            style={{ height: MOBILE_CHAT_CHANNELS_PANEL_PX }}
+          >
+            {sectionHeader("Kanały", chans.length)}
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
+              {chans.length === 0 ? (
+                <div className="px-3 py-3 text-[11px] leading-relaxed text-ink-faint">
+                  Brak kanałów.
                 </div>
-              ))}
-            </>
-          )}
+              ) : (
+                renderEntries(chans)
+              )}
+              {discoverableFooter}
+            </div>
+          </section>
         </>
       );
     }
@@ -1083,6 +1108,10 @@ export function MobileChatHub() {
           ) : (
             <SearchResults results={results} onClose={() => setResults(null)} />
           )
+        ) : mode.kind === "browse" && mode.id === "all" ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1">
+            {browseBody()}
+          </div>
         ) : mode.kind === "browse" ? (
           <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pb-1">
             {browseBody()}
