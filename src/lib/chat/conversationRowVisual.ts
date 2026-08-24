@@ -1,3 +1,10 @@
+/** Awatary na mobilnym pasku ostatnich korespondencji (Dashboard). */
+export function mobileCorrespondenceAvatarLayout(showUnread: boolean) {
+  return showUnread
+    ? ({ shell: "h-10 w-10", person: 40, icon: 18, fallback: 18 } as const)
+    : ({ shell: "h-7 w-7", person: 28, icon: 14, fallback: 14 } as const);
+}
+
 /** Rozmiary awatara: mniejszy gdy odczytane, większy przy nieprzeczytanych. */
 export function conversationRowAvatarLayout(showUnread: boolean, compact = false) {
   if (compact) {
