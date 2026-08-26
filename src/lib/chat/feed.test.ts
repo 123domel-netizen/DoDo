@@ -9,6 +9,9 @@ import {
   isSelfNotesConversation,
   markOverviewRead,
   mergeMessages,
+  notebookMainFeed,
+  notebookThreadDisplayTitle,
+  notebookThreadTitleFromBody,
   overviewTitle,
   reconcilePinnedList,
   sortFavoritesAndNew,
@@ -367,6 +370,54 @@ describe("isSelfNotesConversation / findSelfNotesEntry", () => {
     expect(isSelfNotesConversation(dm, "me")).toBe(false);
     expect(findSelfNotesEntry([dm, notebook], "me")?.id).toBe("nb");
     expect(findSelfNotesEntry([dm], "me")).toBeUndefined();
+  });
+});
+
+describe("notebookMainFeed / notebookThreadTitleFromBody", () => {
+  it("zostawia same rooty na głównej taśmie", () => {
+    const root = msg({ id: "r1", threadRootId: null });
+    const reply = msg({ id: "a1", threadRootId: "r1" });
+    expect(notebookMainFeed([root, reply]).map((m) => m.id)).toEqual(["r1"]);
+  });
+
+  it("ukrywa usunięte i zarchiwizowane (chyba że includeArchived)", () => {
+    const live = msg({ id: "a", threadRootId: null });
+    const gone = msg({
+      id: "b",
+      threadRootId: null,
+      deletedAt: "2026-08-01T00:00:00.000Z",
+    });
+    const archived = msg({
+      id: "c",
+      threadRootId: null,
+      threadArchivedAt: "2026-08-01T00:00:00.000Z",
+    });
+    expect(notebookMainFeed([live, gone, archived]).map((m) => m.id)).toEqual([
+      "a",
+    ]);
+    expect(
+      notebookMainFeed([live, gone, archived], { includeArchived: true }).map(
+        (m) => m.id,
+      ),
+    ).toEqual(["a", "c"]);
+  });
+
+  it("bierze pierwszą linię nagłówka albo Szczegóły", () => {
+    expect(notebookThreadTitleFromBody("Zakupy\n- mleko")).toBe("Zakupy");
+    expect(notebookThreadTitleFromBody("   ")).toBe("Szczegóły");
+    expect(notebookThreadTitleFromBody("x".repeat(50))).toHaveLength(40);
+  });
+
+  it("display title Notatnika ignoruje threadTitle i bierze body", () => {
+    const root = msg({
+      id: "r1",
+      body: "Aktualna treść",
+      threadTitle: "Stara nazwa",
+    });
+    expect(notebookThreadDisplayTitle(root)).toBe("Aktualna treść");
+    expect(notebookThreadDisplayTitle(msg({ id: "r2", body: "  " }))).toBe(
+      "Szczegóły",
+    );
   });
 });
 

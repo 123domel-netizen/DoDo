@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
@@ -10,6 +10,8 @@ import {
   Download,
   ExternalLink,
   Forward,
+  Archive,
+  ArchiveRestore,
   ListTree,
   LogOut,
   MessageSquare,
@@ -17,6 +19,7 @@ import {
   Pin,
   RotateCw,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import type { MessageSelectMode } from "@/lib/chat/selectionChecklist";
@@ -963,6 +966,11 @@ interface MessageBubbleProps {
   /** Czy w rozmowie jest już jakieś zaznaczenie (klik w bańkę przełącza). */
   selectionActive?: boolean;
   onToggleSelect?: (msg: ChatMessage, opts?: { forceSplit?: boolean }) => void;
+  /** Solo-Notatnik: inline edit + przycisk Szczegóły. */
+  isNotebook?: boolean;
+  onInlineEdit?: (msg: ChatMessage, body: string) => void;
+  onNotebookDelete?: (msg: ChatMessage) => void;
+  onNotebookArchive?: (msg: ChatMessage, archived: boolean) => void;
 }
 
 export function MessageBubble({
@@ -992,6 +1000,10 @@ export function MessageBubble({
   selectMode = null,
   selectionActive = false,
   onToggleSelect,
+  isNotebook = false,
+  onInlineEdit,
+  onNotebookDelete,
+  onNotebookArchive,
 }: MessageBubbleProps) {
   const setEditing = useStore((s) => s.setEditing);
   const items = useStore((s) => s.items);
@@ -1008,6 +1020,9 @@ export function MessageBubble({
     !msg.deletedAt &&
     (msg.attachments?.some((a) => !a.mimeType.startsWith("image/")) ?? false);
   const [reactionPreview, setReactionPreview] = useState<string | null>(null);
+  const [inlineDraft, setInlineDraft] = useState<string | null>(null);
+  const skipInlineSave = useRef(false);
+  const inlineTaRef = useRef<HTMLTextAreaElement>(null);
 
   if (msg.kind === "system") {
     if (msg.payload?.movedStub) {
@@ -1110,6 +1125,25 @@ export function MessageBubble({
       ? (msg.attachments ?? []).find((a) => a.mimeType.startsWith("audio/"))
       : undefined;
   const canAct = !deleted && !pending && !failed;
+  const canInlineEdit =
+    isNotebook &&
+    mine &&
+    msg.kind === "text" &&
+    canAct &&
+    Boolean(onInlineEdit);
+  const editingInline = inlineDraft !== null;
+
+  const commitInlineEdit = () => {
+    if (skipInlineSave.current) {
+      skipInlineSave.current = false;
+      setInlineDraft(null);
+      return;
+    }
+    const next = (inlineDraft ?? "").trim();
+    setInlineDraft(null);
+    if (!next || next === msg.body.trim()) return;
+    onInlineEdit?.(msg, next);
+  };
 
   const isGallery = msg.kind === "gallery" && !deleted;
   const galleryNeedsChrome = isGallery && (hasThread || threadUnread || Boolean(quoted));
@@ -1155,7 +1189,9 @@ export function MessageBubble({
       data-message-id={msg.id}
       className={`group relative z-0 flex gap-2 px-3 hover:z-30 focus-within:z-30 ${
         showAuthor ? "mt-4" : "mt-1.5"
-      } ${mine ? "flex-row-reverse" : "flex-row"}`}
+      } ${mine ? "flex-row-reverse" : "flex-row"} ${
+        isNotebook && msg.threadArchivedAt ? "opacity-60" : ""
+      }`}
     >
       {/* Awatar — tylko po stronie rozmówcy; placeholder gdy ciąg dalszy */}
       {!mine && (
@@ -1195,7 +1231,9 @@ export function MessageBubble({
         <div
           className={`relative max-w-full ${attachmentsStretch ? "w-full" : ""}`}
         >
-          {canAct && (onOpenActions || onReply || onToggleReaction || onToggleSelect) && (
+          {canAct &&
+            !isNotebook &&
+            (onOpenActions || onReply || onToggleReaction || onToggleSelect) && (
             <HoverToolbar
               mine={mine}
               msg={msg}
@@ -1227,7 +1265,14 @@ export function MessageBubble({
                     if (t.closest("a,button,input,textarea,[role='button']")) return;
                     onToggleSelect(msg);
                   }
-                : undefined
+                : canInlineEdit && !editingInline
+                  ? (e) => {
+                      const t = e.target as HTMLElement;
+                      if (t.closest("a,button,input,textarea,[role='button']")) return;
+                      e.stopPropagation();
+                      setInlineDraft(msg.body);
+                    }
+                  : undefined
             }
             className={`chat-msg-bubble relative box-border max-w-full min-w-0 overflow-hidden flow-root text-[15px] leading-[1.45] transition-colors ${
               attachmentsStretch ? "w-full" : ""
@@ -1242,7 +1287,8 @@ export function MessageBubble({
                   ? "ring-2 ring-accent/70 ring-offset-1 ring-offset-surface"
                   : ""
             } ${
-              canAct && onToggleSelect && (selectionActive || selectMode)
+              (canAct && onToggleSelect && (selectionActive || selectMode)) ||
+              (canInlineEdit && !editingInline)
                 ? "cursor-pointer"
                 : ""
             }`}
@@ -1356,10 +1402,43 @@ export function MessageBubble({
                   )
                 ) : (
                   <>
-                    {msg.body && (
+                    {editingInline ? (
+                      <textarea
+                        ref={inlineTaRef}
+                        autoFocus
+                        value={inlineDraft ?? ""}
+                        rows={Math.min(
+                          12,
+                          Math.max(2, (inlineDraft ?? "").split("\n").length),
+                        )}
+                        onChange={(e) => setInlineDraft(e.target.value)}
+                        onBlur={() => commitInlineEdit()}
+                        onFocus={(e) => {
+                          const el = e.currentTarget;
+                          const len = el.value.length;
+                          el.setSelectionRange(len, len);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            skipInlineSave.current = true;
+                            e.currentTarget.blur();
+                            return;
+                          }
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        className="w-full min-w-[12rem] resize-y rounded-md border border-line/60 bg-surface/40 px-1.5 py-1 text-[15px] leading-[1.45] text-ink outline-none focus:border-accent/50"
+                        aria-label="Edytuj notatkę"
+                      />
+                    ) : msg.body ? (
                       <MessageBody body={msg.body} mentionNames={mentionNames} />
-                    )}
-                    {!msg.body &&
+                    ) : null}
+                    {!editingInline &&
+                      !msg.body &&
                       (msg.attachments?.length ?? 0) === 0 &&
                       msg.kind === "text" && (
                         <span className="text-xs text-ink-faint">
@@ -1479,7 +1558,82 @@ export function MessageBubble({
           />
         ) : null}
 
-        {!inThread && replyCount > 0 && onOpenThread && (
+        {!inThread && isNotebook && canAct && (
+          <div
+            className={`mt-1 flex flex-wrap items-center gap-0.5 ${
+              mine ? "self-end" : "self-start"
+            }`}
+          >
+            {onOpenThread && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenThread(msg.id);
+                }}
+                title="Szczegóły"
+                aria-label={
+                  replyCount > 0 ? `Szczegóły · ${replyCount}` : "Szczegóły"
+                }
+                className={`inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-[11px] font-semibold transition ${
+                  threadUnread
+                    ? "bg-thread/20 text-thread hover:bg-thread/30"
+                    : "text-thread/90 hover:bg-thread/10"
+                }`}
+              >
+                <ListTree size={12} />
+                Szczegóły
+                {replyCount > 0 ? (
+                  <span className="tabular-nums text-[10px] opacity-80">
+                    {replyCount}
+                  </span>
+                ) : null}
+                {threadUnread && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-thread"
+                    aria-label="Nieodczytane"
+                  />
+                )}
+              </button>
+            )}
+            {onNotebookArchive && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNotebookArchive(msg, !msg.threadArchivedAt);
+                }}
+                title={msg.threadArchivedAt ? "Przywróć" : "Archiwizuj"}
+                aria-label={msg.threadArchivedAt ? "Przywróć" : "Archiwizuj"}
+                className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[11px] font-medium text-ink-faint transition hover:bg-surface-overlay hover:text-ink"
+              >
+                {msg.threadArchivedAt ? (
+                  <ArchiveRestore size={12} />
+                ) : (
+                  <Archive size={12} />
+                )}
+                {msg.threadArchivedAt ? "Przywróć" : "Archiwizuj"}
+              </button>
+            )}
+            {onNotebookDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNotebookDelete(msg);
+                }}
+                title="Usuń"
+                aria-label="Usuń notatkę"
+                className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[11px] font-medium text-ink-faint transition hover:bg-red-500/10 hover:text-red-400"
+              >
+                <Trash2 size={12} />
+                Usuń
+              </button>
+            )}
+          </div>
+        )}
+
+        {!inThread && !isNotebook && replyCount > 0 && onOpenThread && (
           <button
             type="button"
             onClick={() => onOpenThread(msg.id)}
