@@ -146,6 +146,10 @@ export function MobileShell() {
   const goDashboard = () => {
     setSchedulesMode(null);
     setTab("dashboard");
+    if (activeConversationId) {
+      setActiveConversation(null);
+      setRouteHash(null);
+    }
   };
 
   const goNotebook = () => {
@@ -162,15 +166,27 @@ export function MobileShell() {
     setSchedulesMode(null);
     setMobileView("today");
     setTab("calendar");
+    if (activeConversationId) {
+      setActiveConversation(null);
+      setRouteHash(null);
+    }
   };
 
   const goTasks = () => {
     setSchedulesMode(null);
     setTab("tasks");
+    if (activeConversationId) {
+      setActiveConversation(null);
+      setRouteHash(null);
+    }
   };
 
   const goSchedules = () => {
     setSchedulesMode("board");
+    if (activeConversationId) {
+      setActiveConversation(null);
+      setRouteHash(null);
+    }
   };
 
   const anchor = new Date(settings.anchorDate);
@@ -399,18 +415,24 @@ export function MobileShell() {
           variant="mobileTab"
           section="attendance"
           open={schedulesMode === "attendance"}
-          onOpenChange={(open) =>
-            setSchedulesMode(open ? "attendance" : null)
-          }
+          onOpenChange={(open) => {
+            setSchedulesMode(open ? "attendance" : null);
+            if (open && activeConversationId) {
+              setActiveConversation(null);
+              setRouteHash(null);
+            }
+          }}
         />
         {cloudEnabled && (
           <BottomTab
-            active={notebookOpen && !schedulesOpen}
+            active={notebookOpen && tab === "chat" && !schedulesOpen}
             onSelect={goNotebook}
             icon={
               <BookMarked
                 size={22}
-                strokeWidth={notebookOpen && !schedulesOpen ? 2.25 : 1.75}
+                strokeWidth={
+                  notebookOpen && tab === "chat" && !schedulesOpen ? 2.25 : 1.75
+                }
               />
             }
             label="Notatnik"

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  ArchiveRestore,
   ArrowDown,
   ArrowLeft,
   AtSign,
@@ -31,6 +32,8 @@ import {
   isMuted,
   isSelfNotesConversation,
   mergeMessages,
+  notebookMainFeed,
+  notebookThreadDisplayTitle,
   overviewTitle,
   threadDisplayTitle,
 } from "@/lib/chat/feed";
@@ -41,6 +44,7 @@ import { dmPeerMember } from "@/lib/avatar";
 import {
   MUTE_PRESETS,
   archiveConversation,
+  archiveThread,
   deleteChatMessage,
   editChatMessage,
   forwardChatThread,
@@ -173,6 +177,10 @@ function MessageFeed({
   onDetachFromThread,
   notebookEmpty = false,
   hideThreadPreviews = false,
+  isNotebook = false,
+  onInlineEdit,
+  onNotebookDelete,
+  onNotebookArchive,
 }: {
   messages: ChatMessage[];
   myUserId: string | null;
@@ -202,6 +210,10 @@ function MessageFeed({
   notebookEmpty?: boolean;
   /** Główna taśma: minimalny chip zamiast bogatego podglądu wątku. */
   hideThreadPreviews?: boolean;
+  isNotebook?: boolean;
+  onInlineEdit?: (msg: ChatMessage, body: string) => void;
+  onNotebookDelete?: (msg: ChatMessage) => void;
+  onNotebookArchive?: (msg: ChatMessage, archived: boolean) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -317,16 +329,23 @@ function MessageFeed({
       )}
       {messages.length === 0 && (
         <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-10 text-center text-xs text-ink-faint">
-          {notebookEmpty ? (
+          {notebookEmpty && isNotebook && inThread ? (
+            <>
+              <p className="text-sm font-medium text-ink-light">Szczegóły notatki</p>
+              <p className="max-w-xs leading-relaxed">
+                Dopisz poniżej dodatkowe informacje do tego nagłówka.
+              </p>
+            </>
+          ) : notebookEmpty ? (
             <>
               <p className="text-sm font-medium text-ink-light">Twój Notatnik</p>
               <p className="max-w-xs leading-relaxed">
                 Prywatne miejsce na myśli, decyzje i galerie — tylko Ty to widzisz.
               </p>
               <ul className="mt-1 space-y-1 text-left text-[11px] text-ink-faint">
-                <li>· Napisz myśl w polu poniżej</li>
-                <li>· Zrób galerię zdjęć (np. podłogówka 3.3)</li>
-                <li>· Zapisz wiadomość jako decyzję z menu ⋯</li>
+                <li>· Napisz nagłówek notatki poniżej</li>
+                <li>· Kliknij tekst, by edytować</li>
+                <li>· „Szczegóły” przy notatce otwiera wątek</li>
               </ul>
             </>
           ) : (
@@ -417,6 +436,10 @@ function MessageFeed({
             selectionActive={selectionActive}
             onToggleSelect={onToggleSelect}
             onDetachFromThread={onDetachFromThread}
+            isNotebook={isNotebook}
+            onInlineEdit={onInlineEdit}
+            onNotebookDelete={onNotebookDelete}
+            onNotebookArchive={onNotebookArchive}
           />
         );
       })}
@@ -479,6 +502,7 @@ export function ConversationView({
   const [galleryCreateOpen, setGalleryCreateOpen] = useState(false);
   const [galleryViewerId, setGalleryViewerId] = useState<string | null>(null);
   const [composerFocusToken, setComposerFocusToken] = useState(0);
+  const [showArchivedNotes, setShowArchivedNotes] = useState(false);
   const pendingOpenIntent = useChatStore((s) => s.pendingOpenIntent);
   const [hideThreadPreviews, toggleHideThreadPreviews] = useHideThreadPreviews(
     myUserId,
@@ -525,8 +549,23 @@ export function ConversationView({
   const focus =
     !embedded && focusFeedRaw?.conversationId === conversationId ? focusFeedRaw : null;
   // Główny feed: rooty + kompaktowe adnotacje odpowiedzi z wątków (chronologicznie).
+  // Notatnik: tylko nagłówki (rooty) — szczegóły są w wątku.
   const feed = messages ?? [];
-  const displayedFeed = focus ? focus.messages : feed;
+  const displayedFeed = useMemo(() => {
+    const raw = focus ? focus.messages : feed;
+    if (isNotebook) {
+      return notebookMainFeed(raw, { includeArchived: showArchivedNotes });
+    }
+    return raw;
+  }, [focus, feed, isNotebook, showArchivedNotes]);
+
+  const archivedNotesCount = useMemo(() => {
+    if (!isNotebook) return 0;
+    const raw = focus ? focus.messages : feed;
+    return raw.filter(
+      (m) => !m.threadRootId && !m.deletedAt && Boolean(m.threadArchivedAt),
+    ).length;
+  }, [isNotebook, focus, feed]);
 
   const title = entry
     ? overviewTitle(entry, myUserId, (id) => items[id]?.title)
@@ -752,6 +791,13 @@ export function ConversationView({
         return;
       }
 
+      // Notatnik: od razu otwórz szczegóły, bez choosera / nazwy.
+      // Tytuł w belce = treść nagłówka (nie zapisujemy osobnego threadTitle).
+      if (isNotebook) {
+        void openThread(rootId);
+        return;
+      }
+
       const replyCount = useChatStore.getState().replyCounts[rootId] ?? 0;
       const isEstablished =
         replyCount > 0 || Boolean(root?.threadTitle?.trim());
@@ -764,7 +810,7 @@ export function ConversationView({
 
       void openThread(rootId);
     },
-    [displayedFeed, feed, messages],
+    [displayedFeed, feed, messages, isNotebook],
   );
 
   const handleOpenRegistry = useCallback(
@@ -952,11 +998,23 @@ export function ConversationView({
           setHistoryMsg(msg);
           break;
         case "delete":
-          if (confirm("Usunąć wiadomość?")) void deleteChatMessage(msg);
+          if (confirm(isNotebook ? "Usunąć tę notatkę?" : "Usunąć wiadomość?")) {
+            void deleteChatMessage(msg);
+          }
+          break;
+        case "archiveThread":
+          void archiveThread(msg, true).then(({ error }) => {
+            if (error) alert(error);
+          });
+          break;
+        case "unarchiveThread":
+          void archiveThread(msg, false).then(({ error }) => {
+            if (error) alert(error);
+          });
           break;
       }
     },
-    [profiles, handleReply, handleOpenThread, toggleSelect],
+    [profiles, handleReply, handleOpenThread, toggleSelect, isNotebook],
   );
 
   const handleDetachFromThread = useCallback((msg: ChatMessage) => {
@@ -974,6 +1032,24 @@ export function ConversationView({
       if (msg) void editChatMessage(msg, body, mentions);
     },
     [messages, focus?.messages],
+  );
+
+  const handleInlineEdit = useCallback((msg: ChatMessage, body: string) => {
+    void editChatMessage(msg, body, msg.mentions);
+  }, []);
+
+  const handleNotebookDelete = useCallback((msg: ChatMessage) => {
+    if (!confirm("Usunąć tę notatkę?")) return;
+    void deleteChatMessage(msg);
+  }, []);
+
+  const handleNotebookArchive = useCallback(
+    (msg: ChatMessage, archived: boolean) => {
+      void archiveThread(msg, archived).then(({ error }) => {
+        if (error) alert(error);
+      });
+    },
+    [],
   );
 
   const muted = entry ? isMuted(entry) : false;
@@ -1141,6 +1217,10 @@ export function ConversationView({
       threadMessages ?? [],
     );
     const rootMsg = thread.find((m) => m.id === threadRootId) ?? rootFromFeed;
+    // Notatnik: root = nagłówek w belce — nie duplikuj jako bąbelek w feedzie.
+    const threadFeed = isNotebook
+      ? thread.filter((m) => m.id !== threadRootId)
+      : thread;
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex items-center gap-2 border-b border-line px-2 py-2">
@@ -1162,7 +1242,7 @@ export function ConversationView({
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
-              <span>Wątek</span>
+              <span>{isNotebook ? "Szczegóły" : "Wątek"}</span>
               {rootMsg?.pinnedAt && (
                 <span className="inline-flex items-center gap-0.5 normal-case tracking-normal text-accent">
                   <Pin size={9} /> przypięty
@@ -1170,7 +1250,9 @@ export function ConversationView({
               )}
             </div>
             <div className="truncate text-sm font-semibold text-ink">
-              {threadDisplayTitle(rootMsg)}
+              {isNotebook
+                ? notebookThreadDisplayTitle(rootMsg)
+                : threadDisplayTitle(rootMsg)}
             </div>
             <div className="truncate text-[11px] text-ink-faint">{title}</div>
           </div>
@@ -1187,7 +1269,7 @@ export function ConversationView({
           )}
         </div>
         <MessageFeed
-          messages={thread}
+          messages={threadFeed}
           myUserId={myUserId}
           profiles={profiles}
           mentionNames={mentionNames}
@@ -1196,7 +1278,7 @@ export function ConversationView({
           replyCounts={replyCounts}
           hasOlder={false}
           onOpenActions={(msg, anchor) => setActionTarget({ msg, anchor })}
-          onReply={handleReply}
+          onReply={isNotebook ? undefined : handleReply}
           onJumpTo={handleJumpTo}
           onOpenRegistry={handleOpenRegistry}
           onOpenGallery={(id) => setGalleryViewerId(id)}
@@ -1204,7 +1286,10 @@ export function ConversationView({
           selectionModes={selectionModes}
           selectionActive={selectionOrder.length > 0}
           onToggleSelect={toggleSelect}
-          onDetachFromThread={handleDetachFromThread}
+          onDetachFromThread={isNotebook ? undefined : handleDetachFromThread}
+          isNotebook={isNotebook}
+          onInlineEdit={isNotebook ? handleInlineEdit : undefined}
+          notebookEmpty={isNotebook && threadFeed.length === 0}
         />
         {typingText && (
           <div className="px-3 pb-0.5 text-[11px] text-ink-faint">{typingText}</div>
@@ -1243,7 +1328,7 @@ export function ConversationView({
         ) : (
           <MessageComposer
             onSend={handleSend}
-            placeholder="Odpowiedz w wątku…"
+            placeholder={isNotebook ? "Dopisz szczegóły…" : "Odpowiedz w wątku…"}
             {...composerShared}
           />
         )}
@@ -1252,7 +1337,8 @@ export function ConversationView({
           anchor={actionTarget?.anchor ?? null}
           mine={actionTarget?.msg.authorUserId === myUserId}
           allowThread={false}
-          allowDetachFromThread
+          allowDetachFromThread={!isNotebook}
+          notebookMode={isNotebook}
           onAction={handleAction}
           onClose={() => setActionTarget(null)}
         />
@@ -1327,20 +1413,48 @@ export function ConversationView({
             </div>
             {entry && (
               <div className="truncate text-[11px] text-ink-faint">
-                {entry.kind === "channel"
-                  ? `${entry.isPublic ? "kanał publiczny" : "kanał prywatny"} · ${entry.members.length} os.`
-                  : entry.kind === "item"
-                    ? "dyskusja wpisu"
-                    : dmOtherOnline
-                      ? "online"
-                      : `${entry.members.length} os.`}
-                {muted ? " · wyciszona" : ""}
-                {entry.myNotify === "mentions" ? " · tylko wzmianki" : ""}
+                {isNotebook
+                  ? showArchivedNotes
+                    ? "zarchiwizowane notatki"
+                    : "prywatne notatki"
+                  : entry.kind === "channel"
+                    ? `${entry.isPublic ? "kanał publiczny" : "kanał prywatny"} · ${entry.members.length} os.`
+                    : entry.kind === "item"
+                      ? "dyskusja wpisu"
+                      : dmOtherOnline
+                        ? "online"
+                        : `${entry.members.length} os.`}
+                {!isNotebook && muted ? " · wyciszona" : ""}
+                {!isNotebook && entry.myNotify === "mentions" ? " · tylko wzmianki" : ""}
               </div>
             )}
           </div>
           {entry && (
             <>
+              {isNotebook && archivedNotesCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowArchivedNotes((v) => !v)}
+                  className={headerIconBtn}
+                  aria-label={
+                    showArchivedNotes
+                      ? "Ukryj zarchiwizowane"
+                      : "Pokaż zarchiwizowane"
+                  }
+                  title={
+                    showArchivedNotes
+                      ? "Ukryj zarchiwizowane"
+                      : `Zarchiwizowane (${archivedNotesCount})`
+                  }
+                >
+                  {showArchivedNotes ? (
+                    <ArchiveRestore size={16} className="text-accent" />
+                  ) : (
+                    <Archive size={16} />
+                  )}
+                </button>
+              )}
+              {!isNotebook && (
               <button
                 type="button"
                 onClick={() => setShowThreads(true)}
@@ -1350,6 +1464,7 @@ export function ConversationView({
               >
                 <MessagesSquare size={16} />
               </button>
+              )}
               <button
                 type="button"
                 onClick={() => setRegistryMode("decisions")}
@@ -1596,7 +1711,7 @@ export function ConversationView({
         initialBottom={!focus}
         onOpenThread={embedded ? undefined : (rootId) => handleOpenThread(rootId)}
         onOpenActions={(msg, anchor) => setActionTarget({ msg, anchor })}
-        onReply={handleReply}
+        onReply={isNotebook ? undefined : handleReply}
         onJumpTo={handleJumpTo}
         onOpenRegistry={handleOpenRegistry}
         onOpenGallery={(id) => setGalleryViewerId(id)}
@@ -1605,6 +1720,10 @@ export function ConversationView({
         onToggleSelect={toggleSelect}
         notebookEmpty={isNotebook && !focus && displayedFeed.length === 0}
         hideThreadPreviews={hideThreadPreviews}
+        isNotebook={isNotebook}
+        onInlineEdit={isNotebook ? handleInlineEdit : undefined}
+        onNotebookDelete={isNotebook ? handleNotebookDelete : undefined}
+        onNotebookArchive={isNotebook ? handleNotebookArchive : undefined}
       />
 
       {focus && (
@@ -1658,6 +1777,7 @@ export function ConversationView({
           onSend={handleSend}
           autoFocus={!embedded}
           focusToken={composerFocusToken}
+          placeholder={isNotebook ? "Nowa notatka…" : undefined}
           onSendPoll={(q, opts) => void sendPollMessage(conversationId, q, opts)}
           onSendChecklist={(title, items) =>
             void sendChecklistMessage(conversationId, title, items)
@@ -1677,6 +1797,7 @@ export function ConversationView({
         anchor={actionTarget?.anchor ?? null}
         mine={actionTarget?.msg.authorUserId === myUserId}
         allowThread={!embedded}
+        notebookMode={isNotebook}
         onAction={handleAction}
         onClose={() => setActionTarget(null)}
       />

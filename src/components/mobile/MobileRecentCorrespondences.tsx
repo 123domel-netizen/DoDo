@@ -1,15 +1,15 @@
 import { useMemo } from "react";
-import { BookMarked, MessageCircle, User, Users } from "lucide-react";
+import { MessageCircle, User, Users } from "lucide-react";
 import { useStore } from "@/state/store";
 import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
-import { openConversation, openSelfNotes } from "@/lib/chat/init";
+import { openConversation } from "@/lib/chat/init";
 import { pushRouteHash } from "@/lib/navigation";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { dmPeerMember } from "@/lib/avatar";
-import { findSelfNotesEntry, isSelfNotesConversation, overviewTitle } from "@/lib/chat/feed";
+import { isSelfNotesConversation, overviewTitle } from "@/lib/chat/feed";
 import { mobileCorrespondenceAvatarLayout } from "@/lib/chat/conversationRowVisual";
 
 const MAX_AVATARS = 5;
@@ -23,7 +23,7 @@ function shortLabel(title: string): string {
 
 /**
  * Pasek awatarów ostatnich korespondencji — nad dolnymi belkami mobilnymi.
- * Notatnik jest zawsze pierwszym skrótem.
+ * Notatnik jest w dolnej nawigacji, nie tu.
  */
 export function MobileRecentCorrespondences() {
   const myUserId = useChatStore((s) => s.userId);
@@ -34,10 +34,6 @@ export function MobileRecentCorrespondences() {
   );
   const profiles = useChatStore((s) => s.profiles);
   const itemsMap = useStore((s) => s.items);
-  const notebook = useMemo(
-    () => findSelfNotesEntry(overview, myUserId),
-    [overview, myUserId],
-  );
 
   const rows = useMemo(() => {
     const rest = overview.filter((c) => !isSelfNotesConversation(c, myUserId));
@@ -47,14 +43,13 @@ export function MobileRecentCorrespondences() {
     const unread = byRecent.filter((c) => c.unreadCount > 0 || c.myMarkedUnread);
     const seen = new Set(unread.map((c) => c.id));
     const result: ChatOverviewEntry[] = [...unread];
-    const slot = MAX_AVATARS - 1; // 1 slot na Notatnik
     for (const c of byRecent) {
-      if (result.length >= slot) break;
+      if (result.length >= MAX_AVATARS) break;
       if (seen.has(c.id)) continue;
       result.push(c);
       seen.add(c.id);
     }
-    return result.slice(0, slot);
+    return result.slice(0, MAX_AVATARS);
   }, [overview, myUserId]);
 
   if (!cloudEnabled || !myUserId) return null;
@@ -64,13 +59,6 @@ export function MobileRecentCorrespondences() {
     pushRouteHash({ view: "conversation", conversationId: id });
   };
 
-  const openNotebook = () => {
-    void openSelfNotes().then((id) => {
-      if (!id) return;
-      pushRouteHash({ view: "conversation", conversationId: id });
-    });
-  };
-
   return (
     <div className="shrink-0 border-t border-line bg-surface-raised/80 px-2 pt-2 pb-1.5">
       <div
@@ -78,29 +66,6 @@ export function MobileRecentCorrespondences() {
         role="list"
         aria-label="Ostatnie korespondencje"
       >
-        <button
-          type="button"
-          role="listitem"
-          onClick={openNotebook}
-          className="flex w-[4.25rem] flex-col items-center gap-1 rounded-lg px-0.5 py-0.5 transition active:scale-[0.97] active:bg-surface-overlay/60"
-          title="Notatnik"
-        >
-          <span className="relative inline-flex shrink-0">
-            <span
-              className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-accent/15 text-accent transition ${
-                notebook
-                  ? "ring-1 ring-accent/40"
-                  : "ring-1 ring-dashed ring-accent/50"
-              }`}
-            >
-              <BookMarked size={18} />
-            </span>
-          </span>
-          <span className="w-full truncate text-center text-[10px] font-semibold leading-tight text-ink">
-            Notatnik
-          </span>
-        </button>
-
         {rows.map((entry) => {
           const showUnread = entry.unreadCount > 0 || entry.myMarkedUnread;
           const layout = mobileCorrespondenceAvatarLayout(showUnread);

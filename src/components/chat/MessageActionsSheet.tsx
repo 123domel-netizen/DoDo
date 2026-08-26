@@ -7,6 +7,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  Archive,
+  ArchiveRestore,
   CalendarPlus,
   CheckSquare,
   Copy,
@@ -43,7 +45,9 @@ export type MessageAction =
   | "copy"
   | "edit"
   | "history"
-  | "delete";
+  | "delete"
+  | "archiveThread"
+  | "unarchiveThread";
 
 export type MessageActionAnchor = {
   top: number;
@@ -62,6 +66,8 @@ interface MessageActionsSheetProps {
   allowThread?: boolean;
   /** Pokaż „Wyłącz z wątku” (odpowiedź w otwartym wątku). */
   allowDetachFromThread?: boolean;
+  /** Solo-Notatnik: inne etykiety / mniej akcji czatowych. */
+  notebookMode?: boolean;
   onAction: (action: MessageAction, msg: ChatMessage, arg?: string) => void;
   onClose: () => void;
 }
@@ -139,6 +145,7 @@ export function MessageActionsSheet({
   anchor,
   allowThread = true,
   allowDetachFromThread = false,
+  notebookMode = false,
   onAction,
   onClose,
 }: MessageActionsSheetProps) {
@@ -241,15 +248,17 @@ export function MessageActionsSheet({
         <Divider />
 
         <div className="px-1 pb-1">
-          <ActionRow
-            icon={<CornerUpLeft size={14} />}
-            label="Odpowiedz"
-            onClick={() => act("reply")}
-          />
+          {!notebookMode && (
+            <ActionRow
+              icon={<CornerUpLeft size={14} />}
+              label="Odpowiedz"
+              onClick={() => act("reply")}
+            />
+          )}
           {allowThread && (
             <ActionRow
               icon={<MessageSquare size={14} />}
-              label="Odpowiedz w wątku"
+              label={notebookMode ? "Szczegóły" : "Odpowiedz w wątku"}
               onClick={() => act("openThread")}
             />
           )}
@@ -327,6 +336,21 @@ export function MessageActionsSheet({
               icon={<Pencil size={14} />}
               label="Edytuj"
               onClick={() => act("edit")}
+            />
+          )}
+          {notebookMode && mine && !msg.threadRootId && (
+            <ActionRow
+              icon={
+                msg.threadArchivedAt ? (
+                  <ArchiveRestore size={14} />
+                ) : (
+                  <Archive size={14} />
+                )
+              }
+              label={msg.threadArchivedAt ? "Przywróć" : "Archiwizuj"}
+              onClick={() =>
+                act(msg.threadArchivedAt ? "unarchiveThread" : "archiveThread")
+              }
             />
           )}
           {mine && (

@@ -349,6 +349,42 @@ export function findSelfNotesEntry(
   return overview.find((e) => isSelfNotesConversation(e, myUserId));
 }
 
+/**
+ * Główna taśma Notatnika = same nagłówki (rooty).
+ * Odpowiedzi wątku (`threadRootId`) ukazują się tylko w widoku szczegółów.
+ * Usunięte są zawsze ukryte; zarchiwizowane — opcjonalnie.
+ */
+export function notebookMainFeed(
+  messages: ChatMessage[],
+  opts?: { includeArchived?: boolean },
+): ChatMessage[] {
+  const includeArchived = Boolean(opts?.includeArchived);
+  return messages.filter((m) => {
+    if (m.threadRootId) return false;
+    if (m.deletedAt) return false;
+    if (!includeArchived && m.threadArchivedAt) return false;
+    return true;
+  });
+}
+
+/** Krótki tytuł wątku Notatnika z pierwszej linii nagłówka. */
+export function notebookThreadTitleFromBody(body: string): string {
+  const line = body.trim().split(/\n/)[0]?.trim().replace(/\s+/g, " ") ?? "";
+  return (line || "Szczegóły").slice(0, 40);
+}
+
+/**
+ * Notatnik: nazwa wątku/szczegółów = zawsze treść wiadomości-nagłówka
+ * (nigdy osobny `threadTitle`).
+ */
+export function notebookThreadDisplayTitle(
+  root: ChatMessage | null | undefined,
+): string {
+  if (!root || root.deletedAt) return "Szczegóły";
+  const t = root.body.trim().replace(/\s+/g, " ");
+  return (t || "Szczegóły").slice(0, 120);
+}
+
 /** Nazwa rozmowy do wyświetlenia. */
 export function overviewTitle(
   entry: ChatOverviewEntry,
