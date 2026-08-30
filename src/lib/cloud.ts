@@ -158,6 +158,7 @@ function groupToRow(group: Group) {
     show_in_events: v.showInEvents,
     show_in_dashboard: v.showInDashboard,
     show_in_all: v.showInAll,
+    icon: group.icon ?? null,
   };
 }
 
@@ -174,6 +175,7 @@ function rowToGroup(row: Record<string, unknown>): Group {
     name,
     color: migrateGroupColor((row.color as string) ?? "#4A8FC4"),
     sortOrder: (row.sort_order as number) ?? 0,
+    icon: (row.icon as string | null) ?? undefined,
     system,
     hideFromAll: hideFromAll || undefined,
     showInSidebar: (row.show_in_sidebar as boolean | null) ?? undefined,
@@ -197,6 +199,7 @@ function groupsSnapshot(groups: Group[]): string {
         g.id,
         g.name,
         g.color,
+        g.icon ?? null,
         g.sortOrder,
         g.system ?? null,
         v.showInAll,

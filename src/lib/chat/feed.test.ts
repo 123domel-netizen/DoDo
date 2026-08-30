@@ -7,9 +7,14 @@ import {
   groupThreadAnnotations,
   isMuted,
   isSelfNotesConversation,
+  isGroupDmConversation,
+  isHubPeopleConversation,
+  isHubChannelConversation,
   markOverviewRead,
   mergeMessages,
   notebookMainFeed,
+  notebookDashboardPreview,
+  notebookLatestVisibleMessage,
   notebookThreadDisplayTitle,
   notebookThreadTitleFromBody,
   overviewTitle,
@@ -373,6 +378,39 @@ describe("isSelfNotesConversation / findSelfNotesEntry", () => {
   });
 });
 
+describe("isGroupDmConversation / hub people vs channels", () => {
+  it("3+ osoby → grupowy DM (kanały), 2 → osoby", () => {
+    const dm1 = entry({
+      id: "d1",
+      kind: "dm",
+      members: [
+        { userId: "me", role: "member", displayName: "Ja", avatarUrl: null, lastReadAt: null },
+        { userId: "u2", role: "member", displayName: "Ola", avatarUrl: null, lastReadAt: null },
+      ],
+    });
+    const group = entry({
+      id: "g1",
+      kind: "dm",
+      members: [
+        { userId: "me", role: "member", displayName: "Ja", avatarUrl: null, lastReadAt: null },
+        { userId: "u2", role: "member", displayName: "Ola", avatarUrl: null, lastReadAt: null },
+        { userId: "u3", role: "member", displayName: "Ala", avatarUrl: null, lastReadAt: null },
+      ],
+    });
+    const chan = entry({ id: "c1", kind: "channel", name: "Koordynacja" });
+
+    expect(isGroupDmConversation(group)).toBe(true);
+    expect(isGroupDmConversation(dm1)).toBe(false);
+
+    expect(isHubPeopleConversation(dm1)).toBe(true);
+    expect(isHubPeopleConversation(group)).toBe(false);
+
+    expect(isHubChannelConversation(chan)).toBe(true);
+    expect(isHubChannelConversation(group)).toBe(true);
+    expect(isHubChannelConversation(dm1)).toBe(false);
+  });
+});
+
 describe("notebookMainFeed / notebookThreadTitleFromBody", () => {
   it("zostawia same rooty na głównej taśmie", () => {
     const root = msg({ id: "r1", threadRootId: null });
@@ -418,6 +456,81 @@ describe("notebookMainFeed / notebookThreadTitleFromBody", () => {
     expect(notebookThreadDisplayTitle(msg({ id: "r2", body: "  " }))).toBe(
       "Szczegóły",
     );
+  });
+
+  it("notebookDashboardPreview pomija archiwum i usunięte", () => {
+    const live = msg({
+      id: "live",
+      threadRootId: null,
+      body: "Aktywna notatka",
+      createdAt: "2026-08-20T10:00:00.000Z",
+    });
+    const archived = msg({
+      id: "arch",
+      threadRootId: null,
+      body: "Stara notatka",
+      createdAt: "2026-08-24T10:00:00.000Z",
+      threadArchivedAt: "2026-08-25T00:00:00.000Z",
+    });
+    const deleted = msg({
+      id: "gone",
+      threadRootId: null,
+      body: "Usunięta",
+      createdAt: "2026-08-30T10:00:00.000Z",
+      deletedAt: "2026-08-30T11:00:00.000Z",
+    });
+
+    expect(notebookLatestVisibleMessage([live, archived, deleted])?.id).toBe(
+      "live",
+    );
+
+    const onlyArchived = notebookDashboardPreview(
+      {
+        lastMessage: {
+          id: "arch",
+          kind: "text",
+          body: "Stara notatka",
+          authorUserId: "u1",
+          createdAt: "2026-08-24T10:00:00.000Z",
+          deletedAt: null,
+        },
+        lastMessageAt: "2026-08-24T10:00:00.000Z",
+      },
+      [live, archived],
+    );
+    expect(onlyArchived.message?.id).toBe("live");
+
+    const allHidden = notebookDashboardPreview(
+      {
+        lastMessage: {
+          id: "arch",
+          kind: "text",
+          body: "Stara notatka",
+          authorUserId: "u1",
+          createdAt: "2026-08-24T10:00:00.000Z",
+          deletedAt: null,
+        },
+        lastMessageAt: "2026-08-24T10:00:00.000Z",
+      },
+      [archived, deleted],
+    );
+    expect(allHidden.message).toBeNull();
+
+    const beforeLoad = notebookDashboardPreview(
+      {
+        lastMessage: {
+          id: "arch",
+          kind: "text",
+          body: "Stara notatka",
+          authorUserId: "u1",
+          createdAt: "2026-08-24T10:00:00.000Z",
+          deletedAt: null,
+        },
+        lastMessageAt: "2026-08-24T10:00:00.000Z",
+      },
+      [],
+    );
+    expect(beforeLoad.message).toBeNull();
   });
 });
 

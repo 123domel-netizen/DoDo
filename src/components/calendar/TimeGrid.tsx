@@ -6,8 +6,9 @@ import {
   useState,
   type PointerEvent as RPointerEvent,
   type MouseEvent as RMouseEvent,
+  type ReactNode,
 } from "react";
-import { addDays, differenceInCalendarDays, isSameDay, startOfDay } from "date-fns";
+import { addDays, isSameDay, startOfDay } from "date-fns";
 import type { Group, Item } from "@/types";
 import { useStore } from "@/state/store";
 import {
@@ -19,8 +20,8 @@ import {
   range,
 } from "@/lib/time";
 import { fmt, fmtRange, fmtTime, tint } from "@/lib/format";
-import { allDayBarIndices } from "@/lib/allDay";
-import { isSharedItem, SHARE_CALENDAR_COLOR, SHARE_CALENDAR_OPACITY } from "@/lib/share";
+import { isBandItem, layoutBandItems } from "@/lib/allDayBars";
+import { itemVisual } from "@/lib/itemVisual";
 import { weekendColumnBg, dayColumnWeight, dayColumnLayout, dayIndexAtX, spanColumnLayout } from "@/lib/weekend";
 import { groupIdForNewItem } from "@/lib/groups";
 import type { ReminderMarker } from "@/lib/reminders";
@@ -32,21 +33,7 @@ import { ReminderBell } from "@/components/calendar/ReminderBell";
 import { ReminderMarkers } from "@/components/calendar/ReminderMarkers";
 import { DeadlineClock } from "@/components/calendar/DeadlineClock";
 import { DeadlineMarkers } from "@/components/calendar/DeadlineMarkers";
-
-function itemVisual(item: Item, groups: Record<string, Group>) {
-  if (isSharedItem(item)) {
-    return { color: SHARE_CALENDAR_COLOR, opacity: SHARE_CALENDAR_OPACITY, shared: true };
-  }
-  const g = item.groupId ? groups[item.groupId] : undefined;
-  return {
-    color: g?.color ?? "#0b6e99",
-    opacity: item.done ? 0.5 : 1,
-    shared: false,
-  };
-}
 import { ContextMenu, type MenuAction } from "./ContextMenu";
-
-const GUTTER = 56;
 
 /** Aktualny czas — odświeżany co 30 s i przy powrocie do karty. */
 function useCalendarNow(): Date {
@@ -73,8 +60,21 @@ interface TimeGridProps {
   deadlineMarkers: DeadlineMarker[];
   groups: Record<string, Group>;
   isMobile?: boolean;
+  selectedDay?: Date;
+  onSelectDay?: (day: Date) => void;
   onDayHeaderTap?: (day: Date) => void;
   onSlotTap?: (day: Date, minutes: number) => void;
+  /** Stała wysokość godziny + przewinięcie do teraz (tydzień mobile). */
+  scrollToNow?: boolean;
+  equalColumns?: boolean;
+  /** Ukryj wiersz nagłówków dni (gdy chrome jest poza TimeGrid). */
+  hideDayHeader?: boolean;
+  /** Ukryj pas all-day (gdy paski są poza TimeGrid). */
+  hideAllDayBand?: boolean;
+  /** Kompaktowe bloki w siatce tygodnia (mobile week planner). */
+  compactBlocks?: boolean;
+  /** Extra content below the timed grid, inside the same scroll container. */
+  footer?: ReactNode;
 }
 
 interface Override {
@@ -105,14 +105,27 @@ export function TimeGrid({
   deadlineMarkers,
   groups,
   isMobile,
+  selectedDay,
+  onSelectDay,
   onDayHeaderTap,
   onSlotTap,
+  scrollToNow,
+  equalColumns,
+  hideDayHeader,
+  hideAllDayBand,
+  compactBlocks,
+  footer,
 }: TimeGridProps) {
   const settings = useStore((s) => s.settings);
   const { dayStartHour, dayEndHour } = settings;
-  const hourHeightAuto = settings.hourHeightAuto !== false;
+  const hourHeightAuto = !scrollToNow && settings.hourHeightAuto !== false;
   const [autoHourHeight, setAutoHourHeight] = useState(settings.hourHeight);
-  const hourHeight = hourHeightAuto ? autoHourHeight : settings.hourHeight;
+  const hourHeight = hourHeightAuto
+    ? autoHourHeight
+    : scrollToNow
+      ? Math.max(compactBlocks ? 36 : 48, settings.hourHeight)
+      : settings.hourHeight;
+  const gutter = isMobile ? 40 : 56;
   const patchItem = useStore((s) => s.patchItem);
   const setEditing = useStore((s) => s.setEditing);
   const startDraft = useStore((s) => s.startDraft);
@@ -124,6 +137,7 @@ export function TimeGrid({
 
   const gridRef = useRef<HTMLDivElement>(null);
   const timedRegionRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [override, setOverrideState] = useState<Override | null>(null);
   const [draft, setDraftState] = useState<{
     dayIndex: number;
@@ -157,7 +171,10 @@ export function TimeGrid({
     actions: MenuAction[];
   } | null>(null);
 
-  const columnLayout = useMemo(() => dayColumnLayout(days), [days]);
+  const columnLayout = useMemo(
+    () => dayColumnLayout(days, { equal: equalColumns }),
+    [days, equalColumns],
+  );
   const hourSpan = Math.max(1, dayEndHour - dayStartHour);
   const gridHeight = hourSpan * hourHeight;
   const now = useCalendarNow();
@@ -197,17 +214,37 @@ export function TimeGrid({
     if (!hourHeightAuto) setAutoHourHeight(settings.hourHeight);
   }, [hourHeightAuto, settings.hourHeight]);
 
-  // Split items into all-day/multi-day band vs per-day timed/before/after.
-  const bandItems = useMemo(
-    () =>
-      items.filter(
-        (it) =>
-          it.allDay ||
-          differenceInCalendarDays(startOfDay(new Date(it.end)), startOfDay(new Date(it.start))) >=
-            1,
-      ),
-    [items],
+  const rangeKey = days[0]?.getTime() ?? 0;
+  const viewingToday = useMemo(
+    () => days.some((d) => isSameDay(d, new Date())),
+    [days],
   );
+  useLayoutEffect(() => {
+    if (!scrollToNow) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    let tries = 0;
+    let raf = 0;
+    const apply = () => {
+      // Tylko dla „dziś” scroll do aktualnej godziny; inne dni zostają u góry.
+      const y = viewingToday
+        ? (nowIndicator?.topPx ??
+          Math.max(0, new Date().getHours() - dayStartHour) * hourHeight)
+        : 0;
+      if (el.clientHeight >= 40 && el.scrollHeight > el.clientHeight) {
+        el.scrollTop = viewingToday ? Math.max(0, y - el.clientHeight * 0.28) : 0;
+        return;
+      }
+      if (tries++ < 16) raf = requestAnimationFrame(apply);
+    };
+    apply();
+    return () => cancelAnimationFrame(raf);
+    // Tylko przy otwarciu / zmianie dnia — nie przy tyknięciu zegara.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToNow, hourHeight, dayStartHour, rangeKey, viewingToday]);
+
+  // Split items into all-day/multi-day band vs per-day timed/before/after.
+  const bandItems = useMemo(() => items.filter(isBandItem), [items]);
   const flowItems = useMemo(
     () => items.filter((it) => !bandItems.includes(it)),
     [items, bandItems],
@@ -434,13 +471,16 @@ export function TimeGrid({
   }
 
   const hours = range(dayEndHour - dayStartHour + 1).map((i) => dayStartHour + i);
+  const headerSelectable = days.length > 1 && Boolean(onSelectDay || onDayHeaderTap);
 
   return (
     <div className="flex h-full flex-col">
       {/* Day headers */}
-      <div className="flex border-b border-line bg-surface" style={{ paddingLeft: GUTTER }}>
+      {!hideDayHeader && (
+      <div className="flex border-b border-line bg-surface" style={{ paddingLeft: gutter }}>
         {days.map((day, i) => {
           const today = isSameDay(day, new Date());
+          const selected = selectedDay ? isSameDay(day, selectedDay) : false;
           const weekendBg = weekendColumnBg(day);
           const headerContent = (
             <>
@@ -448,8 +488,12 @@ export function TimeGrid({
                 {fmt(day, "EEEEEE")}
               </div>
               <div
-                className={`mx-auto mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-medium ${
-                  today ? "bg-accent text-white shadow-glow" : "text-ink"
+                className={`mx-auto mt-0.5 flex h-7 w-7 items-center justify-center text-sm font-medium ${
+                  today
+                    ? "rounded-full bg-accent text-white shadow-glow"
+                    : selected
+                      ? "rounded-md ring-1 ring-inset ring-accent text-ink"
+                      : "rounded-full text-ink"
                 }`}
               >
                 {fmt(day, "d")}
@@ -457,18 +501,19 @@ export function TimeGrid({
             </>
           );
           const headerStyle = {
-            flex: dayColumnWeight(day),
-            backgroundColor: weekendBg,
+            flex: equalColumns ? 1 : dayColumnWeight(day),
+            backgroundColor: selected ? "rgb(var(--color-accent) / 0.1)" : weekendBg,
           };
-          if (isMobile && onDayHeaderTap && days.length > 1) {
+          if (isMobile && headerSelectable) {
             return (
               <button
                 key={i}
                 type="button"
                 data-no-swipe
-                onClick={() => onDayHeaderTap(day)}
+                onClick={() => (onSelectDay ?? onDayHeaderTap)?.(day)}
                 className="min-w-0 px-1 py-2 text-center transition hover:bg-surface-overlay"
                 style={headerStyle}
+                aria-pressed={selected}
               >
                 {headerContent}
               </button>
@@ -485,11 +530,22 @@ export function TimeGrid({
           );
         })}
       </div>
+      )}
 
       {/* All-day / multi-day band */}
-      <AllDayBand days={days} items={bandItems} groups={groups} onOpen={(id) => setEditing(id)} />
+      {!hideAllDayBand && (
+      <AllDayBand
+        days={days}
+        items={bandItems}
+        groups={groups}
+        onOpen={(id) => setEditing(id)}
+        gutter={gutter}
+        equalColumns={equalColumns}
+      />
+      )}
 
       <div
+        ref={scrollRef}
         className={
           hourHeightAuto
             ? "flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -505,6 +561,8 @@ export function TimeGrid({
           groups={groups}
           kind="before"
           onOpen={(id) => setEditing(id)}
+          gutter={gutter}
+          equalColumns={equalColumns}
         />
 
         {/* Timed grid */}
@@ -514,14 +572,14 @@ export function TimeGrid({
           style={hourHeightAuto ? undefined : { height: gridHeight }}
         >
           <div className="relative flex" style={{ height: gridHeight }}>
-          <div className="relative shrink-0" style={{ width: GUTTER }}>
+          <div className="relative shrink-0" style={{ width: gutter }}>
             {hours.map((h, i) => (
               <div
                 key={h}
-                className="absolute right-2 -translate-y-1/2 text-[11px] text-ink-faint"
+                className="absolute right-2 -translate-y-1/2 text-[11px] tabular-nums text-ink-faint"
                 style={{ top: i * hourHeight }}
               >
-                {i === 0 ? "" : `${String(h).padStart(2, "0")}:00`}
+                {i === 0 ? "" : isMobile ? String(h).padStart(2, "0") : `${String(h).padStart(2, "0")}:00`}
               </div>
             ))}
           </div>
@@ -540,9 +598,18 @@ export function TimeGrid({
                 style={{ top: i * hourHeight }}
               />
             ))}
+            {scrollToNow &&
+              hours.slice(0, -1).map((_, i) => (
+                <div
+                  key={`half-${i}`}
+                  className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-line/50"
+                  style={{ top: i * hourHeight + hourHeight / 2 }}
+                />
+              ))}
             {/* weekend + day column backgrounds */}
             {days.map((day, i) => {
-              const bg = weekendColumnBg(day);
+              const selected = selectedDay ? isSameDay(day, selectedDay) : false;
+              const bg = selected ? "rgb(var(--color-accent) / 0.06)" : weekendColumnBg(day);
               const col = columnLayout[i];
               return (
                 <div
@@ -598,6 +665,45 @@ export function TimeGrid({
                 const leftPct = slot.leftPct + slot.widthPct * (col / cols);
                 const dim = item.done;
                 const empty = !item.title.trim();
+                const blockStyle = {
+                  top: geom.topPx,
+                  height: geom.heightPx,
+                  left: `calc(${leftPct}% + 1px)`,
+                  width: `calc(${widthPct}% - 2px)`,
+                  background: compactBlocks
+                    ? tint(color, 0.32)
+                    : `linear-gradient(180deg, ${tint(color, 0.26)}, ${tint(color, 0.16)})`,
+                  borderColor: tint(color, 0.55),
+                  boxShadow: `inset 2px 0 0 ${color}`,
+                  opacity: vis.shared ? vis.opacity : dim ? 0.5 : 1,
+                };
+                const title = (
+                  <span
+                    className={`min-w-0 truncate font-semibold ${dim ? "line-through" : ""} ${
+                      empty ? "italic text-ink-light" : ""
+                    }`}
+                  >
+                    {item.title || "Nowe wydarzenie"}
+                  </span>
+                );
+
+                if (compactBlocks) {
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-no-swipe
+                      onClick={() => setEditing(item.id)}
+                      className={`absolute select-none overflow-hidden rounded-[4px] border px-0.5 py-px text-left text-[9px] leading-tight text-ink ${
+                        empty ? "border-dashed" : ""
+                      } ${vis.shared ? "border-dashed" : ""}`}
+                      style={blockStyle}
+                    >
+                      {title}
+                    </button>
+                  );
+                }
+
                 return (
                   <div
                     key={item.id}
@@ -605,16 +711,7 @@ export function TimeGrid({
                     className={`group absolute select-none overflow-hidden rounded-md border px-1.5 py-0.5 text-[11px] leading-tight text-ink shadow-card transition-shadow hover:shadow-pop ${
                       empty ? "border-dashed" : ""
                     } ${vis.shared ? "border-dashed" : ""}`}
-                    style={{
-                      top: geom.topPx,
-                      height: geom.heightPx,
-                      left: `calc(${leftPct}% + 1px)`,
-                      width: `calc(${widthPct}% - 2px)`,
-                      background: `linear-gradient(180deg, ${tint(color, 0.26)}, ${tint(color, 0.16)})`,
-                      borderColor: tint(color, 0.55),
-                      boxShadow: `inset 3px 0 0 ${color}`,
-                      opacity: vis.shared ? vis.opacity : dim ? 0.5 : 1,
-                    }}
+                    style={blockStyle}
                     onPointerDown={(e) => beginDrag(e, "move", item)}
                     onContextMenu={(e) => openItemMenu(e, item)}
                   >
@@ -633,7 +730,7 @@ export function TimeGrid({
                       <ReminderBell item={item} size={9} />
                       <DeadlineClock item={item} day={day} size={9} />
                     </div>
-                    {geom.heightPx > 28 && (
+                    {geom.heightPx > 28 && !(isMobile && days.length >= 7) && (
                       <div className="pl-0.5 text-ink-light">{fmtRange(item.start, item.end)}</div>
                     )}
                     <div
@@ -684,7 +781,7 @@ export function TimeGrid({
             >
               <div
                 className="absolute top-1/2 flex -translate-y-1/2 items-center justify-end pr-1"
-                style={{ left: 0, width: GUTTER }}
+                style={{ left: 0, width: gutter }}
               >
                 <span className="rounded bg-surface px-1 text-[10px] font-semibold tabular-nums text-accent">
                   {nowIndicator.label}
@@ -692,13 +789,13 @@ export function TimeGrid({
               </div>
               <div
                 className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent shadow-glow"
-                style={{ left: GUTTER }}
+                style={{ left: gutter }}
               />
               <div
                 className="absolute top-1/2 h-[2px] -translate-y-1/2 bg-accent"
                 style={{
-                  left: `calc(${GUTTER}px + (100% - ${GUTTER}px) * ${columnLayout[nowIndicator.dayIndex].leftPct / 100})`,
-                  width: `calc((100% - ${GUTTER}px) * ${columnLayout[nowIndicator.dayIndex].widthPct / 100})`,
+                  left: `calc(${gutter}px + (100% - ${gutter}px) * ${columnLayout[nowIndicator.dayIndex].leftPct / 100})`,
+                  width: `calc((100% - ${gutter}px) * ${columnLayout[nowIndicator.dayIndex].widthPct / 100})`,
                 }}
               />
             </div>
@@ -715,7 +812,10 @@ export function TimeGrid({
           groups={groups}
           kind="after"
           onOpen={(id) => setEditing(id)}
+          gutter={gutter}
+          equalColumns={equalColumns}
         />
+        {footer}
       </div>
 
       {menu && (
@@ -733,6 +833,8 @@ function OffHoursBand({
   groups,
   kind,
   onOpen,
+  gutter,
+  equalColumns,
 }: {
   days: Date[];
   items: Item[];
@@ -741,9 +843,14 @@ function OffHoursBand({
   groups: Record<string, Group>;
   kind: "before" | "after";
   onOpen: (id: string) => void;
+  gutter: number;
+  equalColumns?: boolean;
 }) {
   const { dayStartHour, dayEndHour } = useStore((s) => s.settings);
-  const columnLayout = useMemo(() => dayColumnLayout(days), [days]);
+  const columnLayout = useMemo(
+    () => dayColumnLayout(days, { equal: equalColumns }),
+    [days, equalColumns],
+  );
   const anyDayHas =
     days.some((day) =>
       items.some((it) => placementForDay(it, day, dayStartHour, dayEndHour) === kind),
@@ -772,7 +879,7 @@ function OffHoursBand({
   return (
     <div
       className={`flex bg-canvas/60 ${kind === "before" ? "border-b" : "border-t"} border-line`}
-      style={{ paddingLeft: 56 }}
+      style={{ paddingLeft: gutter }}
     >
       {days.map((day, i) => {
         const chips = items.filter(
@@ -783,7 +890,7 @@ function OffHoursBand({
             key={i}
             className="flex min-w-0 flex-wrap content-start gap-1 p-1"
             style={{
-              flex: dayColumnWeight(day),
+              flex: equalColumns ? 1 : dayColumnWeight(day),
               backgroundColor: weekendColumnBg(day),
             }}
           >
@@ -844,54 +951,26 @@ function AllDayBand({
   items,
   groups,
   onOpen,
+  gutter,
+  equalColumns,
 }: {
   days: Date[];
   items: Item[];
   groups: Record<string, Group>;
   onOpen: (id: string) => void;
+  gutter: number;
+  equalColumns?: boolean;
 }) {
-  const ndays = days.length;
-  const rangeStart = startOfDay(days[0]);
-  const rangeEnd = addDays(startOfDay(days[ndays - 1]), 1);
-
-  const bars = items
-    .map((it) => {
-      if (it.allDay) {
-        const idx = allDayBarIndices(it.start, it.end, rangeStart, ndays);
-        if (!idx) return null;
-        return { item: it, ...idx };
-      }
-      const s = new Date(it.start);
-      const e = new Date(it.end);
-      if (e <= rangeStart || s >= rangeEnd) return null;
-      const startIdx = Math.max(0, differenceInCalendarDays(startOfDay(s), rangeStart));
-      const endIdx = Math.min(
-        ndays - 1,
-        differenceInCalendarDays(startOfDay(new Date(e.getTime() - 1)), rangeStart),
-      );
-      return { item: it, startIdx, endIdx };
-    })
-    .filter((x): x is { item: Item; startIdx: number; endIdx: number } => x !== null)
-    .sort((a, b) => a.startIdx - b.startIdx || b.endIdx - a.endIdx);
-
-  // Greedy row stacking.
-  const rows: { endIdx: number }[] = [];
-  const placed = bars.map((bar) => {
-    let row = rows.findIndex((r) => bar.startIdx > r.endIdx);
-    if (row === -1) {
-      row = rows.length;
-      rows.push({ endIdx: bar.endIdx });
-    } else {
-      rows[row].endIdx = bar.endIdx;
-    }
-    return { ...bar, row };
-  });
+  const placed = useMemo(() => layoutBandItems(days, items), [days, items]);
+  const layout = useMemo(
+    () => dayColumnLayout(days, { equal: equalColumns }),
+    [days, equalColumns],
+  );
   if (placed.length === 0) return null;
-  const rowCount = rows.length;
-  const layout = dayColumnLayout(days);
+  const rowCount = placed.reduce((m, b) => Math.max(m, b.row + 1), 0);
 
   return (
-    <div className="flex border-b border-line bg-surface" style={{ paddingLeft: 56 }}>
+    <div className="flex border-b border-line bg-surface" style={{ paddingLeft: gutter }}>
       <div className="relative flex-1" style={{ height: rowCount * 26 + 8 }}>
         {days.map((day, i) => (
           <div
@@ -904,7 +983,7 @@ function AllDayBand({
             }}
           />
         ))}
-        {placed.map(({ item, startIdx, endIdx, row }) => {
+        {placed.map(({ item, startIdx, endIdx, row, continuesLeft, continuesRight }) => {
           const vis = itemVisual(item, groups);
           const color = vis.color;
           const span = spanColumnLayout(layout, startIdx, endIdx);
@@ -912,20 +991,29 @@ function AllDayBand({
             if (idx < startIdx || idx > endIdx) return false;
             return isSameDay(d, new Date(item.deadlineAt!));
           });
+          const radius = [
+            continuesLeft ? 0 : 8,
+            continuesRight ? 0 : 8,
+            continuesRight ? 0 : 8,
+            continuesLeft ? 0 : 8,
+          ]
+            .map((n) => `${n}px`)
+            .join(" ");
           return (
             <button
               key={item.id}
               data-no-swipe
               onClick={() => onOpen(item.id)}
-              className="absolute flex items-center gap-0.5 overflow-hidden rounded-md border border-dashed text-left text-[11px] font-semibold text-ink"
+              className="absolute flex items-center gap-0.5 overflow-hidden text-left text-[11px] font-semibold text-ink"
               style={{
-                left: `calc(${span.leftPct}% + 2px)`,
-                width: `calc(${span.widthPct}% - 4px)`,
+                left: `calc(${span.leftPct}% + ${continuesLeft ? 0 : 2}px)`,
+                width: `calc(${span.widthPct}% - ${continuesLeft || continuesRight ? 2 : 4}px)`,
                 top: row * 26 + 4,
                 height: 22,
                 lineHeight: "22px",
                 paddingLeft: 8,
                 paddingRight: 8,
+                borderRadius: radius,
                 background: tint(color, 0.22),
                 boxShadow: `inset 3px 0 0 ${color}`,
                 opacity: vis.opacity,

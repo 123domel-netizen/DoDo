@@ -6,7 +6,6 @@ import {
   ListChecks,
   Paperclip,
   Pin,
-  Plus,
   Sun,
   Users,
 } from "lucide-react";
@@ -23,6 +22,7 @@ import { expandItemsForRange, hasRecurrence, itemsForUpcomingEventsList } from "
 import { baseItemId } from "@/lib/itemId";
 import { itemSupportsTodoDone } from "@/lib/items";
 import { TodayDashboardPanel } from "@/components/dashboard/TodayDashboardPanel";
+import { PanelActionBar } from "@/components/ui/PanelActionBar";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
 type SideTab = "tasks" | "events" | "today";
@@ -302,32 +302,6 @@ function PanelTab({
       {icon}
       <span>{label}</span>
     </button>
-  );
-}
-
-function PanelActionBar({
-  addLabel,
-  onAdd,
-  counterLabel,
-}: {
-  addLabel: string;
-  onAdd?: () => void;
-  counterLabel: string;
-}) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 border-b border-line px-3 py-1.5">
-      <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">{counterLabel}</span>
-      {onAdd && (
-        <button
-          type="button"
-          onClick={onAdd}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-accent-grad px-2.5 py-1.5 text-xs font-semibold text-white shadow-glow transition hover:brightness-110"
-        >
-          <Plus size={14} strokeWidth={2.5} />
-          {addLabel}
-        </button>
-      )}
-    </div>
   );
 }
 

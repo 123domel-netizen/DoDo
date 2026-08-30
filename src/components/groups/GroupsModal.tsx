@@ -11,6 +11,9 @@ import {
   sortGroupsForRail,
 } from "@/lib/groups";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
+import { GroupIcon } from "@/components/groups/GroupIcon";
+import { GroupIconPicker } from "@/components/groups/GroupIconPicker";
+import { useState } from "react";
 
 export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const groups = useStore((s) => s.groups);
@@ -18,6 +21,7 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
   const moveGroup = useStore((s) => s.moveGroup);
   const deleteGroup = useStore((s) => s.deleteGroup);
   const addGroup = useStore((s) => s.addGroup);
+  const [iconPickerFor, setIconPickerFor] = useState<string | null>(null);
 
   const userGroups = sortGroupsForRail(groups);
   const share = findShareGroup(groups);
@@ -27,6 +31,9 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
     ...(share ? [share] : []),
     ...(archive ? [archive] : []),
   ];
+  const iconPickerGroup = iconPickerFor
+    ? groups.find((g) => g.id === iconPickerFor)
+    : undefined;
 
   return (
     <Modal open={open} onClose={onClose} width={520}>
@@ -85,6 +92,17 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
                   onChange={(color) => patchGroup(g.id, { color })}
                   disabled={colorLocked}
                 />
+                {!structureLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setIconPickerFor(g.id)}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-raised transition hover:bg-surface-overlay"
+                    title="Zmień ikonę"
+                    aria-label={`Ikona grupy „${g.name}”`}
+                  >
+                    <GroupIcon name={g.icon} color={g.color} size={18} />
+                  </button>
+                )}
                 <input
                   value={g.name}
                   readOnly={structureLocked}
@@ -125,6 +143,16 @@ export function GroupsModal({ open, onClose }: { open: boolean; onClose: () => v
           <Plus size={15} /> Dodaj grupę
         </button>
       </div>
+
+      {iconPickerGroup && (
+        <GroupIconPicker
+          open
+          value={iconPickerGroup.icon}
+          color={iconPickerGroup.color}
+          onClose={() => setIconPickerFor(null)}
+          onSelect={(icon) => patchGroup(iconPickerGroup.id, { icon })}
+        />
+      )}
     </Modal>
   );
 }

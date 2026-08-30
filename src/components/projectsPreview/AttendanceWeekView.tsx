@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useEffect, useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Wrench } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/useMediaQuery";
@@ -16,6 +16,8 @@ import {
   type AttendanceRangeMode,
 } from "@/lib/projectsPreview/attendanceWindow";
 import { todayIso } from "@/lib/projectsPreview/projectMetrics";
+import { consumeAttendanceLaunchIntent } from "@/lib/projectsPreview/attendanceLaunch";
+import { sortCrewsByAttendanceUsage } from "@/lib/projectsPreview/crewUsage";
 import { applyCrewAttendanceSave } from "@/lib/projectsPreview/applyAttendanceSave";
 import { visibleCrews } from "@/lib/projectsPreview/search";
 import type { CrewAttendance } from "@/lib/projectsPreview/types";
@@ -133,6 +135,24 @@ export function AttendanceWeekView({
     () => visibleCrews(state.crews, state.viewAsUserId),
     [state.crews, state.viewAsUserId],
   );
+  const crewsByUsage = useMemo(
+    () => sortCrewsByAttendanceUsage(crews, state.crewAttendance),
+    [crews, state.crewAttendance],
+  );
+
+  useEffect(() => {
+    if (crewsByUsage.length === 0) return;
+    const intent = consumeAttendanceLaunchIntent();
+    if (!intent || intent.action !== "add") return;
+    setFocusDate(intent.workDate);
+    if (isMobile) setRangeMode("day");
+    const crew = crewsByUsage[0]!;
+    setAdding({
+      crewId: crew.id,
+      crewLabel: crew.name || "Bez nazwy",
+      workDate: intent.workDate,
+    });
+  }, [crewsByUsage, isMobile]);
 
   const window = useMemo(
     () => attendanceDaysForMode(focusDate, rangeMode),
@@ -424,6 +444,7 @@ export function AttendanceWeekView({
         <CrewAttendanceSheet
           key={`add-${adding.crewId}-${adding.workDate}`}
           crew={addingCrew}
+          crewOptions={crewsByUsage}
           crews={crews}
           attendanceHistory={state.crewAttendance}
           projects={visibleProjects}

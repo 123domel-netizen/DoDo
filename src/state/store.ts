@@ -8,6 +8,7 @@ import { idbStorage } from "@/lib/idbStorage";
 import { applyTheme } from "@/lib/theme";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import { defaultGroupVisibility } from "@/lib/groups";
+import { defaultGroupIconForName } from "@/lib/groupIcons";
 import {
   ensureArchiveGroup,
   ensureShareGroup,
@@ -481,6 +482,7 @@ export const useStore = create<AppState>()(
           id: uid(),
           name,
           color,
+          icon: defaultGroupIconForName(name, userGroups.length),
           sortOrder: maxOrder + 1,
           ...defaultGroupVisibility(),
         };

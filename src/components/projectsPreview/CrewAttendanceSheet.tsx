@@ -43,6 +43,7 @@ import {
   type WorkerShiftDraft,
 } from "@/lib/projectsPreview/workerShifts";
 import { pinnedAttendanceMembers } from "@/lib/projectsPreview/crewMembers";
+import { sortCrewsByAttendanceUsage } from "@/lib/projectsPreview/crewUsage";
 
 type EquipmentDraft = {
   key: string;
@@ -130,6 +131,10 @@ export function CrewAttendanceSheet({
 }: CrewAttendanceSheetProps) {
   const today = todayIso();
   const options = crewOptions?.length ? crewOptions : [initialCrew];
+  const sortedOptions = useMemo(
+    () => sortCrewsByAttendanceUsage(options, attendanceHistory),
+    [options, attendanceHistory],
+  );
   const [crewId, setCrewId] = useState(initialCrew.id);
   const crew = options.find((c) => c.id === crewId) ?? initialCrew;
   const batch = useMemo(() => {
@@ -438,11 +443,11 @@ export function CrewAttendanceSheet({
             <IsoDateInput value={workDate} onChange={setWorkDate} />
           </Field>
           <Field label="Brygada">
-            {options.length > 1 && !existing ? (
+            {sortedOptions.length > 1 && !existing ? (
               <select
                 value={crew.id}
                 onChange={(e) => {
-                  const next = options.find((c) => c.id === e.target.value);
+                  const next = sortedOptions.find((c) => c.id === e.target.value);
                   setCrewId(e.target.value);
                   if (!existing && next) {
                     setWorkers(
@@ -458,7 +463,7 @@ export function CrewAttendanceSheet({
                 }}
                 className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
               >
-                {options.map((c) => (
+                {sortedOptions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                     {c.company ? ` · ${c.company}` : ""}

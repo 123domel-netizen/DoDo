@@ -1,5 +1,6 @@
-import type { Attachment, ChecklistItem, Item, Reminder } from "@/types";
+import type { Attachment, ChecklistItem, Item, Reminder, TeamMember } from "@/types";
 import { cloudEnabled, supabase } from "@/lib/supabase";
+import { teamMemberLabel } from "@/lib/team";
 
 export const SHARE_GROUP_NAME = "SHARE";
 export const SHARE_GROUP_COLOR = "#8b8d94";
@@ -12,6 +13,26 @@ export function isShareGroup(group: { name: string; system?: string }): boolean 
 
 export function isSharedItem(item: Item): boolean {
   return item.shareRole === "participant";
+}
+
+/** Etykieta osoby, która udostępniła wpis SHARE. */
+export function shareOwnerLabel(
+  item: Item,
+  opts: {
+    teamMembers: TeamMember[];
+    profiles: Record<string, { displayName?: string | null }>;
+  },
+): string {
+  const ownerId = item.ownerUserId?.trim();
+  if (!ownerId) return "Nieznany";
+
+  const fromProfile = opts.profiles[ownerId]?.displayName?.trim();
+  if (fromProfile) return fromProfile;
+
+  const member = opts.teamMembers.find((m) => m.memberUserId === ownerId);
+  if (member) return teamMemberLabel(member);
+
+  return "Nieznany";
 }
 
 export function isItemOwner(item: Item, userId: string | null | undefined): boolean {

@@ -109,6 +109,27 @@ export function navigateTo(route: AppRoute, mode: HistoryMode = "replace") {
   emit(route);
 }
 
+export type MobileConversationReturn = "dashboard" | "chat";
+
+let mobileConversationReturn: MobileConversationReturn | null = null;
+
+/** Skąd wrócić po zamknięciu rozmowy na mobile (np. dashboard vs lista czatu). */
+export function setMobileConversationReturn(
+  target: MobileConversationReturn | null,
+): void {
+  mobileConversationReturn = target;
+}
+
+export function peekMobileConversationReturn(): MobileConversationReturn | null {
+  return mobileConversationReturn;
+}
+
+export function consumeMobileConversationReturn(): MobileConversationReturn | null {
+  const target = mobileConversationReturn;
+  mobileConversationReturn = null;
+  return target;
+}
+
 /** Preferuj history.back() gdy bieżący wpis jest app-owned (push/replace z dodo); inaczej callback. */
 export function goBackOr(fallback: () => void) {
   if (typeof window === "undefined") {

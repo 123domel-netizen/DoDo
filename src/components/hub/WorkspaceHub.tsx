@@ -28,6 +28,8 @@ import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import {
   filterOverviewForHubGroup,
+  isHubChannelConversation,
+  isHubPeopleConversation,
   isMuted,
   isSelfNotesConversation,
   overviewTitle,
@@ -426,8 +428,8 @@ export function WorkspaceHub() {
       ),
     [activeOverview, monthCounts, myUserId],
   );
-  const people = sorted.filter((c) => c.kind === "dm");
-  const channels = sorted.filter((c) => c.kind === "channel");
+  const people = sorted.filter(isHubPeopleConversation);
+  const channels = sorted.filter(isHubChannelConversation);
   const idleContacts = useMemo(
     () => contactsWithoutDm(eligiblePeople, overview, myUserId),
     [eligiblePeople, overview, myUserId],

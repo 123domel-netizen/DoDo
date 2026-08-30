@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cloudEnabled } from "@/lib/supabase";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { sortOverview, isSelfNotesConversation } from "@/lib/chat/feed";
+import { sortOverview, isSelfNotesConversation, isHubPeopleConversation, isHubChannelConversation } from "@/lib/chat/feed";
 import {
   fetchAttachmentsForConversations,
   fetchDecisionsForConversations,
@@ -70,8 +70,8 @@ export function useHubRegistryLists(opts: {
       ),
     [withoutNotebook],
   );
-  const people = useMemo(() => sorted.filter((c) => c.kind === "dm"), [sorted]);
-  const channels = useMemo(() => sorted.filter((c) => c.kind === "channel"), [sorted]);
+  const people = useMemo(() => sorted.filter(isHubPeopleConversation), [sorted]);
+  const channels = useMemo(() => sorted.filter(isHubChannelConversation), [sorted]);
   const joinedIds = useMemo(() => new Set(overview.map((c) => c.id)), [overview]);
   const discoverable = useMemo(
     () => publicChannels.filter((c) => !joinedIds.has(c.id)),

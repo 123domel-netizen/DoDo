@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
-import { isMuted, overviewTitle } from "@/lib/chat/feed";
+import { isHubChannelLikeConversation, isHubPeopleConversation, isMuted, overviewTitle } from "@/lib/chat/feed";
 import { jumpToMessage, openConversation, startDm } from "@/lib/chat/init";
 import { fetchMyMentions, joinChannel, searchAll } from "@/lib/chat/api";
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
@@ -544,8 +544,8 @@ export function MobileChatHub() {
         </div>
       );
 
-      const dms = list.filter((c) => c.kind === "dm");
-      const chans = list.filter((c) => c.kind === "channel" || c.kind === "item");
+      const dms = list.filter(isHubPeopleConversation);
+      const chans = list.filter(isHubChannelLikeConversation);
 
       const discoverableFooter =
         discoverable.length > 0 ? (

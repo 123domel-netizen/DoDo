@@ -160,6 +160,8 @@ export interface Group {
   name: string;
   color: string;
   sortOrder: number;
+  /** Lucide icon name (np. "Home"). */
+  icon?: string;
   /** Grupa systemowa (archiwum / SHARE). */
   system?: "archive" | "google" | "share";
   /** @deprecated Użyj showInAll — odwrotność. */

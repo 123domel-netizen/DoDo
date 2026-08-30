@@ -26,7 +26,7 @@ import {
 import { usePresenceNow, dmPeerPresence } from "@/lib/chat/presence";
 import { ConversationKindMark } from "@/components/chat/PresenceDot";
 import { ReadReceiptTicks } from "@/components/chat/ReadReceiptTicks";
-import { goBackOr, pushRouteHash, setRouteHash } from "@/lib/navigation";
+import { goBackOr, pushRouteHash, setRouteHash, consumeMobileConversationReturn, peekMobileConversationReturn } from "@/lib/navigation";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import type {
   ChatMessage,
@@ -255,7 +255,12 @@ function MentionsList({ onOpen }: { onOpen: (msg: ChatMessage) => void }) {
   );
 }
 
-export function ChatPanel() {
+export function ChatPanel({
+  onLeaveConversation,
+}: {
+  /** Mobile: powrót do dashboardu zamiast listy rozmów (np. Notatnik z Przeglądu). */
+  onLeaveConversation?: () => void;
+} = {}) {
   const isMobile = useIsMobile();
   const myUserId = useChatStore((s) => s.userId);
   const overviewAll = useChatStore((s) => s.overview);
@@ -309,7 +314,14 @@ export function ChatPanel() {
           key={activeId}
           conversationId={activeId}
           onBack={() => {
+            const returnTo = peekMobileConversationReturn();
+            if (returnTo === "dashboard" && onLeaveConversation) {
+              consumeMobileConversationReturn();
+              onLeaveConversation();
+              return;
+            }
             goBackOr(() => {
+              consumeMobileConversationReturn();
               setActiveConversation(null);
               setRouteHash({ view: "chat" });
             });
