@@ -340,6 +340,45 @@ export function isSelfNotesConversation(
   return active[0]!.userId === myUserId;
 }
 
+/** Grupowy DM: więcej niż dwie osoby w rozmowie (3+). W UI jak kanał. */
+export function isGroupDmConversation(
+  entry: Pick<ChatOverviewEntry, "kind" | "members">,
+): boolean {
+  return entry.kind === "dm" && entry.members.length > 2;
+}
+
+/** DM 1:1 (co najwyżej dwie osoby). */
+export function isDirectDmConversation(
+  entry: Pick<ChatOverviewEntry, "kind" | "members">,
+): boolean {
+  return entry.kind === "dm" && entry.members.length <= 2;
+}
+
+/** Kolumna „Osoby” w hubie czatu. */
+export function isHubPeopleConversation(
+  entry: Pick<ChatOverviewEntry, "kind" | "members">,
+): boolean {
+  return isDirectDmConversation(entry);
+}
+
+/** Kolumna „Kanały” w hubie czatu (kanały + grupowe DM). */
+export function isHubChannelConversation(
+  entry: Pick<ChatOverviewEntry, "kind" | "members">,
+): boolean {
+  return entry.kind === "channel" || isGroupDmConversation(entry);
+}
+
+/** Mobile ALL: kanały + dyskusje itemów + grupowe DM. */
+export function isHubChannelLikeConversation(
+  entry: Pick<ChatOverviewEntry, "kind" | "members">,
+): boolean {
+  return (
+    entry.kind === "channel" ||
+    entry.kind === "item" ||
+    isGroupDmConversation(entry)
+  );
+}
+
 /** Znajdź wpis Notatnika w overview (jeśli już istnieje). */
 export function findSelfNotesEntry(
   overview: ChatOverviewEntry[],
@@ -365,6 +404,42 @@ export function notebookMainFeed(
     if (!includeArchived && m.threadArchivedAt) return false;
     return true;
   });
+}
+
+/** Najnowsza widoczna notatka (root) z feedu Notatnika. */
+export function notebookLatestVisibleMessage(
+  messages: ChatMessage[],
+): ChatMessage | null {
+  const visible = notebookMainFeed(messages);
+  if (!visible.length) return null;
+  return visible.reduce((latest, m) =>
+    m.createdAt > latest.createdAt ? m : latest,
+  );
+}
+
+/**
+ * Podgląd Notatnika na dashboardzie — tylko aktywne notatki.
+ * Overview.lastMessage może wskazywać archiwum lub kosz; wymaga załadowanego feedu.
+ */
+export function notebookDashboardPreview(
+  entry: Pick<ChatOverviewEntry, "lastMessage" | "lastMessageAt">,
+  messages: ChatMessage[],
+): { message: ChatMessage | ChatLastMessage | null; at: string | null } {
+  const latest = notebookLatestVisibleMessage(messages);
+  if (latest) {
+    return { message: latest, at: latest.createdAt };
+  }
+
+  if (messages.length > 0) {
+    return { message: null, at: null };
+  }
+
+  const last = entry.lastMessage;
+  if (!last || last.deletedAt || last.threadRootId) {
+    return { message: null, at: null };
+  }
+
+  return { message: null, at: null };
 }
 
 /** Krótki tytuł wątku Notatnika z pierwszej linii nagłówka. */

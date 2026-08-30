@@ -19,8 +19,11 @@ export interface DayColumnSlot {
 }
 
 /** Pozycje kolumn o zmiennej szerokości (dni robocze szersze, weekend węższy). */
-export function dayColumnLayout(days: Date[]): DayColumnSlot[] {
-  const weights = days.map(dayColumnWeight);
+export function dayColumnLayout(
+  days: Date[],
+  opts?: { equal?: boolean },
+): DayColumnSlot[] {
+  const weights = opts?.equal ? days.map(() => 1) : days.map(dayColumnWeight);
   const total = weights.reduce((a, b) => a + b, 0);
   let acc = 0;
   return weights.map((w) => {

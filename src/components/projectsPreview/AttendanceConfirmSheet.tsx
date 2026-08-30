@@ -31,6 +31,10 @@ interface AttendanceConfirmSheetProps {
   onSaveNote: (id: string, note: string) => void;
   onSetStatus: (status: "declared" | "confirmed") => void;
   onEdit?: (row: CrewAttendance) => void;
+  /** Tylko podgląd — bez edycji, statusu i notatek. */
+  readOnly?: boolean;
+  groupLabel?: string;
+  subLabel?: string;
 }
 
 function formatPlDate(iso: string): string {
@@ -67,6 +71,9 @@ export function AttendanceConfirmSheet({
   onSaveNote,
   onSetStatus,
   onEdit,
+  readOnly = false,
+  groupLabel = "Brygada",
+  subLabel,
 }: AttendanceConfirmSheetProps) {
   const crewById = useMemo(
     () => new Map(crews.map((c) => [c.id, c])),
@@ -231,22 +238,31 @@ export function AttendanceConfirmSheet({
               </p>
             </InfoField>
 
-            <InfoField label="Brygada">
+            <InfoField label={groupLabel}>
               <div className="flex items-center gap-2 rounded-lg border border-line/60 bg-surface-raised/40 px-3 py-2 text-sm text-ink">
-                {crew ? (
+                {crew && !readOnly ? (
                   <span
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ background: crew.color }}
                     aria-hidden
                   />
                 ) : null}
-                <span className="truncate">
-                  {crew?.name ?? crewLabel}
-                  {crew?.company ? (
-                    <span className="text-ink-faint"> · {crew.company}</span>
-                  ) : null}
+                <span className="min-w-0 truncate">
+                  {readOnly ? (
+                    crewLabel
+                  ) : (
+                    <>
+                      {crew?.name ?? crewLabel}
+                      {crew?.company ? (
+                        <span className="text-ink-faint"> · {crew.company}</span>
+                      ) : null}
+                    </>
+                  )}
                 </span>
               </div>
+              {subLabel ? (
+                <p className="mt-1 text-[11px] text-ink-faint">{subLabel}</p>
+              ) : null}
             </InfoField>
 
             <div className="space-y-1.5">
@@ -363,29 +379,37 @@ export function AttendanceConfirmSheet({
               const project = projectById.get(row.projectId);
               const note = noteDrafts[row.id] ?? "";
               const showBuildInNote = rows.length > 1;
+              const trimmedNote = note.trim();
+              if (readOnly && !trimmedNote) return null;
               return (
                 <div key={row.id} className="space-y-2">
                   <InfoField
                     label={
                       showBuildInNote
                         ? `Notatka — ${project ? projectLabel(project) : "budowa"}`
-                        : "Notatka (opcjonalnie)"
+                        : "Notatka"
                     }
                   >
-                    <textarea
-                      value={note}
-                      onChange={(e) =>
-                        setNoteDrafts((prev) => ({
-                          ...prev,
-                          [row.id]: e.target.value,
-                        }))
-                      }
-                      rows={2}
-                      className="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
-                      placeholder="Opcjonalnie…"
-                    />
+                    {readOnly ? (
+                      <p className="rounded-lg border border-line/60 bg-surface-raised/40 px-3 py-2 text-sm text-ink">
+                        {trimmedNote}
+                      </p>
+                    ) : (
+                      <textarea
+                        value={note}
+                        onChange={(e) =>
+                          setNoteDrafts((prev) => ({
+                            ...prev,
+                            [row.id]: e.target.value,
+                          }))
+                        }
+                        rows={2}
+                        className="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink"
+                        placeholder="Opcjonalnie…"
+                      />
+                    )}
                   </InfoField>
-                  {onEdit ? (
+                  {!readOnly && onEdit ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -405,45 +429,47 @@ export function AttendanceConfirmSheet({
               );
             })}
 
-            <div className="space-y-1.5 border-t border-line/60 pt-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
-                Status
-              </p>
-              <div
-                className="grid grid-cols-2 gap-1 rounded-lg border border-line bg-surface-raised/60 p-1"
-                role="group"
-                aria-label="Status potwierdzenia"
-              >
-                <button
-                  type="button"
-                  onClick={() => setStatus("confirmed")}
-                  className={`inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-[12px] font-semibold transition ${
-                    allConfirmed
-                      ? "bg-emerald-500/20 text-emerald-300"
-                      : "text-ink-faint hover:bg-surface-overlay hover:text-ink"
-                  }`}
+            {!readOnly ? (
+              <div className="space-y-1.5 border-t border-line/60 pt-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                  Status
+                </p>
+                <div
+                  className="grid grid-cols-2 gap-1 rounded-lg border border-line bg-surface-raised/60 p-1"
+                  role="group"
+                  aria-label="Status potwierdzenia"
                 >
-                  <Check size={13} />
-                  Potwierdzam
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStatus("declared")}
-                  className={`inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-[12px] font-semibold transition ${
-                    !allConfirmed
-                      ? "bg-surface-overlay text-ink"
-                      : "text-ink-faint hover:bg-surface-overlay hover:text-ink"
-                  }`}
-                >
-                  Nie potwierdzam
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatus("confirmed")}
+                    className={`inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-[12px] font-semibold transition ${
+                      allConfirmed
+                        ? "bg-emerald-500/20 text-emerald-300"
+                        : "text-ink-faint hover:bg-surface-overlay hover:text-ink"
+                    }`}
+                  >
+                    <Check size={13} />
+                    Potwierdzam
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatus("declared")}
+                    className={`inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-[12px] font-semibold transition ${
+                      !allConfirmed
+                        ? "bg-surface-overlay text-ink"
+                        : "text-ink-faint hover:bg-surface-overlay hover:text-ink"
+                    }`}
+                  >
+                    Nie potwierdzam
+                  </button>
+                </div>
+                <p className="text-[11px] text-ink-faint">
+                  {allConfirmed
+                    ? "Oświadczenie jest potwierdzone."
+                    : "Oświadczenie zapisane — jeszcze niepotwierdzone."}
+                </p>
               </div>
-              <p className="text-[11px] text-ink-faint">
-                {allConfirmed
-                  ? "Oświadczenie jest potwierdzone."
-                  : "Oświadczenie zapisane — jeszcze niepotwierdzone."}
-              </p>
-            </div>
+            ) : null}
           </div>
         )}
 
@@ -451,12 +477,12 @@ export function AttendanceConfirmSheet({
           <button
             type="button"
             onClick={() => {
-              persistNotes();
+              if (!readOnly) persistNotes();
               onClose();
             }}
             className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white"
           >
-            Gotowe
+            {readOnly ? "Zamknij" : "Gotowe"}
           </button>
         </div>
       </div>

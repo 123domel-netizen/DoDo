@@ -4,7 +4,7 @@ import { useStore } from "@/state/store";
 import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
 import { openConversation } from "@/lib/chat/init";
-import { pushRouteHash } from "@/lib/navigation";
+import { pushRouteHash, setMobileConversationReturn } from "@/lib/navigation";
 import type { ChatOverviewEntry } from "@/lib/chat/types";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
@@ -22,8 +22,8 @@ function shortLabel(title: string): string {
 }
 
 /**
- * Pasek awatarów ostatnich korespondencji — nad dolnymi belkami mobilnymi.
- * Notatnik jest w dolnej nawigacji, nie tu.
+ * Pasek awatarów ostatnich korespondencji — nad dolnymi belkami mobilnymi
+ * (Dashboard, Wydarzenia, Zadania).
  */
 export function MobileRecentCorrespondences() {
   const myUserId = useChatStore((s) => s.userId);
@@ -55,6 +55,7 @@ export function MobileRecentCorrespondences() {
   if (!cloudEnabled || !myUserId) return null;
 
   const open = (id: string) => {
+    setMobileConversationReturn("dashboard");
     void openConversation(id);
     pushRouteHash({ view: "conversation", conversationId: id });
   };

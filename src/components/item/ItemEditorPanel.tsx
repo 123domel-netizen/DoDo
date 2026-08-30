@@ -19,6 +19,7 @@ import { fmt } from "@/lib/format";
 import {
   isShareGroup,
   isSharedItem,
+  shareOwnerLabel,
   updateSharedItemContent,
   updateOwnParticipationReminders,
 } from "@/lib/share";
@@ -63,6 +64,7 @@ import {
   Tags,
 } from "lucide-react";
 import { cloudEnabled } from "@/lib/supabase";
+import { useChatStore } from "@/lib/chat/store";
 
 // Czat ładowany leniwie — edytor nie płaci za moduł dyskusji, dopóki nietknięty.
 const ItemDiscussion = lazy(() =>
@@ -95,6 +97,7 @@ export function ItemEditorPanel() {
   const removeSharedItem = useStore((s) => s.removeSharedItem);
   const setItemTagIds = useStore((s) => s.setItemTagIds);
   const myTagIdsByItem = useStore((s) => s.myTagIdsByItem);
+  const profiles = useChatStore((s) => s.profiles);
   const discardDraft = useStore((s) => s.discardDraft);
   const commitDraft = useStore((s) => s.commitDraft);
   const closeEditor = useStore((s) => s.closeEditor);
@@ -126,6 +129,9 @@ export function ItemEditorPanel() {
   if (!isDraft && isItemDeleted(item)) return null;
   const it = item;
   const shareMode = isSharedItem(it);
+  const sharedByLabel = shareMode
+    ? shareOwnerLabel(it, { teamMembers, profiles })
+    : null;
   const group = !shareMode && it.groupId ? groups.find((g) => g.id === it.groupId) : undefined;
   const displayReminders = effectiveReminders(it);
   const checklistAssignees = useMemo(
@@ -275,9 +281,25 @@ export function ItemEditorPanel() {
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5">
         {shareMode ? (
-          <span className="rounded-md bg-surface-raised px-2 py-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-            SHARE · Udostępnione Tobie
-          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+              {it.type === "task" ? (
+                <CheckSquare size={13} className="shrink-0 text-ink-light" />
+              ) : (
+                <CalendarClock size={13} className="shrink-0 text-ink-light" />
+              )}
+              <span className="text-ink-light">
+                {it.type === "task" ? "Zadanie" : "Wydarzenie"}
+              </span>
+              <span className="text-ink-faint">·</span>
+              <span className="rounded-md bg-surface-raised px-1.5 py-0.5 text-[10px] text-ink-faint">
+                SHARE
+              </span>
+            </div>
+            <p className="mt-0.5 truncate text-[11px] font-normal normal-case tracking-normal text-ink-light">
+              Udostępnione przez {sharedByLabel}
+            </p>
+          </div>
         ) : (
           <button
             onClick={() => (it.type === "task" ? convertToEvent() : convertToTask())}
