@@ -24,8 +24,12 @@ import { itemSupportsTodoDone } from "@/lib/items";
 import { TodayDashboardPanel } from "@/components/dashboard/TodayDashboardPanel";
 import { PanelActionBar } from "@/components/ui/PanelActionBar";
 import { useIsMobile } from "@/hooks/useMediaQuery";
+import {
+  consumeSidePanelTab,
+  type SidePanelTab,
+} from "@/lib/sidePanelTab";
 
-type SideTab = "tasks" | "events" | "today";
+type SideTab = SidePanelTab;
 
 export function TodoPanel() {
   const isMobile = useIsMobile();
@@ -36,7 +40,7 @@ export function TodoPanel() {
   const patchItem = useStore((s) => s.patchItem);
   const toggleTaskDone = useStore((s) => s.toggleTaskDone);
   const setEditing = useStore((s) => s.setEditing);
-  const [tab, setTab] = useState<SideTab>("today");
+  const [tab, setTab] = useState<SideTab>(() => consumeSidePanelTab() ?? "today");
   // Mobile: dolne menu już ma Dashboard / Kalendarz / Zadania — tu tylko lista zadań.
   const activeTab: SideTab = isMobile ? "tasks" : tab;
 

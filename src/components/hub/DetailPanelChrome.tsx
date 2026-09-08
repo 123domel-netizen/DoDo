@@ -1,46 +1,52 @@
 import { type ReactNode } from "react";
-import { LayoutDashboard } from "lucide-react";
-import { useStore } from "@/state/store";
-import { useChatStore } from "@/lib/chat/store";
-import { overviewTitle } from "@/lib/chat/feed";
+import { CalendarClock, ListChecks, Sun } from "lucide-react";
 import { showTodoInPanel } from "@/lib/chat/init";
 
-/** Pasek nawigacji nad detalem w prawym panelu: szybki powrót do Dashboardu. */
-export function DetailPanelChrome({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+/** Pasek nawigacji nad detalem w prawym panelu (desktop): Zadania / Wydarzenia / Dashboard. */
+export function DetailPanelChrome({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-1.5 border-b border-line bg-surface-raised/40 px-2 py-1">
-        <button
-          type="button"
-          onClick={() => showTodoInPanel()}
-          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-ink-light transition hover:bg-surface-raised hover:text-ink"
-          title="Pokaż Dashboard (kontekst hubu zostaje)"
-        >
-          <LayoutDashboard size={13} />
-          Dashboard
-        </button>
-        <span className="text-[10px] text-ink-faint">/</span>
-        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-ink">
-          {label}
-        </span>
+      <div className="border-b border-line/80 bg-surface-raised/40 px-3 py-2">
+        <div className="flex min-w-0 items-stretch gap-1 rounded-xl border border-line bg-surface-raised p-1">
+          <ChromeTab
+            icon={<ListChecks size={16} />}
+            label="Zadania"
+            onClick={() => showTodoInPanel("tasks")}
+          />
+          <ChromeTab
+            icon={<CalendarClock size={16} />}
+            label="Wydarzenia"
+            onClick={() => showTodoInPanel("events")}
+          />
+          <ChromeTab
+            icon={<Sun size={16} />}
+            label="Dashboard"
+            onClick={() => showTodoInPanel("today")}
+          />
+        </div>
       </div>
       <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
 }
 
-export function useConversationDetailLabel(conversationId: string | null): string {
-  const myUserId = useChatStore((s) => s.userId);
-  const overview = useChatStore((s) => s.overview);
-  const items = useStore((s) => s.items);
-  if (!conversationId) return "Rozmowa";
-  const entry = overview.find((c) => c.id === conversationId);
-  if (!entry) return "Rozmowa";
-  return overviewTitle(entry, myUserId, (id) => items[id]?.title);
+function ChromeTab({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-2 text-sm font-medium text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
 }

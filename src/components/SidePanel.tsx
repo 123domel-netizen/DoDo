@@ -1,4 +1,3 @@
-import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import {
   jumpToMessage,
@@ -10,10 +9,8 @@ import { ItemEditorPanel } from "@/components/item/ItemEditorPanel";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
 import { RegistryDetailPanel } from "@/components/hub/RegistryDetailPanel";
-import {
-  DetailPanelChrome,
-  useConversationDetailLabel,
-} from "@/components/hub/DetailPanelChrome";
+import { DetailPanelChrome } from "@/components/hub/DetailPanelChrome";
+import { useStore } from "@/state/store";
 
 /**
  * Prawy panel desktop: zadania / edytor / rozmowa / decyzja / notatka / media.
@@ -24,16 +21,12 @@ export function SidePanel() {
   const panelMode = useChatStore((s) => s.panelMode);
   const activeConversationId = useChatStore((s) => s.activeConversationId);
   const mediaConversationId = useChatStore((s) => s.mediaConversationId);
-  const registryFocus = useChatStore((s) => s.registryFocus);
-  const convLabel = useConversationDetailLabel(
-    panelMode === "media" ? mediaConversationId : activeConversationId,
-  );
 
   if (editingId) return <ItemEditorPanel />;
 
   if (panelMode === "media" && mediaConversationId) {
     return (
-      <DetailPanelChrome label={`Media · ${convLabel}`}>
+      <DetailPanelChrome>
         <ConversationMediaView
           embedded
           conversationId={mediaConversationId}
@@ -50,7 +43,7 @@ export function SidePanel() {
 
   if (panelMode === "conversation" && activeConversationId) {
     return (
-      <DetailPanelChrome label={convLabel}>
+      <DetailPanelChrome>
         <ConversationView
           key={activeConversationId}
           conversationId={activeConversationId}
@@ -61,16 +54,8 @@ export function SidePanel() {
   }
 
   if (panelMode === "decision" || panelMode === "note") {
-    const kindLabel =
-      registryFocus?.kind === "note"
-        ? "Notatka"
-        : registryFocus?.kind === "decision"
-          ? "Decyzja"
-          : panelMode === "note"
-            ? "Notatka"
-            : "Decyzja";
     return (
-      <DetailPanelChrome label={kindLabel}>
+      <DetailPanelChrome>
         <RegistryDetailPanel />
       </DetailPanelChrome>
     );

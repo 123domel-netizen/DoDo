@@ -26,6 +26,10 @@ import { useChatStore, switchChatPersistUser } from "@/lib/chat/store";
 import { mergeMessages } from "@/lib/chat/feed";
 import { firstUrl } from "@/lib/chat/markdown";
 import { rememberRecentThread } from "@/lib/chat/recentThreads";
+import {
+  requestSidePanelTab,
+  type SidePanelTab,
+} from "@/lib/sidePanelTab";
 import type {
   ChatItemLink,
   ChatMessage,
@@ -235,7 +239,8 @@ export function openMediaInPanel(conversationId: string) {
 }
 
 /** Wróć do listy zadań w prawym panelu, zachowując kontekst hubu (aktywna rozmowa). */
-export function showTodoInPanel() {
+export function showTodoInPanel(tab?: SidePanelTab) {
+  if (tab) requestSidePanelTab(tab);
   useChatStore.getState().setPanelMode("todo");
 }
 
