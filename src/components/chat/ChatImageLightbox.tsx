@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { Download, Loader2, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { signedUrlFor } from "@/lib/chat/upload";
+import { downloadRemoteFile } from "@/lib/media/downloadRemoteFile";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
@@ -40,6 +41,7 @@ export function ChatImageLightbox({
   const [url, setUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState<Pt>({ x: 0, y: 0 });
+  const [downloading, setDownloading] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -133,6 +135,16 @@ export function ChatImageLightbox({
       return next;
     });
   }, []);
+
+  const onDownload = useCallback(async () => {
+    if (!url || downloading) return;
+    setDownloading(true);
+    try {
+      await downloadRemoteFile(url, fileName || "zdjecie.jpg");
+    } finally {
+      setDownloading(false);
+    }
+  }, [url, fileName, downloading]);
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
@@ -293,6 +305,19 @@ export function ChatImageLightbox({
             <RotateCcw size={16} />
           </button>
         )}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void onDownload();
+          }}
+          disabled={!url || downloading}
+          aria-label="Pobierz zdjęcie"
+          title="Pobierz"
+          className="rounded-full bg-black/45 p-2 text-white transition hover:bg-black/65 disabled:opacity-35"
+        >
+          {downloading ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+        </button>
         <button
           type="button"
           onClick={(e) => {
