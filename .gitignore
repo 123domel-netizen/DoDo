@@ -6,6 +6,9 @@ dist-ssr
 .env.*
 !.env.example
 !.env.projects-preview
+# Capability buildu (nie sekret) — musi być w repo, inaczej produkcyjny bundle
+# zależy od prywatnego .env osoby deployującej.
+!.env.production
 .DS_Store
 .vscode/*
 !.vscode/extensions.json

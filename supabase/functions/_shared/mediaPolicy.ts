@@ -22,6 +22,31 @@ export function resolveOrgGalleryPipeline(input: {
   return "r2_sp";
 }
 
+/** Kopia komunikatu z src/lib/media/pipelinePolicy.ts — trzymaj w sync. */
+export const R2_CLIENT_REQUIRED_MESSAGE =
+  "Ta wersja aplikacji nie obsługuje nowego przesyłania galerii. Odśwież aplikację albo otwórz wersję testową ponownie.";
+
+/**
+ * Bramka przed jakimkolwiek zapisem w `gallery_create`.
+ *
+ * Bez niej serwer tworzył galerię + wiadomość dla klienta, który i tak nie
+ * potrafił wysłać plików do R2 — użytkownik widział pustą kafelkę w rozmowie,
+ * a zaraz po niej błąd. Klient deklaruje capability jawnie; brak deklaracji
+ * traktujemy jak „nie potrafi", bo taki klient pochodzi sprzed tej zmiany.
+ */
+export function rejectGalleryCreateForClient(input: {
+  pipeline: MediaPipeline;
+  clientSupportsR2: unknown;
+}): { errorCode: "client_no_r2"; errorMessage: string; httpStatus: 409 } | null {
+  if (input.pipeline !== "r2_sp") return null;
+  if (input.clientSupportsR2 === true) return null;
+  return {
+    errorCode: "client_no_r2",
+    errorMessage: R2_CLIENT_REQUIRED_MESSAGE,
+    httpStatus: 409,
+  };
+}
+
 /** Edge: soft-reject legacy gallery_upload_item dla r2_sp — HTTP 409, bez markFailed. */
 export function legacyUploadItemRejectionForPipeline(
   galleryPipeline: string | null | undefined,

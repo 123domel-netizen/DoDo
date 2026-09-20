@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Download,
   Image as ImageIcon,
   ImagePlus,
   Loader2,
@@ -26,6 +27,7 @@ import {
   setGalleryLocalThumb,
   subscribeGalleryLocalThumbs,
 } from "@/lib/chat/galleryLocalThumbs";
+import { downloadRemoteFile } from "@/lib/media/downloadRemoteFile";
 
 interface GalleryViewerProps {
   galleryId: string;
@@ -178,6 +180,7 @@ function Lightbox({
 }) {
   const item = items[index];
   const [url, setUrl] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const touchStartX = useRef<number | null>(null);
 
   useEffect(() => {
@@ -204,6 +207,17 @@ function Lightbox({
 
   if (!item) return null;
 
+  const onDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!url || downloading) return;
+    setDownloading(true);
+    try {
+      await downloadRemoteFile(url, item.fileName || "zdjecie.jpg");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center bg-black/90"
@@ -220,14 +234,26 @@ function Lightbox({
         else if (dx < -60 && index < items.length - 1) onNavigate(index + 1);
       }}
     >
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Zamknij"
-        className="absolute right-4 top-4 rounded-full bg-black/40 p-2 text-white transition hover:bg-black/60"
-      >
-        <X size={18} />
-      </button>
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={(e) => void onDownload(e)}
+          disabled={!url || downloading}
+          aria-label="Pobierz zdjęcie"
+          title="Pobierz"
+          className="rounded-full bg-black/40 p-2 text-white transition hover:bg-black/60 disabled:opacity-35"
+        >
+          {downloading ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Zamknij"
+          className="rounded-full bg-black/40 p-2 text-white transition hover:bg-black/60"
+        >
+          <X size={18} />
+        </button>
+      </div>
 
       {index > 0 && (
         <button
@@ -273,6 +299,7 @@ function Lightbox({
 
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1 text-[11px] text-white/80">
         {index + 1} / {items.length}
+        {item.fileName ? ` · ${item.fileName}` : ""}
       </div>
     </div>
   );

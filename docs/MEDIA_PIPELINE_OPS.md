@@ -13,6 +13,34 @@ Rollback natychmiastowy: admin → Magazyn → **Legacy SP** (`org_media_pipelin
 
 Brak/błąd odczytu flagi → `legacy_sp`.
 
+### Skąd build bierze `VITE_MEDIA_PIPELINE`
+
+`.env.production` i `.env.projects-preview` są **w repozytorium** i oba ustawiają
+`r2`. Vite ładuje je z wyższym priorytetem niż `.env` / `.env.local`, więc
+bundle wystawiany użytkownikom nie zależy już od prywatnego `.env` osoby
+deployującej. Sekrety (`VITE_SUPABASE_*`, `VITE_VAPID_PUBLIC_KEY`) zostają
+lokalnie — w repo jest wyłącznie flaga capability.
+
+`vite.config.ts` uruchamia bramkę `checkMediaPipelineBuild` (`src/lib/media/buildGuard.ts`):
+build w trybie `production` / `projects-preview` **przerywa się**, gdy capability
+wypada `legacy`. Świadomy rollback wymaga `ALLOW_LEGACY_MEDIA_BUILD=1` i
+wcześniejszego cofnięcia zespołów na `legacy_sp`.
+
+> **Incydent, który to wymusił.** `enable-r2-sp-orgs.mjs` przestawił zespoły na
+> `r2_sp`, a produkcyjny frontend pozostał legacy. Efekt: każde dodanie galerii
+> kończyło się komunikatem „Ta wersja aplikacji nie obsługuje nowego przesyłania
+> galerii", niezależnie od czyszczenia cache PWA. Po stronie serwera
+> `gallery_create` tworzył przy tym galerię i wiadomość, których klient nie umiał
+> wypełnić — stąd „niby dodaje, a potem błąd".
+
+### Negocjacja capability przy `gallery_create`
+
+Klient wysyła `clientSupportsR2` (z `clientR2BuildEnabled()`). Edge sprawdza to
+w `rejectGalleryCreateForClient` **przed jakimkolwiek zapisem** i przy
+niezgodności zwraca `409 client_no_r2`. Brak pola traktujemy jak „nie potrafi" —
+taki klient pochodzi sprzed tej zmiany. Dzięki temu rozjazd wersji nie zostawia
+pustych kafelek galerii w rozmowie.
+
 ## Pierwszy rollout
 
 - **Galerie:** możliwe po `orgs.media_pipeline=r2_sp` + sekrety R2 + Worker

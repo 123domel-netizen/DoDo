@@ -54,6 +54,7 @@ import {
   normalizeOrgMediaPipeline,
   authorizeGalleryMediaAccess,
   legacyUploadItemRejectionForPipeline,
+  rejectGalleryCreateForClient,
   orgIdFromHotKey,
   GLOBAL_DEFAULT_PIPELINE,
 } from "../_shared/mediaPolicy.ts";
@@ -763,6 +764,20 @@ async function actionGalleryCreate(admin: SupabaseClient, callerId: string, body
   }
   if (!(await isOrgMember(admin, orgId, callerId))) {
     throw new ActionError("Nie należysz do tej organizacji.", 403);
+  }
+
+  // Zanim cokolwiek zapiszemy: klient musi umieć obsłużyć wybrany pipeline.
+  // Inaczej zostałaby galeria i wiadomość, których nikt nie wypełni plikami.
+  const clientReject = rejectGalleryCreateForClient({
+    pipeline,
+    clientSupportsR2: body.clientSupportsR2,
+  });
+  if (clientReject) {
+    throw new ActionError(
+      clientReject.errorMessage,
+      clientReject.httpStatus,
+      clientReject.errorCode,
+    );
   }
 
   // R2 pipeline: nie wymaga Graph ani SP na create (hot R2).
