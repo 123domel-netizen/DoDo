@@ -1,8 +1,9 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { checkMediaPipelineBuild } from "./src/lib/media/buildGuard";
 
 function resolveBuildVersion(): string {
   if (process.env.APP_BUILD_VERSION?.trim()) return process.env.APP_BUILD_VERSION.trim();
@@ -15,52 +16,66 @@ function resolveBuildVersion(): string {
 
 const appBuildVersion = resolveBuildVersion();
 
-export default defineConfig({
-  define: {
-    __APP_BUILD_VERSION__: JSON.stringify(appBuildVersion),
-  },
-  plugins: [
-    react(),
-    VitePWA({
-      registerType: "autoUpdate",
-      strategies: "injectManifest",
-      srcDir: "src",
-      filename: "sw.ts",
-      // Nie bierz SW z HTTP cache przeglądarki — szybsza aktualizacja po deployu preview.
-      injectManifest: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
-      },
-      manifest: {
-        name: "DoDo",
-        short_name: "DoDo",
-        description: "Kalendarz i zadania — DoDo",
-        theme_color: "#100e16",
-        background_color: "#100e16",
-        display: "standalone",
-        orientation: "any",
-        start_url: "/",
-        icons: [
-          { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-          {
-            src: "/icon-512-maskable.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable",
-          },
-          { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-        ],
-      },
-      devOptions: {
-        // Disabled in dev: a cache-first SW would serve stale assets and hide
-        // live changes / break HMR. The SW is still built for production.
-        enabled: false,
-        type: "module",
-      },
-    }),
-  ],
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
+export default defineConfig(({ command, mode }) => {
+  const env = loadEnv(mode, process.cwd());
+  const mediaGuard = checkMediaPipelineBuild({
+    command,
+    mode,
+    viteMediaPipeline: env.VITE_MEDIA_PIPELINE,
+    allowLegacyOverride: process.env.ALLOW_LEGACY_MEDIA_BUILD,
+  });
+  if (!mediaGuard.ok) throw new Error(mediaGuard.message);
+  if (command === "build") {
+    console.log(`[build] media pipeline: ${mediaGuard.pipeline} (mode=${mode})`);
+  }
+
+  return {
+    define: {
+      __APP_BUILD_VERSION__: JSON.stringify(appBuildVersion),
     },
-  },
+    plugins: [
+      react(),
+      VitePWA({
+        registerType: "autoUpdate",
+        strategies: "injectManifest",
+        srcDir: "src",
+        filename: "sw.ts",
+        // Nie bierz SW z HTTP cache przeglądarki — szybsza aktualizacja po deployu preview.
+        injectManifest: {
+          globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
+        },
+        manifest: {
+          name: "DoDo",
+          short_name: "DoDo",
+          description: "Kalendarz i zadania — DoDo",
+          theme_color: "#100e16",
+          background_color: "#100e16",
+          display: "standalone",
+          orientation: "any",
+          start_url: "/",
+          icons: [
+            { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+            {
+              src: "/icon-512-maskable.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "maskable",
+            },
+            { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          ],
+        },
+        devOptions: {
+          // Disabled in dev: a cache-first SW would serve stale assets and hide
+          // live changes / break HMR. The SW is still built for production.
+          enabled: false,
+          type: "module",
+        },
+      }),
+    ],
+    resolve: {
+      alias: {
+        "@": fileURLToPath(new URL("./src", import.meta.url)),
+      },
+    },
+  };
 });

@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import { forceCloudRefresh, getSyncDiagnosticsSnapshot } from "@/lib/cloud";
+import {
+  flushPendingPush,
+  forceCloudRefresh,
+  getSyncDiagnosticsSnapshot,
+} from "@/lib/cloud";
 import { APP_VERSION, BUILD_LABEL } from "@/lib/version";
 import { cloudEnabled } from "@/lib/supabase";
 
@@ -25,6 +29,7 @@ function DiagRow({ label, value }: { label: string; value: string | number | boo
 export function SyncSettings() {
   const [diag, setDiag] = useState<Diag>(() => getSyncDiagnosticsSnapshot());
   const [refreshing, setRefreshing] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,20 +43,28 @@ export function SyncSettings() {
     );
   }
 
+  const pendingCount =
+    diag.dirtyItemsCount + diag.dirtyParticipantCount + (diag.tagAssignmentsDirty ? 1 : 0);
+
+  const onPush = async () => {
+    setPushing(true);
+    setMessage(null);
+    try {
+      const ok = await flushPendingPush();
+      setMessage(ok ? "Wysłano zaległe zmiany" : "Część zmian nadal czeka — spróbuję ponownie");
+      setDiag(getSyncDiagnosticsSnapshot());
+    } finally {
+      setPushing(false);
+    }
+  };
+
   const onRefresh = async () => {
-    const current = getSyncDiagnosticsSnapshot();
-    const pending =
-      current.dirtyItemsCount +
-      current.dirtyParticipantCount +
-      (current.tagAssignmentsDirty ? 1 : 0);
-    if (pending > 0) {
+    // forceCloudRefresh najpierw dosyła kolejkę, więc ostrzegamy tylko wtedy,
+    // gdy wysyłka realnie nie przechodzi (np. trwały błąd RLS).
+    if (pendingCount > 0) {
       const ok = window.confirm(
-        `Masz ${current.dirtyItemsCount} niezsynchronizowanych zmian lokalnych` +
-          (current.dirtyParticipantCount
-            ? ` (+ ${current.dirtyParticipantCount} SHARE)`
-            : "") +
-          (current.tagAssignmentsDirty ? " oraz niezapisane tagi" : "") +
-          ". Odświeżenie z chmury je porzuci. Kontynuować?",
+        `${pendingCount} zmian(y) czeka jeszcze na wysyłkę. Spróbuję je najpierw wysłać, ` +
+          "ale jeśli się nie uda, wersja z chmury zastąpi wersję lokalną. Kontynuować?",
       );
       if (!ok) return;
     }
@@ -86,6 +99,8 @@ export function SyncSettings() {
         <DiagRow label="lastAutoPullAt" value={diag.lastAutoPullAt} />
         <DiagRow label="autoPullEnabled" value={diag.autoPullEnabled} />
         <DiagRow label="lastPushAt" value={diag.lastPushAt} />
+        <DiagRow label="lastPushError" value={diag.lastPushError} />
+        <DiagRow label="realtimeSubscribed" value={diag.realtimeSubscribed} />
         <DiagRow label="localItemsCount" value={diag.localItemsCount} />
         <DiagRow label="visibleItemsCount" value={diag.visibleItemsCount} />
         <DiagRow label="deletedItemsCount" value={diag.deletedItemsCount} />
@@ -97,6 +112,26 @@ export function SyncSettings() {
         <DiagRow label="userEmail" value={diag.userEmail} />
         <DiagRow label="appVersion" value={`${APP_VERSION} (${BUILD_LABEL})`} />
       </div>
+
+      {pendingCount > 0 && (
+        <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5">
+          <p className="text-[11px] leading-snug text-ink-light">
+            {pendingCount === 1
+              ? "1 zmiana czeka na wysyłkę do chmury."
+              : `${pendingCount} zmian(y) czeka na wysyłkę do chmury.`}{" "}
+            Aplikacja ponawia automatycznie — te dane nie zginą po zamknięciu.
+            {diag.lastPushError ? ` Ostatni błąd: ${diag.lastPushError}` : ""}
+          </p>
+          <button
+            type="button"
+            disabled={pushing || diag.syncBooting}
+            onClick={() => void onPush()}
+            className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-xs font-medium text-ink transition hover:border-line-strong disabled:opacity-50"
+          >
+            {pushing ? "Wysyłanie…" : "Wyślij teraz"}
+          </button>
+        </div>
+      )}
 
       <button
         type="button"

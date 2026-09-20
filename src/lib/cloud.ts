@@ -25,12 +25,18 @@ import { migrateGroupColor, LEGACY_GROUP_COLOR_MAP } from "@/lib/factory";
 import {
   clearDirtyItems,
   clearDirtyParticipants,
+  clearTagAssignmentsDirty,
+  enqueueItem,
   getSyncDiagnostics,
+  hasPendingPush,
+  persistOutboxNow,
   resetSyncState,
+  restoreOutboxForUser,
   shouldSchedulePush,
   syncState,
   trackStoreDirty,
 } from "@/lib/syncState";
+import { itemIdsMissingInCloud } from "@/lib/syncOutbox";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
@@ -44,6 +50,14 @@ let previousUserId: string | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let realtimeChannel: RealtimeChannel | null = null;
 let storeSubscribed = false;
+let realtimeSubscribed = false;
+let realtimeEverSubscribed = false;
+let realtimeFailureStreak = 0;
+let realtimeResubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+let pushInFlight = false;
+let pushFailureStreak = 0;
+let pushRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let lifecycleBound = false;
 
 function setApplyingRemote(v: boolean) {
   syncState.applyingRemote = v;
@@ -336,7 +350,7 @@ async function pushTagAssignments() {
     }
   }
   lastAssignmentsSnapshot = snapshot;
-  syncState.tagAssignmentsDirty = false;
+  clearTagAssignmentsDirty();
 }
 
 function syncMyTagIdsFromOwnedItems(items: Record<string, Item>) {
@@ -635,38 +649,79 @@ async function pullAll(replace = false) {
   const shared = await pullSharedItems();
   const remoteItems = { ...owned, ...shared };
 
-  if (replace) {
-    setApplyingRemote(true);
-    try {
-      useStore.setState({ items: remoteItems });
-      syncMyTagIdsFromOwnedItems(remoteItems);
-    } finally {
-      setApplyingRemote(false);
-    }
-    syncState.lastPullAt = new Date().toISOString();
-    return;
-  }
+  // Wpisy, które mamy lokalnie, a których nie ma w chmurze, nigdy nie zostały
+  // wysłane (usuwanie jest miękkie — tombstone zostaje wierszem). Pull nie może
+  // ich skasować, a kolejka musi je odzyskać nawet gdy zgubiła je awaria.
+  const localBefore = useStore.getState().items;
+  const neverPushedIds = itemIdsMissingInCloud({
+    localItems: localBefore,
+    remoteItemIds: Object.keys(remoteItems),
+  });
 
   setApplyingRemote(true);
   try {
-    const local = useStore.getState().items;
-    const merged = { ...local };
-    for (const [id, remote] of Object.entries(remoteItems)) {
-      merged[id] = mergeItemOnSync(local[id], remote);
+    let next: Record<string, Item>;
+    if (replace) {
+      next = { ...remoteItems };
+      for (const id of neverPushedIds) {
+        const local = localBefore[id];
+        if (local) next[id] = local;
+      }
+    } else {
+      next = { ...localBefore };
+      for (const [id, remote] of Object.entries(remoteItems)) {
+        next[id] = mergeItemOnSync(localBefore[id], remote);
+      }
     }
-    useStore.setState({ items: merged });
-    syncMyTagIdsFromOwnedItems(merged);
+    useStore.setState({ items: next });
+    syncMyTagIdsFromOwnedItems(next);
   } finally {
     setApplyingRemote(false);
+  }
+
+  if (neverPushedIds.length) {
+    console.warn(
+      `[cloud] ${neverPushedIds.length} wpis(ów) nie ma w chmurze — ponawiam wysyłkę`,
+    );
+    for (const id of neverPushedIds) enqueueItem(id);
+    schedulePush();
   }
   syncState.lastPullAt = new Date().toISOString();
 }
 
 function teardownRealtime() {
+  if (realtimeResubscribeTimer) {
+    clearTimeout(realtimeResubscribeTimer);
+    realtimeResubscribeTimer = null;
+  }
   if (realtimeChannel && supabase) {
     void supabase.removeChannel(realtimeChannel);
     realtimeChannel = null;
   }
+  realtimeSubscribed = false;
+}
+
+/**
+ * Kanał potrafi umrzeć po uśpieniu laptopa i nigdy się nie podnieść — wtedy
+ * urządzenie przestaje widzieć zmiany z innych urządzeń aż do przeładowania.
+ */
+function scheduleRealtimeResubscribe() {
+  if (realtimeResubscribeTimer || !userId) return;
+  const attempt = Math.min(realtimeFailureStreak, 5);
+  const delay = Math.min(2_000 * 2 ** attempt, 60_000);
+  realtimeResubscribeTimer = setTimeout(() => {
+    realtimeResubscribeTimer = null;
+    teardownRealtime();
+    setupRealtime();
+  }, delay);
+}
+
+/** Wywoływane po powrocie sieci / do zakładki — cisza w kanale bywa milcząca. */
+function ensureRealtimeAlive() {
+  if (!cloudEnabled || !supabase || !userId) return;
+  if (realtimeSubscribed) return;
+  teardownRealtime();
+  setupRealtime();
 }
 
 function setupRealtime() {
@@ -713,7 +768,22 @@ function setupRealtime() {
         setApplyingRemote(false);
       }
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        realtimeSubscribed = true;
+        realtimeFailureStreak = 0;
+        // Po *ponownym* podłączeniu dociągnij, co uciekło w czasie ciszy.
+        // Pierwsze podłączenie następuje tuż po pullu z bootstrapu.
+        if (realtimeEverSubscribed) void cloudMergeRefresh();
+        realtimeEverSubscribed = true;
+        return;
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        realtimeSubscribed = false;
+        realtimeFailureStreak += 1;
+        scheduleRealtimeResubscribe();
+      }
+    });
 }
 
 export function getSyncDiagnosticsSnapshot() {
@@ -721,6 +791,7 @@ export function getSyncDiagnosticsSnapshot() {
     ...getSyncDiagnostics(),
     autoPullEnabled: cloudEnabled,
     lastAutoPullAt,
+    realtimeSubscribed,
   };
 }
 
@@ -753,9 +824,9 @@ export function canAutoCloudRefresh(): boolean {
   if (!diag.syncReady || diag.syncBooting || diag.applyingRemote || diag.pushBlocked) {
     return false;
   }
-  if (diag.dirtyItemsCount > 0 || diag.dirtyParticipantCount > 0 || diag.tagAssignmentsDirty) {
-    return false;
-  }
+  // Niewysłane zmiany celowo NIE blokują auto-pulla: auto-pull scala po
+  // `updated_at` i niczego lokalnie nie kasuje. Wcześniejsza blokada oznaczała,
+  // że jeden wpis, którego nie dało się wypchnąć, wyłączał pobieranie na stałe.
   if (autoPullInProgress) return false;
   if (useStore.getState().draft) return false;
   if (isUserActivelyEditing()) return false;
@@ -766,15 +837,33 @@ export function canAutoCloudRefresh(): boolean {
   return true;
 }
 
-/** Bezpieczny auto-pull — używa tej samej ścieżki co manualny refresh. */
+/**
+ * Scalający pull — nigdy nie kasuje lokalnych wpisów, więc jest bezpieczny
+ * także wtedy, gdy coś czeka jeszcze w kolejce wysyłki.
+ */
+async function cloudMergeRefresh(): Promise<boolean> {
+  if (!cloudEnabled || !supabase || !userId) return false;
+  if (syncState.booting || syncState.applyingRemote) return false;
+  try {
+    await pullGroups();
+    await pullAll(false);
+    return true;
+  } catch (err) {
+    console.warn("[cloud] merge refresh failed:", err);
+    return false;
+  }
+}
+
+/** Bezpieczny auto-pull: najpierw dosyła zaległości, potem scala z chmurą. */
 export async function tryAutoCloudRefresh(): Promise<boolean> {
   if (!canAutoCloudRefresh()) return false;
 
   autoPullInProgress = true;
   try {
-    const result = await forceCloudRefresh();
-    if (result.ok) lastAutoPullAt = new Date().toISOString();
-    return result.ok;
+    await flushPendingPush();
+    const ok = await cloudMergeRefresh();
+    if (ok) lastAutoPullAt = new Date().toISOString();
+    return ok;
   } finally {
     autoPullInProgress = false;
   }
@@ -786,13 +875,13 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
     return { ok: false, message: "Synchronizacja niedostępna" };
   }
 
+  // Najpierw dosyłka: pull z podmianą nie może wyprzedzić zmian, które jeszcze
+  // nie dotarły do chmury (to była prosta droga do cichej utraty wydarzenia).
+  await flushPendingPush();
+
   syncState.pushBlocked = true;
   syncState.booting = true;
   try {
-    syncState.dirtyItemIds.clear();
-    syncState.dirtyParticipantIds.clear();
-    syncState.tagAssignmentsDirty = false;
-
     await pullUserTags();
     await pullTagAssignments();
     await pullGroups();
@@ -819,6 +908,8 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
     syncState.booting = false;
     syncState.pushBlocked = false;
     syncState.ready = true;
+    // Pull mógł wykryć wpisy nieobecne w chmurze — wyślij je od razu.
+    void flushPendingPush();
   }
 }
 
@@ -848,15 +939,16 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 
   syncState.booting = true;
   syncState.ready = false;
-  syncState.dirtyItemIds.clear();
-  syncState.dirtyParticipantIds.clear();
-  syncState.tagAssignmentsDirty = false;
 
   groupsReady = false;
   lastGroupsSnapshot = "";
   pendingGroupDeletes.clear();
 
   await switchPersistUser(nextUserId);
+  // Kolejka przeżywa restart — inaczej zmiany zrobione tuż przed zamknięciem
+  // aplikacji zostawały tylko w lokalnym cache'u i nie trafiały na inne urządzenia.
+  const restored = await restoreOutboxForUser(nextUserId);
+  if (restored) console.info(`[cloud] odtworzono kolejkę wysyłki: ${restored}`);
 
   const { data: sessionData } = await supabase.auth.getUser();
   userEmail = sessionData.user?.email?.toLowerCase() ?? null;
@@ -891,6 +983,10 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     syncState.booting = false;
     syncState.ready = true;
   }
+
+  // Dopiero teraz wolno wysyłać: kolejka jest odtworzona, a pull dołożył wpisy,
+  // których zabrakło w chmurze.
+  void flushPendingPush();
 }
 
 async function pushDirtyItems() {
@@ -946,6 +1042,7 @@ async function pushDirtyItems() {
   const { error } = await supabase.from("items").upsert(rows);
   if (error) {
     console.warn("[cloud] item upsert failed:", error.message);
+    syncState.lastPushError = error.message;
     return;
   }
 
@@ -977,20 +1074,113 @@ async function pushDirtyParticipants() {
   clearDirtyParticipants(pushed);
 }
 
-function schedulePush() {
-  if (!shouldSchedulePush() || !supabase || !userId) return;
-  if (pushTimer) clearTimeout(pushTimer);
-  pushTimer = setTimeout(async () => {
-    if (!shouldSchedulePush()) return;
+const PUSH_DEBOUNCE_MS = 800;
+const PUSH_RETRY_BASE_MS = 5_000;
+const PUSH_RETRY_MAX_MS = 5 * 60_000;
 
+/**
+ * Jedno przejście kolejki. Zwraca `true`, gdy nic nie zostało do wysłania.
+ * Nieudany push zostaje w kolejce (trwałej) i jest ponawiany z backoffem —
+ * wcześniej pojedynczy błąd sieci oznaczał, że wpis nie trafiał do chmury już
+ * nigdy, bo nic nie planowało kolejnej próby.
+ */
+async function runPush(): Promise<boolean> {
+  if (!shouldSchedulePush() || !supabase || !userId) return false;
+  if (pushInFlight) return false;
+
+  pushInFlight = true;
+  try {
     await pushGroupsFull();
     await pushUserTags();
     await pushDirtyItems();
     await pushDirtyParticipants();
     await pushTagAssignments();
-
     syncState.lastPushAt = new Date().toISOString();
-  }, 800);
+  } finally {
+    pushInFlight = false;
+  }
+
+  if (hasPendingPush()) {
+    pushFailureStreak += 1;
+    schedulePushRetry();
+    return false;
+  }
+  pushFailureStreak = 0;
+  syncState.lastPushError = null;
+  return true;
+}
+
+function schedulePushRetry() {
+  if (pushRetryTimer) return;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  const delay = Math.min(
+    PUSH_RETRY_BASE_MS * 2 ** Math.min(pushFailureStreak - 1, 6),
+    PUSH_RETRY_MAX_MS,
+  );
+  pushRetryTimer = setTimeout(() => {
+    pushRetryTimer = null;
+    void runPush();
+  }, delay);
+}
+
+function schedulePush() {
+  if (!shouldSchedulePush() || !supabase || !userId) return;
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    pushTimer = null;
+    void runPush();
+  }, PUSH_DEBOUNCE_MS);
+}
+
+/** Natychmiastowa wysyłka z pominięciem debounce'u (powrót do apki, online, refresh). */
+export async function flushPendingPush(): Promise<boolean> {
+  if (pushTimer) {
+    clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+  if (pushRetryTimer) {
+    clearTimeout(pushRetryTimer);
+    pushRetryTimer = null;
+  }
+  if (!hasPendingPush()) return true;
+  const ok = await runPush();
+  // `runPush` odmawia pracy w trakcie bootu / blokady pulla. Bez tego kolejka
+  // czekałaby wtedy na przypadkową kolejną zmianę w store.
+  if (!ok && hasPendingPush() && !pushRetryTimer) {
+    pushFailureStreak += 1;
+    schedulePushRetry();
+  }
+  return ok;
+}
+
+/**
+ * Zdarzenia cyklu życia strony. Na telefonie PWA znika w tle bez ostrzeżenia,
+ * więc `pagehide` / `hidden` to ostatni moment, żeby utrwalić kolejkę.
+ */
+function bindSyncLifecycle() {
+  if (lifecycleBound || typeof window === "undefined") return;
+  lifecycleBound = true;
+
+  window.addEventListener("online", () => {
+    pushFailureStreak = 0;
+    realtimeFailureStreak = 0;
+    void flushPendingPush();
+    ensureRealtimeAlive();
+  });
+
+  window.addEventListener("pagehide", () => {
+    void persistOutboxNow();
+    void flushPendingPush();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      void persistOutboxNow();
+      return;
+    }
+    void flushPendingPush();
+    ensureRealtimeAlive();
+  });
 }
 
 function trackGroupChange(prev: Group[], next: Group[]) {
@@ -1032,6 +1222,7 @@ export async function initCloudSync() {
         schedulePush();
       });
     }
+    bindSyncLifecycle();
   } catch (err) {
     console.warn("[cloud] sync disabled:", err);
     syncState.booting = false;

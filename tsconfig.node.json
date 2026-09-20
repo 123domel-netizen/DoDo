@@ -10,5 +10,7 @@
     "emitDeclarationOnly": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  // buildGuard jest dzielony przez konfigurację Vite i aplikację — celowo bez
+  // importów, żeby esbuild mógł go wciągnąć do bundla konfiguracji.
+  "include": ["vite.config.ts", "src/lib/media/buildGuard.ts"]
 }

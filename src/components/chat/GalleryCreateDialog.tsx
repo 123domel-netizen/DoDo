@@ -7,6 +7,7 @@ import {
   MAX_GALLERY_ITEMS_PER_CALL,
   retryGalleryItemUpload,
   runGalleryUploadPipeline,
+  softDeleteGallery,
   type Gallery,
   type StorageOrgOption,
 } from "@/lib/chat/galleryApi";
@@ -228,10 +229,14 @@ export function GalleryCreateDialog({
           nextAction: "blocked (protocol / build)",
           lastMediaAction: "gallery_create ok — upload blocked",
         });
+        // Serwer powinien był odrzucić create (bramka capability), więc tu
+        // jesteśmy tylko przy rozjeździe wersji. Nie zostawiaj pustej kafelki
+        // w rozmowie — zwiń galerię razem z jej wiadomością.
+        await softDeleteGallery(gallery.id).catch(() => undefined);
+        if (!mountedRef.current) return;
         setError(uploadDecision.error);
         setSubmitting(false);
         setPrepProgress(null);
-        // Rekord galerii zostaje do diagnostyki.
         return;
       }
 

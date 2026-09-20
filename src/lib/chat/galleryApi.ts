@@ -432,8 +432,13 @@ export async function createGallery(
 ): Promise<ApiResult<CreateGalleryResult>> {
   const t0 = galleryPerfNow();
   // Nie wysyłaj pipeline jako włączenia R2 — serwer czyta orgs.media_pipeline.
+  // `clientSupportsR2` to deklaracja capability, nie żądanie: serwer odmawia
+  // utworzenia galerii r2_sp, gdy ten build nie umie jej wypełnić.
   const { pipeline: _ignored, ...rest } = input;
-  const res = await callGalleryApi<CreateGalleryResult>("gallery_create", rest);
+  const res = await callGalleryApi<CreateGalleryResult>("gallery_create", {
+    ...rest,
+    clientSupportsR2: clientR2BuildEnabled(),
+  });
   galleryPerfMark("gallery_create", t0);
   return res;
 }
