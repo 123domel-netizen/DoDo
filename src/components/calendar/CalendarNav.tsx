@@ -6,6 +6,7 @@ import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
 import type { CalendarViewKind, MainAreaMode } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
+import { isValidDate } from "@/lib/dates";
 import { fmt } from "@/lib/format";
 
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
@@ -40,12 +41,17 @@ const chipClass = (active: boolean) =>
     active ? "bg-accent text-white shadow-glow" : "text-ink-light hover:text-ink"
   }`;
 
+function navAnchor(iso: string): Date {
+  const d = new Date(iso);
+  return startOfDay(isValidDate(d) ? d : new Date());
+}
+
 /** Pasek nawigacji kalendarza (desktop) — nad siatką / przeglądem. */
 export function CalendarNav() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const schedulesAvailable = useSchedulesAvailable();
-  const anchor = new Date(settings.anchorDate);
+  const anchor = navAnchor(settings.anchorDate);
   const isDashboard = settings.mainAreaMode === "dashboard";
   const isAttendance = settings.mainAreaMode === "attendance";
   const isCalendar = settings.mainAreaMode === "calendar";

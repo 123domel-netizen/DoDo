@@ -1,4 +1,5 @@
 import { addMinutes } from "date-fns";
+import { DATE_PLACEHOLDER_ISO } from "@/lib/dates";
 import type { Group, Item, ItemType } from "@/types";
 
 export function uid(): string {
@@ -46,7 +47,7 @@ export function migrateGroupColor(color: string): string {
   return LEGACY_GROUP_COLOR_MAP[color.toLowerCase()] ?? color;
 }
 
-const PLACEHOLDER_ISO = "1970-01-01T00:00:00.000Z";
+const PLACEHOLDER_ISO = DATE_PLACEHOLDER_ISO;
 
 /** Domyślny termin zadania — punkt w czasie (0 min), bez bloku w kalendarzu. */
 export function defaultTaskDueRange(): { start: string; end: string } {

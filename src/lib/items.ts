@@ -19,19 +19,23 @@ export function mergeItemOnSync(local: Item | undefined, remote: Item): Item {
 
   const lDeleted = isItemDeleted(local);
   const rDeleted = isItemDeleted(remote);
-  const lTs = new Date(local.updatedAt).getTime();
-  const rTs = new Date(remote.updatedAt).getTime();
-  const lDeleteTs = local.deletedAt ? new Date(local.deletedAt).getTime() : lTs;
+  const lTs = Date.parse(local.updatedAt);
+  const rTs = Date.parse(remote.updatedAt);
+  const lFinite = Number.isFinite(lTs) ? lTs : 0;
+  const rFinite = Number.isFinite(rTs) ? rTs : 0;
+  const lDeleteTs = local.deletedAt
+    ? (Number.isFinite(Date.parse(local.deletedAt)) ? Date.parse(local.deletedAt) : lFinite)
+    : lFinite;
 
-  if (rDeleted && lDeleted) return rTs >= lTs ? remote : local;
+  if (rDeleted && lDeleted) return rFinite >= lFinite ? remote : local;
   if (rDeleted) return remote;
   if (lDeleted) {
     // Lokalny tombstone vs aktywny remote — nowsza wersja wygrywa.
-    if (rTs > lDeleteTs) return remote;
+    if (rFinite > lDeleteTs) return remote;
     return local;
   }
 
-  return rTs >= lTs ? remote : local;
+  return rFinite >= lFinite ? remote : local;
 }
 
 export function tombstoneItem(item: Item, deletedBy: string | null): Item {

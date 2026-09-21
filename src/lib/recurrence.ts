@@ -136,6 +136,7 @@ export function expandItemOccurrences(
 
     const start = ex?.start ? new Date(ex.start) : occStart;
     const end = ex?.end ? new Date(ex.end) : occurrenceEnd(base, start);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) continue;
     out.push({
       ...base,
       id: `${base.id}__${start.getTime()}`,

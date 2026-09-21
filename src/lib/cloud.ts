@@ -10,6 +10,7 @@ import {
 } from "@/lib/groups";
 import { isShareGroup, updateSharedItemContent, updateOwnParticipationReminders } from "@/lib/share";
 import { mergeItemOnSync } from "@/lib/items";
+import { sanitizeItemDates } from "@/lib/dates";
 import {
   participantRowFromParticipant,
   mergeParticipantsWithDb,
@@ -154,7 +155,11 @@ function rowToItem(row: Record<string, unknown>, shareRole: Item["shareRole"] = 
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
-  return item.allDay ? withNormalizedAllDay(item) : item;
+  const { item: clean, demotedDueDate } = sanitizeItemDates(item);
+  if (demotedDueDate) {
+    console.warn(`[cloud] item ${clean.id}: niepoprawny start/end — zdjęto termin z kalendarza`);
+  }
+  return clean.allDay ? withNormalizedAllDay(clean) : clean;
 }
 
 function groupToRow(group: Group) {

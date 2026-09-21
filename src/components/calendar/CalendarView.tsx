@@ -3,6 +3,7 @@ import { addDays, addMonths, startOfDay } from "date-fns";
 import { useStore } from "@/state/store";
 import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
 import { getViewDays } from "@/lib/time";
+import { isValidDate } from "@/lib/dates";
 import { itemMatchesGroupFilter, groupIdForNewItem } from "@/lib/groups";
 import { collectReminderMarkers } from "@/lib/reminders";
 import { collectDeadlineMarkers } from "@/lib/deadlines";
@@ -19,6 +20,11 @@ import { MobileWeekView } from "./MobileWeekView";
 import { MobileDayView } from "./MobileDayView";
 import { MainDashboardView } from "@/components/dashboard/MainDashboardView";
 import type { CalendarViewKind, Group } from "@/types";
+
+function calendarAnchor(iso: string): Date {
+  const d = new Date(iso);
+  return startOfDay(isValidDate(d) ? d : new Date());
+}
 
 const SchedulesCanvas: ComponentType<{
   onClose: () => void;
@@ -46,12 +52,12 @@ export function CalendarView({
   const isMobile = useIsMobile();
   const view = viewOverride ?? settings.view;
   const selectedDay = useMemo(
-    () => startOfDay(new Date(settings.anchorDate)),
+    () => calendarAnchor(settings.anchorDate),
     [settings.anchorDate],
   );
 
   const days = useMemo(
-    () => getViewDays(view, new Date(settings.anchorDate), settings.nineDayStartWeekday),
+    () => getViewDays(view, calendarAnchor(settings.anchorDate), settings.nineDayStartWeekday),
     [view, settings.anchorDate, settings.nineDayStartWeekday],
   );
 
@@ -118,7 +124,7 @@ export function CalendarView({
 
   const shiftCalendar = useCallback(
     (dir: number) => {
-      const anchor = new Date(settings.anchorDate);
+      const anchor = calendarAnchor(settings.anchorDate);
       if (view === "month") {
         setSettings({ anchorDate: startOfDay(addMonths(anchor, dir)).toISOString() });
       } else if (view === "week" || view === "eleven") {

@@ -1,8 +1,10 @@
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
+import { isValidDate, parseValidDate } from "@/lib/dates";
 
 export function fmt(date: Date | string, pattern: string): string {
   const d = typeof date === "string" ? new Date(date) : date;
+  if (!isValidDate(d)) return "—";
   return format(d, pattern, { locale: pl });
 }
 
@@ -20,14 +22,17 @@ export function fmtDayLabel(date: Date): string {
 }
 
 export function toDatetimeLocalValue(iso: string): string {
-  const d = new Date(iso);
+  const d = parseValidDate(iso);
+  if (!d) return "";
   const off = d.getTimezoneOffset();
   const local = new Date(d.getTime() - off * 60000);
   return local.toISOString().slice(0, 16);
 }
 
 export function fromDatetimeLocalValue(value: string): string {
-  return new Date(value).toISOString();
+  const d = parseValidDate(value);
+  if (!d) return new Date().toISOString();
+  return d.toISOString();
 }
 
 /** Returns a readable contrast color (black/white) for a hex background. */

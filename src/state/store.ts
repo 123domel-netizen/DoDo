@@ -27,6 +27,7 @@ import { isSharedItem } from "@/lib/share";
 import { defaultTagColor, scrubTagIdFromItems, scrubTagIdFromMap } from "@/lib/tags";
 import { baseItemId } from "@/lib/itemId";
 import { normalizeAllDayRange } from "@/lib/allDay";
+import { isValidIso, sanitizeItemsRecord } from "@/lib/dates";
 import { startOfDay } from "date-fns";
 
 interface AppState {
@@ -306,6 +307,22 @@ function migrateRehydratedState(state: Partial<AppState> | undefined) {
     }
     settings.settingsVersion = 18;
   }
+
+  // Sanitizacja dat — zawsze przy rehydrate (nie tylko raz): naprawia IDB po awarii
+  // syncu / ręcznej edycji, zanim CalendarView zawoła format()/startOfDay.
+  if (items) {
+    const cleaned = sanitizeItemsRecord(items);
+    items = cleaned.items;
+    if (cleaned.demotedCount || cleaned.repairedCount) {
+      console.warn(
+        `[store] naprawiono daty wpisów: repaired=${cleaned.repairedCount}, demotedDueDate=${cleaned.demotedCount}`,
+      );
+    }
+  }
+  if (!isValidIso(settings.anchorDate)) {
+    settings.anchorDate = startOfDay(new Date()).toISOString();
+  }
+
   return { settings, groups, items, activeGroupFilter, tags, myTagIdsByItem };
 }
 

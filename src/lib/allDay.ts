@@ -1,4 +1,5 @@
 import { addDays, differenceInCalendarDays, startOfDay } from "date-fns";
+import { isValidDate } from "@/lib/dates";
 import type { Item } from "@/types";
 
 /** Kanoniczny zapis dnia kalendarzowego: południe UTC (odporne na strefy ±12h). */
@@ -12,9 +13,14 @@ export function isNoonAnchorIso(iso: string): boolean {
 export function allDayCalendarDate(iso: string): Date {
   if (isNoonAnchorIso(iso)) {
     const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+      return startOfDay(new Date(0));
+    }
     return new Date(y, m - 1, d);
   }
-  return startOfDay(new Date(iso));
+  const raw = new Date(iso);
+  if (!isValidDate(raw)) return startOfDay(new Date(0));
+  return startOfDay(raw);
 }
 
 function ymdFromDate(d: Date): string {
@@ -93,6 +99,7 @@ export function normalizeAllDayRange(start: string, end?: string): { start: stri
 
 export function withNormalizedAllDay(item: Item): Item {
   if (!item.allDay || !item.hasDueDate) return item;
+  if (!isValidDate(new Date(item.start)) || !isValidDate(new Date(item.end))) return item;
   const { start, end } = normalizeAllDayRange(item.start, item.end);
   if (start === item.start && end === item.end) return item;
   return { ...item, start, end };
