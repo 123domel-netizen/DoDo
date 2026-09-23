@@ -5,6 +5,7 @@ import {
   getSyncDiagnosticsSnapshot,
 } from "@/lib/cloud";
 import { cloudEnabled } from "@/lib/supabase";
+import { beginSyncDebugCorrelation, getWatchedItemId, isSyncDebugEnabled, syncDebugTrace } from "@/lib/syncDebug";
 
 /**
  * Widoczny alert, gdy lokalne zmiany nie wyszły do chmury.
@@ -48,6 +49,16 @@ export function SyncPendingBanner() {
         type="button"
         disabled={busy}
         onClick={() => {
+          if (isSyncDebugEnabled()) {
+            const correlationId = beginSyncDebugCorrelation();
+            syncDebugTrace({
+              correlationId,
+              itemId: getWatchedItemId(),
+              stage: "SEND_CLICKED",
+              result: "banner_wyslij",
+              snapshot: { pending, error },
+            });
+          }
           setBusy(true);
           void flushPendingPush().finally(() => setBusy(false));
         }}

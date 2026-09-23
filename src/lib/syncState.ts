@@ -52,6 +52,11 @@ function schedulePersistOutbox() {
   }, PERSIST_DEBOUNCE_MS);
 }
 
+/** Aktualny userId przypięty do trwałego outboxu (może chwilowo różnić się od auth). */
+export function getOutboxUserId(): string | null {
+  return outboxUserId;
+}
+
 /** Zapis bez czekania na debounce — przy `pagehide` liczy się każda milisekunda. */
 export async function persistOutboxNow(): Promise<void> {
   cancelScheduledPersist();

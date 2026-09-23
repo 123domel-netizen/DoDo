@@ -37,8 +37,18 @@ import {
   syncState,
   trackStoreDirty,
 } from "@/lib/syncState";
-import { chunkIds, itemIdsMissingInCloud } from "@/lib/syncOutbox";
+import { chunkIds, itemIdsMissingInCloud, loadOutbox } from "@/lib/syncOutbox";
 import { registerLocalItemWriteHandler } from "@/lib/syncWrite";
+import {
+  beginSyncDebugCorrelation,
+  getActiveSyncDebugCorrelation,
+  getWatchedItemId,
+  installSyncDebugApi,
+  isSyncDebugEnabled,
+  isWatchedItem,
+  setSyncDebugHooks,
+  syncDebugTrace,
+} from "@/lib/syncDebug";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
@@ -1094,12 +1104,89 @@ async function pushDirtyItems() {
   if (!supabase || !userId) return;
 
   const dirtyIds = [...syncState.dirtyItemIds];
+  const watchedId = getWatchedItemId();
+  const corr = getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation();
+
+  if (isSyncDebugEnabled()) {
+    syncDebugTrace({
+      correlationId: corr,
+      itemId: watchedId,
+      stage: "PENDING_IDS_CAPTURED",
+      result: `dirtyItemIds=${dirtyIds.length}`,
+      snapshot: {
+        dirtyIdsSample: dirtyIds.slice(0, 40),
+        watchedId,
+        watchedInDirty: watchedId ? dirtyIds.includes(watchedId) : null,
+      },
+    });
+    if (watchedId) {
+      if (dirtyIds.includes(watchedId)) {
+        syncDebugTrace({
+          correlationId: corr,
+          itemId: watchedId,
+          stage: "TARGET_ID_PRESENT",
+          result: "present_in_dirtyItemIds",
+        });
+      } else {
+        syncDebugTrace({
+          correlationId: corr,
+          itemId: watchedId,
+          stage: "TARGET_ID_ABSENT",
+          result: "absent_from_dirtyItemIds",
+          skipReason: "not_in_dirty",
+        });
+      }
+    }
+  }
+
   if (!dirtyIds.length) return;
 
   const state = useStore.getState();
   const ownedItems = dirtyIds
     .map((id) => state.items[id])
     .filter((i): i is Item => Boolean(i) && i.shareRole !== "participant");
+
+  if (watchedId && isSyncDebugEnabled()) {
+    const raw = state.items[watchedId];
+    if (!raw) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "ITEM_MISSING_IN_STORE",
+        result: "missing_from_store",
+        skipReason: "missing_from_store",
+      });
+    } else if (raw.shareRole === "participant") {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "TARGET_EXCLUDED_FROM_BATCH",
+        result: "participant_item",
+        skipReason: "participant_item",
+        snapshot: {
+          title: raw.title,
+          type: raw.type,
+          shareRole: raw.shareRole,
+        },
+      });
+    } else {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "ITEM_FOUND_IN_STORE",
+        result: "found",
+        snapshot: {
+          title: raw.title,
+          type: raw.type,
+          coercedType: coerceItemType(raw),
+          groupId: raw.groupId,
+          shareRole: raw.shareRole ?? null,
+          deletedAt: raw.deletedAt ?? null,
+          updatedAt: raw.updatedAt,
+        },
+      });
+    }
+  }
 
   const missingIds = dirtyIds.filter((id) => !state.items[id]);
   if (missingIds.length) clearDirtyItems(missingIds);
@@ -1148,10 +1235,56 @@ async function pushDirtyItems() {
     }
     if (item.type !== "event" && item.type !== "task") {
       skippedIds.push(item.id);
+      if (isWatchedItem(item.id)) {
+        syncDebugTrace({
+          correlationId: corr,
+          itemId: item.id,
+          stage: "TARGET_EXCLUDED_FROM_BATCH",
+          result: "invalid_payload_type",
+          skipReason: "invalid_payload",
+          snapshot: { type: item.type, title: item.title },
+        });
+      }
       continue;
+    }
+    if (isWatchedItem(item.id)) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: item.id,
+        stage: "ITEM_TO_ROW_INPUT",
+        result: "ok",
+        snapshot: {
+          title: item.title,
+          type: item.type,
+          groupId: item.groupId,
+          start: item.start,
+          end: item.end,
+          updatedAt: item.updatedAt,
+          deletedAt: item.deletedAt ?? null,
+        },
+      });
     }
     const row = itemToRow(item, payloadExtrasById.get(item.id));
     if (row.group_id && !localGroupIds.has(row.group_id as string)) row.group_id = null;
+    if (isWatchedItem(item.id)) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: item.id,
+        stage: "ITEM_TO_ROW_OUTPUT",
+        result: "ok",
+        snapshot: {
+          id: row.id,
+          user_id: row.user_id,
+          type: row.type,
+          title: row.title,
+          group_id: row.group_id,
+          start_at: row.start_at,
+          end_at: row.end_at,
+          deleted_at: row.deleted_at,
+          updated_at: row.updated_at,
+        },
+      });
+    }
     prepared.push({ item, row });
   }
   if (skippedIds.length) {
@@ -1159,25 +1292,126 @@ async function pushDirtyItems() {
     clearDirtyItems(skippedIds);
   }
 
+  if (watchedId && isSyncDebugEnabled()) {
+    const included = prepared.some((p) => p.item.id === watchedId);
+    syncDebugTrace({
+      correlationId: corr,
+      itemId: watchedId,
+      stage: included ? "TARGET_INCLUDED_IN_BATCH" : "TARGET_EXCLUDED_FROM_BATCH",
+      result: included ? "included" : "excluded",
+      skipReason: included
+        ? undefined
+        : dirtyIds.includes(watchedId)
+          ? skippedIds.includes(watchedId)
+            ? "invalid_payload"
+            : "unknown"
+          : "not_in_dirty",
+      snapshot: {
+        preparedCount: prepared.length,
+        skippedIdsSample: skippedIds.slice(0, 20),
+      },
+    });
+  }
+
   const rows = prepared.map((p) => p.row);
 
   // Paczkami; przy błędzie — per wiersz, żeby jeden trucizna nie blokowała reszty.
   for (const rowChunk of chunkIds(rows, ITEM_UPSERT_CHUNK_SIZE)) {
+    const chunkHasWatch = watchedId
+      ? rowChunk.some((r) => r.id === watchedId)
+      : false;
+    if (chunkHasWatch) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "SUPABASE_UPSERT_STARTED",
+        result: `chunk_size=${rowChunk.length}`,
+        snapshot: {
+          mode: "chunk",
+          chunkIds: rowChunk.map((r) => r.id),
+        },
+      });
+    }
     const { error } = await supabase.from("items").upsert(rowChunk);
     if (!error) {
       for (const row of rowChunk) pushedIds.push(row.id as string);
+      if (chunkHasWatch) {
+        syncDebugTrace({
+          correlationId: corr,
+          itemId: watchedId,
+          stage: "SUPABASE_UPSERT_RESULT",
+          result: "chunk_ok",
+          snapshot: { mode: "chunk", chunkSize: rowChunk.length },
+        });
+      }
       continue;
     }
     console.warn("[cloud] item upsert chunk failed:", error.message);
     syncState.lastPushError = error.message;
+    if (isSyncDebugEnabled() && (chunkHasWatch || watchedId)) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "SUPABASE_UPSERT_RESULT",
+        result: "chunk_failed",
+        snapshot: {
+          mode: "chunk",
+          message: error.message,
+          code: (error as { code?: string }).code ?? null,
+          details: (error as { details?: string }).details ?? null,
+          chunkIds: rowChunk.map((r) => r.id),
+          watchInChunk: chunkHasWatch,
+        },
+      });
+    }
     for (const row of rowChunk) {
+      if (isWatchedItem(row.id as string)) {
+        syncDebugTrace({
+          correlationId: corr,
+          itemId: row.id as string,
+          stage: "SUPABASE_UPSERT_STARTED",
+          result: "per_row_fallback",
+          snapshot: {
+            mode: "row",
+            type: row.type,
+            user_id: row.user_id,
+            title: row.title,
+          },
+        });
+      }
       const { error: rowError } = await supabase.from("items").upsert(row);
       if (rowError) {
         console.warn(`[cloud] item upsert ${row.id}:`, rowError.message);
         syncState.lastPushError = rowError.message;
+        if (isWatchedItem(row.id as string) || (isSyncDebugEnabled() && rowError.message)) {
+          syncDebugTrace({
+            correlationId: corr,
+            itemId: row.id as string,
+            stage: "SUPABASE_UPSERT_RESULT",
+            result: "row_failed",
+            snapshot: {
+              mode: "row",
+              message: rowError.message,
+              code: (rowError as { code?: string }).code ?? null,
+              details: (rowError as { details?: string }).details ?? null,
+              title: row.title,
+              type: row.type,
+              user_id: row.user_id,
+            },
+          });
+        }
         continue;
       }
       pushedIds.push(row.id as string);
+      if (isWatchedItem(row.id as string)) {
+        syncDebugTrace({
+          correlationId: corr,
+          itemId: row.id as string,
+          stage: "SUPABASE_UPSERT_RESULT",
+          result: "row_ok",
+          snapshot: { mode: "row" },
+        });
+      }
     }
   }
 
@@ -1187,7 +1421,47 @@ async function pushDirtyItems() {
     await syncItemParticipants(item);
   }
 
+  if (watchedId && isSyncDebugEnabled()) {
+    if (pushedSet.has(watchedId)) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "DIRTY_CLEARED",
+        result: "cleared",
+      });
+    } else if (dirtyIds.includes(watchedId)) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "DIRTY_RETAINED",
+        result: "retained_in_dirty",
+        snapshot: { lastPushError: syncState.lastPushError },
+      });
+    }
+  }
+
   clearDirtyItems(pushedIds);
+
+  if (isSyncDebugEnabled()) {
+    // Tylko odczyt — clearDirtyItems i tak schedule'uje persist; tu nie zapisujemy.
+    const authId = useStore.getState().authUserId;
+    const persisted = await loadOutbox(authId);
+    syncDebugTrace({
+      correlationId: corr,
+      itemId: watchedId,
+      stage: "OUTBOX_PERSISTED_AFTER_ATTEMPT",
+      result: "observed",
+      snapshot: {
+        dirtyRemainingRam: syncState.dirtyItemIds.size,
+        watchStillDirtyRam: watchedId ? syncState.dirtyItemIds.has(watchedId) : null,
+        watchInPersistedOutbox: watchedId
+          ? persisted.itemIds.includes(watchedId) ||
+            persisted.participantIds.includes(watchedId)
+          : null,
+        lastPushError: syncState.lastPushError,
+      },
+    });
+  }
 }
 
 async function pushDirtyParticipants() {
@@ -1221,8 +1495,56 @@ const PUSH_RETRY_MAX_MS = 5 * 60_000;
  * nigdy, bo nic nie planowało kolejnej próby.
  */
 async function runPush(): Promise<boolean> {
-  if (!shouldSchedulePush() || !supabase || !userId) return false;
-  if (pushInFlight) return false;
+  const corr = isSyncDebugEnabled()
+    ? (getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation())
+    : null;
+  const watchedId = getWatchedItemId();
+
+  if (!shouldSchedulePush() || !supabase || !userId) {
+    if (corr) {
+      const reason = !supabase
+        ? "no_supabase"
+        : !userId
+          ? "no_auth_user"
+          : syncState.pushBlocked
+            ? "push_blocked"
+            : syncState.booting
+              ? "booting"
+              : syncState.applyingRemote
+                ? "applying_remote"
+                : !syncState.ready
+                  ? "sync_not_ready"
+                  : "unknown";
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "RUN_PUSH_EARLY_RETURN",
+        result: reason,
+        skipReason: reason,
+        snapshot: {
+          ready: syncState.ready,
+          booting: syncState.booting,
+          applyingRemote: syncState.applyingRemote,
+          pushBlocked: syncState.pushBlocked,
+          hasUserId: Boolean(userId),
+          hasSupabase: Boolean(supabase),
+        },
+      });
+    }
+    return false;
+  }
+  if (pushInFlight) {
+    if (corr) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "RUN_PUSH_EARLY_RETURN",
+        result: "in_flight_early_return",
+        skipReason: "in_flight_early_return",
+      });
+    }
+    return false;
+  }
 
   pushInFlight = true;
   try {
@@ -1239,10 +1561,34 @@ async function runPush(): Promise<boolean> {
   if (hasPendingPush()) {
     pushFailureStreak += 1;
     schedulePushRetry();
+    if (corr) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "SEND_ATTEMPT_FINISHED",
+        result: "pending_remains",
+        snapshot: {
+          dirtyItems: syncState.dirtyItemIds.size,
+          dirtyParticipants: syncState.dirtyParticipantIds.size,
+          tagAssignmentsDirty: syncState.tagAssignmentsDirty,
+          lastPushError: syncState.lastPushError,
+          watchStillDirty: watchedId ? syncState.dirtyItemIds.has(watchedId) : null,
+        },
+      });
+    }
     return false;
   }
   pushFailureStreak = 0;
   syncState.lastPushError = null;
+  if (corr) {
+    syncDebugTrace({
+      correlationId: corr,
+      itemId: watchedId,
+      stage: "SEND_ATTEMPT_FINISHED",
+      result: "queue_empty",
+      snapshot: { lastPushAt: syncState.lastPushAt },
+    });
+  }
   return true;
 }
 
@@ -1270,6 +1616,26 @@ function schedulePush() {
 
 /** Natychmiastowa wysyłka z pominięciem debounce'u (powrót do apki, online, refresh). */
 export async function flushPendingPush(): Promise<boolean> {
+  const corr = isSyncDebugEnabled()
+    ? (getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation())
+    : null;
+  const watchedId = getWatchedItemId();
+  if (corr) {
+    syncDebugTrace({
+      correlationId: corr,
+      itemId: watchedId,
+      stage: "FLUSH_ENTERED",
+      result: "entered",
+      snapshot: {
+        dirtyItems: syncState.dirtyItemIds.size,
+        dirtyParticipants: syncState.dirtyParticipantIds.size,
+        tagAssignmentsDirty: syncState.tagAssignmentsDirty,
+        navigatorOnline: typeof navigator !== "undefined" ? navigator.onLine : null,
+        pushInFlight,
+      },
+    });
+  }
+
   if (pushTimer) {
     clearTimeout(pushTimer);
     pushTimer = null;
@@ -1278,7 +1644,18 @@ export async function flushPendingPush(): Promise<boolean> {
     clearTimeout(pushRetryTimer);
     pushRetryTimer = null;
   }
-  if (!hasPendingPush()) return true;
+  if (!hasPendingPush()) {
+    if (corr) {
+      syncDebugTrace({
+        correlationId: corr,
+        itemId: watchedId,
+        stage: "SEND_ATTEMPT_FINISHED",
+        result: "empty_pending",
+        skipReason: "empty_pending",
+      });
+    }
+    return true;
+  }
   const ok = await runPush();
   // `runPush` odmawia pracy w trakcie bootu / blokady pulla. Bez tego kolejka
   // czekałaby wtedy na przypadkową kolejną zmianę w store.
@@ -1348,11 +1725,19 @@ function trackTagChange(prev: Record<string, UserTag>, next: Record<string, User
 export async function initCloudSync() {
   if (!cloudEnabled || !supabase) {
     syncState.ready = true;
+    installSyncDebugApi();
     return;
   }
   syncState.booting = true;
   syncState.ready = false;
   try {
+    setSyncDebugHooks({
+      getPushInFlight: () => pushInFlight,
+      getCloudModuleUserId: () => userId,
+      previewItemRow: (item) => itemToRow(item) as Record<string, unknown>,
+    });
+    installSyncDebugApi();
+
     // Zapis z UI (także w trakcie bootu) zawsze trafia do trwałej kolejki —
     // wcześniej subscribe gubił commitDraft, gdy booting/applyingRemote=true.
     registerLocalItemWriteHandler((itemId) => {
