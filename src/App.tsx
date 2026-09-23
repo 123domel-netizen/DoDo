@@ -10,7 +10,6 @@ import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { NotificationPermissionPrompt } from "@/components/prompts/NotificationPermissionPrompt";
 import { AppUpdatePrompt } from "@/components/prompts/AppUpdatePrompt";
 import { R2PreviewBanner } from "@/components/media/R2PreviewBanner";
-import { SyncPendingBanner } from "@/components/SyncPendingBanner";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
@@ -82,7 +81,6 @@ export default function App() {
       <R2PreviewBanner />
       <AuthGate>
         <div className="flex h-full flex-col">
-          <SyncPendingBanner />
           <div className="relative min-h-0 flex-1">
             <GroupSelectPrompt />
             <NotificationPermissionPrompt />

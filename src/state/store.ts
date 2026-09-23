@@ -7,6 +7,10 @@ import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem 
 import { idbStorage } from "@/lib/idbStorage";
 import { applyTheme } from "@/lib/theme";
 import { notifyLocalItemWrite } from "@/lib/syncWrite";
+import {
+  persistItemViaSyncV3,
+  shouldUseSyncV3Mutations,
+} from "@/lib/syncv3/storeBridge";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import { defaultGroupVisibility } from "@/lib/groups";
 import { defaultGroupIconForName } from "@/lib/groupIcons";
@@ -388,6 +392,10 @@ export const useStore = create<AppState>()(
       myTagIdsByItem: {},
 
       upsertItem: (item) => {
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3({ ...item, updatedAt: new Date().toISOString() }, "upsert");
+          return;
+        }
         set((s) => ({
           items: { ...s.items, [item.id]: { ...item, updatedAt: new Date().toISOString() } },
         }));
@@ -396,16 +404,19 @@ export const useStore = create<AppState>()(
 
       patchItem: (id, patch) => {
         const baseId = baseItemId(id);
-        set((s) => {
-          const existing = s.items[baseId];
-          if (!existing || isItemDeleted(existing)) return {};
-          return {
-            items: {
-              ...s.items,
-              [baseId]: { ...existing, ...patch, updatedAt: new Date().toISOString() },
-            },
-          };
-        });
+        const existing = get().items[baseId];
+        if (!existing || isItemDeleted(existing)) return;
+        const next = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3(next, "upsert");
+          return;
+        }
+        set((s) => ({
+          items: {
+            ...s.items,
+            [baseId]: next,
+          },
+        }));
         if (get().items[baseId]) notifyLocalItemWrite(baseId);
       },
 
@@ -422,6 +433,12 @@ export const useStore = create<AppState>()(
       addItem: (partial) => {
         const item = createItem(partial);
         const promptId = maybeQueueGroupPrompt(item);
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3(item, "upsert").then(() => {
+            if (promptId) set({ groupPromptItemId: promptId });
+          });
+          return item;
+        }
         set((s) => ({
           items: { ...s.items, [item.id]: item },
           groupPromptItemId: promptId ?? s.groupPromptItemId,
@@ -432,17 +449,24 @@ export const useStore = create<AppState>()(
 
       deleteItem: (id) => {
         const baseId = baseItemId(id);
-        set((s) => {
-          const target = s.items[baseId];
-          if (!target || isSharedItem(target) || isItemDeleted(target)) return {};
-          return {
-            items: {
-              ...s.items,
-              [baseId]: tombstoneItem(target, s.authUserId),
-            },
-            editingId: s.editingId === baseId ? null : s.editingId,
-          };
-        });
+        const target = get().items[baseId];
+        if (!target || isSharedItem(target) || isItemDeleted(target)) return;
+        const tomb = tombstoneItem(target, get().authUserId);
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3(tomb, "delete").then(() => {
+            set((s) => ({
+              editingId: s.editingId === baseId ? null : s.editingId,
+            }));
+          });
+          return;
+        }
+        set((s) => ({
+          items: {
+            ...s.items,
+            [baseId]: tomb,
+          },
+          editingId: s.editingId === baseId ? null : s.editingId,
+        }));
         if (get().items[baseId]) notifyLocalItemWrite(baseId);
       },
 
@@ -596,6 +620,16 @@ export const useStore = create<AppState>()(
           return;
         }
         const promptId = maybeQueueGroupPrompt(draft);
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3(draft, "upsert").then(() => {
+            set((s) => ({
+              draft: null,
+              editingId: null,
+              groupPromptItemId: promptId ?? s.groupPromptItemId,
+            }));
+          });
+          return;
+        }
         set((s) => ({
           items: { ...s.items, [draft.id]: draft },
           draft: null,

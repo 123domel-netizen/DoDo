@@ -39,6 +39,7 @@ import {
 } from "@/lib/syncState";
 import { chunkIds, itemIdsMissingInCloud, loadOutbox } from "@/lib/syncOutbox";
 import { registerLocalItemWriteHandler } from "@/lib/syncWrite";
+import { bootstrapSyncV3, isV2WriterAllowed } from "@/lib/syncv3/bootstrap";
 import {
   beginSyncDebugCorrelation,
   getActiveSyncDebugCorrelation,
@@ -1030,6 +1031,7 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     pendingGroupDeletes.clear();
     resetSyncState();
     syncState.ready = true;
+    await bootstrapSyncV3(null);
     return;
   }
 
@@ -1095,9 +1097,11 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     syncState.ready = true;
   }
 
-  // Dopiero teraz wolno wysyłać: kolejka jest odtworzona, a pull dołożył wpisy,
-  // których zabrakło w chmurze.
-  void flushPendingPush().then(() => reconcileNeverPushed({ flush: true }));
+  // Sync v3: migracja + cutover. Gdy active — writer v2 milczy.
+  await bootstrapSyncV3(nextUserId);
+  if (await isV2WriterAllowed(nextUserId)) {
+    void flushPendingPush().then(() => reconcileNeverPushed({ flush: true }));
+  }
 }
 
 async function pushDirtyItems() {
@@ -1498,6 +1502,8 @@ const PUSH_RETRY_MAX_MS = 5 * 60_000;
  * nigdy, bo nic nie planowało kolejnej próby.
  */
 async function runPush(): Promise<boolean> {
+  if (userId && !(await isV2WriterAllowed(userId))) return true;
+
   const corr = isSyncDebugEnabled()
     ? (getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation())
     : null;
@@ -1737,16 +1743,19 @@ export async function initCloudSync() {
     setSyncDebugHooks({
       getPushInFlight: () => pushInFlight,
       getCloudModuleUserId: () => userId,
-      previewItemRow: (item) => itemToRow(item) as Record<string, unknown>,
+      previewItemRow: (item: Item) => itemToRow(item) as Record<string, unknown>,
     });
     installSyncDebugApi();
 
     // Zapis z UI (także w trakcie bootu) zawsze trafia do trwałej kolejki —
     // wcześniej subscribe gubił commitDraft, gdy booting/applyingRemote=true.
     registerLocalItemWriteHandler((itemId) => {
-      enqueueItem(itemId);
-      void persistOutboxNow();
-      if (shouldSchedulePush()) schedulePush();
+      void isV2WriterAllowed(userId).then((allow) => {
+        if (!allow) return;
+        enqueueItem(itemId);
+        void persistOutboxNow();
+        if (shouldSchedulePush()) schedulePush();
+      });
     });
 
     const { data } = await supabase.auth.getUser();
@@ -1761,8 +1770,11 @@ export async function initCloudSync() {
       useStore.subscribe((state, prev) => {
         trackGroupChange(prev.groups, state.groups);
         trackTagChange(prev.tags, state.tags);
-        trackStoreDirty(prev, state);
-        schedulePush();
+        void isV2WriterAllowed(userId).then((allow) => {
+          if (!allow) return;
+          trackStoreDirty(prev, state);
+          schedulePush();
+        });
       });
     }
     bindSyncLifecycle();
