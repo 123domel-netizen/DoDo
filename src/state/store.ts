@@ -9,8 +9,14 @@ import { applyTheme } from "@/lib/theme";
 import { notifyLocalItemWrite } from "@/lib/syncWrite";
 import {
   persistItemViaSyncV3,
+  persistItemsViaSyncV3,
   shouldUseSyncV3Mutations,
 } from "@/lib/syncv3/storeBridge";
+import {
+  persistGroupViaSyncV3,
+  persistTagAssignmentViaSyncV3,
+  persistTagViaSyncV3,
+} from "@/lib/syncv3/domains";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import { defaultGroupVisibility } from "@/lib/groups";
 import { defaultGroupIconForName } from "@/lib/groupIcons";
@@ -489,6 +495,15 @@ export const useStore = create<AppState>()(
         copy.attachments = src.attachments.map((a) => ({ ...a, id: uid() }));
         copy.reminders = src.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
         const srcTags = get().myTagIdsByItem[baseId] ?? src.tagIds ?? [];
+        if (srcTags.length) copy.tagIds = [...srcTags];
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3(copy, "upsert").then(async () => {
+            if (srcTags.length) {
+              await persistTagAssignmentViaSyncV3(copy.id, [...srcTags]);
+            }
+          });
+          return copy;
+        }
         set((s) => ({
           items: { ...s.items, [copy.id]: copy },
           ...(srcTags.length
@@ -521,6 +536,10 @@ export const useStore = create<AppState>()(
         copy.participants = clip.participants.map((p) => ({ ...p, id: uid() }));
         copy.attachments = clip.attachments.map((a) => ({ ...a, id: uid() }));
         copy.reminders = clip.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3(copy, "upsert");
+          return copy;
+        }
         set((s) => ({ items: { ...s.items, [copy.id]: copy } }));
         notifyLocalItemWrite(copy.id);
         return copy;
@@ -537,48 +556,85 @@ export const useStore = create<AppState>()(
           sortOrder: maxOrder + 1,
           ...defaultGroupVisibility(),
         };
+        if (shouldUseSyncV3Mutations()) {
+          void persistGroupViaSyncV3(group, "upsert");
+          return group;
+        }
         set((s) => ({ groups: [...s.groups, group] }));
         return group;
       },
 
-      patchGroup: (id, patch) =>
+      patchGroup: (id, patch) => {
+        const existing = get().groups.find((g) => g.id === id);
+        if (!existing) return;
+        const next = { ...existing, ...patch };
+        if (shouldUseSyncV3Mutations()) {
+          void persistGroupViaSyncV3(next, "upsert");
+          return;
+        }
         set((s) => ({
-          groups: s.groups.map((g) => (g.id === id ? { ...g, ...patch } : g)),
-        })),
+          groups: s.groups.map((g) => (g.id === id ? next : g)),
+        }));
+      },
 
-      moveGroup: (id, direction) =>
-        set((s) => {
-          const target = s.groups.find((g) => g.id === id);
-          if (!target || isGroupStructureLocked(target)) return {};
+      moveGroup: (id, direction) => {
+        const s = get();
+        const target = s.groups.find((g) => g.id === id);
+        if (!target || isGroupStructureLocked(target)) return;
 
-          const ordered = sortGroupsForRail(s.groups);
-          const idx = ordered.findIndex((g) => g.id === id);
-          if (idx < 0) return {};
+        const ordered = sortGroupsForRail(s.groups);
+        const idx = ordered.findIndex((g) => g.id === id);
+        if (idx < 0) return;
 
-          const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-          if (swapIdx < 0 || swapIdx >= ordered.length) return {};
+        const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+        if (swapIdx < 0 || swapIdx >= ordered.length) return;
 
-          const next = [...ordered];
-          [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-          const sortById = new Map(next.map((g, i) => [g.id, i]));
+        const next = [...ordered];
+        [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+        const sortById = new Map(next.map((g, i) => [g.id, i]));
 
-          return {
-            groups: s.groups.map((g) =>
-              isGroupStructureLocked(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
-            ),
-          };
-        }),
+        const groups = s.groups.map((g) =>
+          isGroupStructureLocked(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
+        );
+        if (shouldUseSyncV3Mutations()) {
+          void (async () => {
+            for (const g of groups) {
+              if (!isGroupStructureLocked(g)) await persistGroupViaSyncV3(g, "upsert");
+            }
+          })();
+          return;
+        }
+        set({ groups });
+      },
 
       deleteGroup: (id) => {
-        const touched: string[] = [];
+        const target = get().groups.find((g) => g.id === id);
+        if (target && isGroupStructureLocked(target)) return;
+        const touched: Array<{ draft: Item }> = [];
+        for (const it of Object.values(get().items)) {
+          if (it.groupId === id) {
+            touched.push({
+              draft: { ...it, groupId: null, updatedAt: new Date().toISOString() },
+            });
+          }
+        }
+        if (shouldUseSyncV3Mutations()) {
+          void (async () => {
+            await persistItemsViaSyncV3(
+              touched.map((t) => ({ draft: t.draft, operationType: "upsert" as const })),
+            );
+            if (target) await persistGroupViaSyncV3(target, "delete");
+            set((s) => ({
+              activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
+            }));
+          })();
+          return;
+        }
         set((s) => {
-          const target = s.groups.find((g) => g.id === id);
-          if (target && isGroupStructureLocked(target)) return {};
           const items = { ...s.items };
           for (const key of Object.keys(items)) {
             if (items[key].groupId === id) {
               items[key] = { ...items[key], groupId: null };
-              touched.push(key);
             }
           }
           return {
@@ -587,7 +643,7 @@ export const useStore = create<AppState>()(
             activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
           };
         });
-        for (const itemId of touched) notifyLocalItemWrite(itemId);
+        for (const t of touched) notifyLocalItemWrite(t.draft.id);
       },
 
       setActiveGroupFilter: (id) => set({ activeGroupFilter: id }),
@@ -695,17 +751,21 @@ export const useStore = create<AppState>()(
       clearOrgInviteNotice: () => set({ orgInviteNotice: null }),
       setAuthUser: (id, email) => set({ authUserId: id, authUserEmail: email }),
       dismissGroupPrompt: (itemId) => {
-        set((s) => {
-          const it = s.items[itemId];
-          if (!it) return {};
-          return {
-            items: {
-              ...s.items,
-              [itemId]: { ...it, groupPromptDismissed: true, updatedAt: new Date().toISOString() },
-            },
-          };
-        });
-        if (get().items[itemId]) notifyLocalItemWrite(itemId);
+        const it = get().items[itemId];
+        if (!it) return;
+        const next = {
+          ...it,
+          groupPromptDismissed: true,
+          updatedAt: new Date().toISOString(),
+        };
+        if (shouldUseSyncV3Mutations()) {
+          void persistItemViaSyncV3(next, "upsert");
+          return;
+        }
+        set((s) => ({
+          items: { ...s.items, [itemId]: next },
+        }));
+        notifyLocalItemWrite(itemId);
       },
       clearGroupPrompt: () => set({ groupPromptItemId: null }),
 
@@ -721,39 +781,62 @@ export const useStore = create<AppState>()(
           createdAt: now,
           updatedAt: now,
         };
+        if (shouldUseSyncV3Mutations()) {
+          void persistTagViaSyncV3(tag, "upsert");
+          return tag;
+        }
         set((s) => ({ tags: { ...s.tags, [tag.id]: tag } }));
         return tag;
       },
 
-      patchTag: (id, patch) =>
-        set((s) => {
-          const existing = s.tags[id];
-          if (!existing) return {};
-          const name = patch.name !== undefined ? patch.name.trim() : existing.name;
-          if (!name) return {};
-          return {
-            tags: {
-              ...s.tags,
-              [id]: {
-                ...existing,
-                ...patch,
-                name,
-                updatedAt: new Date().toISOString(),
-              },
-            },
-          };
-        }),
+      patchTag: (id, patch) => {
+        const existing = get().tags[id];
+        if (!existing) return;
+        const name = patch.name !== undefined ? patch.name.trim() : existing.name;
+        if (!name) return;
+        const next = {
+          ...existing,
+          ...patch,
+          name,
+          updatedAt: new Date().toISOString(),
+        };
+        if (shouldUseSyncV3Mutations()) {
+          void persistTagViaSyncV3(next, "upsert");
+          return;
+        }
+        set((s) => ({
+          tags: { ...s.tags, [id]: next },
+        }));
+      },
 
       deleteTag: (id) => {
+        const tag = get().tags[id];
+        if (!tag) return;
         const before = get().items;
+        const scrubbed = scrubTagIdFromItems(before, id);
+        const changed = Object.keys(scrubbed).filter((k) => scrubbed[k] !== before[k]);
+        if (shouldUseSyncV3Mutations()) {
+          void (async () => {
+            await persistItemsViaSyncV3(
+              changed.map((itemId) => ({
+                draft: { ...scrubbed[itemId]!, updatedAt: new Date().toISOString() },
+                operationType: "upsert" as const,
+              })),
+            );
+            await persistTagViaSyncV3(tag, "delete");
+            set((s) => ({
+              myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
+            }));
+          })();
+          return;
+        }
         set((s) => {
-          if (!s.tags[id]) return {};
           const tags = { ...s.tags };
           delete tags[id];
           return {
             tags,
             myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
-            items: scrubTagIdFromItems(s.items, id),
+            items: scrubbed,
           };
         });
         const after = get().items;
@@ -764,17 +847,30 @@ export const useStore = create<AppState>()(
 
       setItemTagIds: (itemId, tagIds) => {
         const baseId = baseItemId(itemId);
+        const item = get().items[baseId];
+        if (shouldUseSyncV3Mutations()) {
+          void (async () => {
+            if (item && !isSharedItem(item)) {
+              await persistItemViaSyncV3(
+                { ...item, tagIds, updatedAt: new Date().toISOString() },
+                "upsert",
+              );
+            }
+            await persistTagAssignmentViaSyncV3(baseId, tagIds);
+          })();
+          return;
+        }
         set((s) => {
-          const item = s.items[baseId];
+          const it = s.items[baseId];
           const myTagIdsByItem = { ...s.myTagIdsByItem, [baseId]: tagIds };
-          if (!item) return { myTagIdsByItem };
-          if (isSharedItem(item)) return { myTagIdsByItem };
+          if (!it) return { myTagIdsByItem };
+          if (isSharedItem(it)) return { myTagIdsByItem };
           return {
             myTagIdsByItem,
             items: {
               ...s.items,
               [baseId]: {
-                ...item,
+                ...it,
                 tagIds,
                 updatedAt: new Date().toISOString(),
               },
