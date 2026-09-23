@@ -63,6 +63,7 @@ function buildPendingOp(
     userId,
     entityType: "item",
     entityId: snapshot.id,
+    parentItemId: null,
     operationType,
     payload: snapshot,
     localRevision: snapshot.localRevision,

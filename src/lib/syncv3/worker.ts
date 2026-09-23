@@ -32,6 +32,16 @@ export interface PushTransport {
   upsertTagAssignment?(
     row: Record<string, unknown>,
   ): Promise<{ error: { code?: string; message: string } | null }>;
+  /** SHARE participant-role content + personal reminders RPC. */
+  patchParticipant?(payload: {
+    itemId: string;
+    description?: string;
+    checklist?: unknown;
+    attachments?: unknown;
+    personalReminders?: unknown;
+  }): Promise<{ error: { code?: string; message: string } | null }>;
+  /** After owner item upsert — sync item_participants rows. */
+  syncOwnerParticipants?(itemId: string, participants: unknown): Promise<{ error: { code?: string; message: string } | null }>;
   fetchRemoteUpdatedAt?(id: string): Promise<string | null>;
 }
 
@@ -128,6 +138,49 @@ async function processOne(
       op.operationType === "delete" && opts.transport.deleteItem
         ? await opts.transport.deleteItem(op.entityId, row)
         : await opts.transport.upsertItem(row);
+    if (
+      !result.error &&
+      op.operationType !== "delete" &&
+      op.payload.shareRole !== "participant" &&
+      opts.transport.syncOwnerParticipants
+    ) {
+      const syncR = await opts.transport.syncOwnerParticipants(
+        op.entityId,
+        op.payload.participants,
+      );
+      if (syncR.error) result = syncR;
+    }
+  } else if (op.entityType === "participant" || op.entityType === "personal_reminder") {
+    const snap = op.payload as unknown as {
+      itemId?: string;
+      id?: string;
+      description?: string;
+      checklist?: unknown;
+      attachments?: unknown;
+      personalReminders?: unknown;
+    };
+    const itemId =
+      op.parentItemId ?? snap.itemId ?? snap.id ?? op.entityId.replace(/^pp:|^pr:/, "");
+    if (!itemId) {
+      await updateOperation(db, {
+        ...inFlight,
+        status: "quarantined",
+        attemptCount: op.attemptCount + 1,
+        lastErrorCode: "missing_parent",
+        lastErrorMessage: "participant op missing parentItemId",
+        nextAttemptAt: nextAttemptIso(op.attemptCount + 1),
+      });
+      return;
+    }
+    result = opts.transport.patchParticipant
+      ? await opts.transport.patchParticipant({
+          itemId,
+          description: snap.description,
+          checklist: snap.checklist,
+          attachments: snap.attachments,
+          personalReminders: snap.personalReminders,
+        })
+      : { error: { message: "patchParticipant unsupported" } };
   } else if (op.entityType === "group") {
     const snap = op.payload as unknown as Record<string, unknown>;
     if (op.operationType === "delete") {

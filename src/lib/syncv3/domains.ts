@@ -60,10 +60,22 @@ export async function commitDomainMutation(input: {
 
   let op: SyncOperation;
   const deleteOpIds: string[] = [];
+  const parentItemId =
+    typeof input.snapshot.parentItemId === "string"
+      ? input.snapshot.parentItemId
+      : typeof input.snapshot.itemId === "string"
+        ? input.snapshot.itemId
+        : input.entityType === "tag_assignment"
+          ? input.entityId.replace(/^ta:/, "")
+          : input.entityType === "participant" || input.entityType === "personal_reminder"
+            ? input.entityId.replace(/^pp:|^pr:/, "")
+            : null;
+
   if (pending) {
     op = {
       ...pending,
       operationType: input.operationType,
+      parentItemId,
       payload,
       localRevision: revision,
       updatedAt: now,
@@ -77,6 +89,7 @@ export async function commitDomainMutation(input: {
       userId: input.userId,
       entityType: input.entityType,
       entityId: input.entityId,
+      parentItemId,
       operationType: input.operationType,
       payload,
       localRevision: revision,

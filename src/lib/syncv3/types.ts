@@ -22,7 +22,13 @@ export type OperationStatus =
 
 export type OperationType = "upsert" | "delete";
 
-export type EntityType = "item" | "group" | "user_tag" | "tag_assignment" | "participant";
+export type EntityType =
+  | "item"
+  | "group"
+  | "user_tag"
+  | "tag_assignment"
+  | "participant"
+  | "personal_reminder";
 
 /** Kanoniczny snapshot wysyłany do Supabase — bez undefined. */
 export interface CanonicalItem {
@@ -76,6 +82,8 @@ export interface SyncOperation {
   userId: string;
   entityType: EntityType;
   entityId: string;
+  /** Parent item UUID for dependent ops (participant / personal_reminder / tag_assignment). */
+  parentItemId: string | null;
   operationType: OperationType;
   payload: CanonicalItem;
   localRevision: number;

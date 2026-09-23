@@ -1,4 +1,3 @@
-import { get as idbGet } from "idb-keyval";
 import { normalizeToCanonical } from "@/lib/syncv3/canonical";
 import {
   commitEntityAndOperations,
@@ -11,8 +10,10 @@ import {
   putMeta,
   type SyncV3Db,
 } from "@/lib/syncv3/db";
-import { loadOutbox } from "@/lib/syncOutbox";
-import type { Group, Item, UserTag } from "@/types";
+import {
+  readLegacyV2Snapshot,
+  type LegacyV2Snapshot,
+} from "@/lib/syncv3/legacyReader";
 import {
   SYNC_V3_ENGINE_VERSION,
   SYNC_V3_MIGRATION_VERSION,
@@ -24,19 +25,8 @@ import {
 } from "@/lib/syncv3/types";
 import { uid } from "@/lib/factory";
 
-export interface LegacyV2Snapshot {
-  items: Record<string, Item>;
-  groups: Group[];
-  tags: Record<string, UserTag>;
-  myTagIdsByItem: Record<string, string[]>;
-  dirtyItemIds: string[];
-  dirtyParticipantIds: string[];
-  outboxItemIds: string[];
-  outboxParticipantIds: string[];
-  tagAssignmentsDirty: boolean;
-  zustandPersistRaw: unknown;
-  outboxRaw: unknown;
-}
+export type { LegacyV2Snapshot };
+export const loadLegacyFromIdb = readLegacyV2Snapshot;
 
 export interface RemoteIdProvider {
   fetchRemoteItemIds(userId: string): Promise<{ ids: string[]; error: string | null }>;
@@ -64,12 +54,20 @@ function makePendingOp(
   snapshot: CanonicalItem,
   now: string,
   entityType: SyncOperation["entityType"] = "item",
+  parentItemId: string | null = null,
 ): SyncOperation {
   return {
     operationId: newOperationId(),
     userId,
     entityType,
     entityId,
+    parentItemId:
+      parentItemId ??
+      (entityType === "tag_assignment"
+        ? entityId.replace(/^ta:/, "")
+        : entityType === "participant" || entityType === "personal_reminder"
+          ? entityId.replace(/^pp:|^pr:/, "")
+          : null),
     operationType: snapshot.deletedAt ? "delete" : "upsert",
     payload: snapshot,
     localRevision: snapshot.localRevision,
@@ -206,7 +204,7 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
           updatedAt: now,
         });
         const ops: SyncOperation[] = legacy.tagAssignmentsDirty
-          ? [makePendingOp(opts.userId, entityId, snap, now, "tag_assignment")]
+          ? [makePendingOp(opts.userId, entityId, snap, now, "tag_assignment", itemId)]
           : [];
         await commitEntityAndOperations(db, {
           entity: {
@@ -218,6 +216,39 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
             updatedAt: now,
           },
           upsertOps: ops,
+          deleteOpIds: [],
+        });
+      }
+
+      const pendingParticipants = new Set([
+        ...legacy.dirtyParticipantIds,
+        ...legacy.outboxParticipantIds,
+      ]);
+      for (const itemId of pendingParticipants) {
+        const raw = legacy.items[itemId];
+        if (!raw) continue;
+        const entityId = `pp:${itemId}`;
+        const snap = asCanonSnapshot({
+          id: entityId,
+          itemId,
+          parentItemId: itemId,
+          description: raw.description,
+          checklist: raw.checklist,
+          attachments: raw.attachments,
+          personalReminders: raw.personalReminders,
+          localRevision: 1,
+          updatedAt: now,
+        });
+        await commitEntityAndOperations(db, {
+          entity: {
+            entityId,
+            entityType: "participant",
+            userId: opts.userId,
+            snapshot: snap,
+            localRevision: 1,
+            updatedAt: now,
+          },
+          upsertOps: [makePendingOp(opts.userId, entityId, snap, now, "participant", itemId)],
           deleteOpIds: [],
         });
       }
@@ -270,47 +301,4 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
   }
 
   return meta;
-}
-
-function parsePersistRaw(raw: unknown): {
-  items: Record<string, Item>;
-  groups: Group[];
-  tags: Record<string, UserTag>;
-  myTagIdsByItem: Record<string, string[]>;
-} {
-  let parsed: unknown = raw;
-  if (typeof raw === "string") {
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return { items: {}, groups: [], tags: {}, myTagIdsByItem: {} };
-    }
-  }
-  const state = (parsed as { state?: Record<string, unknown> } | null)?.state ?? {};
-  return {
-    items: (state.items as Record<string, Item>) ?? {},
-    groups: (state.groups as Group[]) ?? [],
-    tags: (state.tags as Record<string, UserTag>) ?? {},
-    myTagIdsByItem: (state.myTagIdsByItem as Record<string, string[]>) ?? {},
-  };
-}
-
-export async function loadLegacyFromIdb(userId: string): Promise<LegacyV2Snapshot> {
-  const persistKey = `kalendarz-todo-v1-${userId}`;
-  const raw = await idbGet(persistKey);
-  const parsed = parsePersistRaw(raw);
-  const outbox = await loadOutbox(userId);
-  return {
-    items: parsed.items,
-    groups: parsed.groups,
-    tags: parsed.tags,
-    myTagIdsByItem: parsed.myTagIdsByItem,
-    dirtyItemIds: [...outbox.itemIds],
-    dirtyParticipantIds: [...outbox.participantIds],
-    outboxItemIds: [...outbox.itemIds],
-    outboxParticipantIds: [...outbox.participantIds],
-    tagAssignmentsDirty: outbox.tagAssignmentsDirty,
-    zustandPersistRaw: raw ?? null,
-    outboxRaw: outbox,
-  };
 }
