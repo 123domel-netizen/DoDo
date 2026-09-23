@@ -1,5 +1,6 @@
+import { tagAssignmentEntityId } from "@/lib/syncv3/entityIds";
 import type { Group, UserTag } from "@/types";
-import { isSyncV3ActiveCached } from "@/lib/syncv3/activeFlag";
+import { isSyncV3WritesEnabledCached } from "@/lib/syncv3/activeFlag";
 import { wakeSyncV3Worker } from "@/lib/syncv3/wake";
 import { useStore } from "@/state/store";
 import { uid } from "@/lib/factory";
@@ -55,7 +56,6 @@ export async function commitDomainMutation(input: {
     updatedAt: now,
   }) as DomainSnapshot & { localRevision: number; updatedAt: string };
 
-  // Reuse item-shaped payload field — worker discriminates by entityType
   const payload = snapshot as unknown as import("@/lib/syncv3/types").CanonicalItem;
 
   let op: SyncOperation;
@@ -114,7 +114,7 @@ export async function persistGroupViaSyncV3(
   operationType: OperationType = "upsert",
 ): Promise<void> {
   const userId = useStore.getState().authUserId;
-  if (!userId || !isSyncV3ActiveCached()) return;
+  if (!userId || !isSyncV3WritesEnabledCached()) return;
   await commitDomainMutation({
     userId,
     entityType: "group",
@@ -142,7 +142,7 @@ export async function persistTagViaSyncV3(
   operationType: OperationType = "upsert",
 ): Promise<void> {
   const userId = useStore.getState().authUserId;
-  if (!userId || !isSyncV3ActiveCached()) return;
+  if (!userId || !isSyncV3WritesEnabledCached()) return;
   await commitDomainMutation({
     userId,
     entityType: "user_tag",
@@ -162,17 +162,14 @@ export async function persistTagViaSyncV3(
   });
 }
 
-/** Klucz encji tag_assignment — nie może kolidować z entityId itemu (ten sam UUID). */
-export function tagAssignmentEntityId(itemId: string): string {
-  return `ta:${itemId}`;
-}
+export { tagAssignmentEntityId };
 
 export async function persistTagAssignmentViaSyncV3(
   itemId: string,
   tagIds: string[],
 ): Promise<void> {
   const userId = useStore.getState().authUserId;
-  if (!userId || !isSyncV3ActiveCached()) return;
+  if (!userId || !isSyncV3WritesEnabledCached()) return;
   const entityId = tagAssignmentEntityId(itemId);
   await commitDomainMutation({
     userId,

@@ -138,8 +138,6 @@ export async function commitLocalMutation(
   } else if (inFlight.length && !pending) {
     // in_flight: nowa rewizja jako osobna pending
     upsertOps.push(buildPendingOp(input.userId, snapshot, operationType, now));
-  } else if (pending && operationType === "delete") {
-    upsertOps.push(buildPendingOp(input.userId, snapshot, "delete", now, pending));
   } else {
     upsertOps.push(buildPendingOp(input.userId, snapshot, operationType, now, pending));
   }
