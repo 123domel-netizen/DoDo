@@ -1,5 +1,8 @@
 # Sync v3 — kontrakt implementacyjny
 
+**Status: Implementacja nieukończona, wymagane domknięcie mutacji i testów.**
+Nie gotowe do wdrożenia produkcyjnego / PR do main jako cutover.
+
 ## Granica transakcyjna
 
 `commitLocalMutation`:
@@ -13,6 +16,18 @@
 7. `wakeWorker()`.
 
 Niepowodzenie transakcji ⇒ UI nie pokazuje trwałego zapisu.
+
+## WARIANT A — ownership domen (jeden writer)
+
+| Domena | Lokalny store | Operation | Writer po `active` |
+|--------|---------------|-----------|--------------------|
+| item (+ checklist, reminders, participants w snapshot, recurrence, attachments, personalReminders) | entities `item` | upsert/delete | Sync v3 only |
+| group | entities `group` | upsert/delete | Sync v3 only |
+| user_tag | entities `user_tag` | upsert/delete | Sync v3 only |
+| tag_assignment | entities `ta:{itemId}` | upsert | Sync v3 only |
+| v2 enqueue / orphan / pushDirty | — | — | **wyłączone** |
+
+FK push order: group → user_tag → item → participant → tag_assignment.
 
 ## Coalescing i revision
 
@@ -31,7 +46,7 @@ Idempotencja chmury:
 
 - stabilny `item.id` (UUID) jako klucz upsertu;
 - pełny kanoniczny snapshot w każdym upsertcie;
-- `updated_at` / `localRevision` — retry nie może nadpisać nowszego remote starszym snapshotem (porównanie przed apply / skip stale);
+- `updated_at` / `localRevision` — retry nie może nadpisać nowszego remote starszym snapshotem;
 - powtarzalny `upsert` po `id`.
 
 ## Rollback
@@ -50,3 +65,12 @@ Stany: `not_started` → `backing_up` → `migrating` → `verifying` → `cutov
 Writer v3 startuje tylko przy `active`. Writer v2 wyłączany atomowo przy przejściu do `active`.
 
 Błąd remote IDs w trakcie weryfikacji ⇒ `awaiting_remote`, bez uznawania wszystkiego za local-only, bez utraty backupu/encji.
+
+## Bootstrap call graph
+
+```
+auth resolved → userId confirmed → open v3 database → inspect migration state
+→ backup v2 → migrate entities (items/groups/tags/assignments)
+→ fetch remote IDs → verify → atomic cutover active
+→ hydrate Zustand → start worker → cloud pull/merge (v3 path)
+```
