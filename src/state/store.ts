@@ -6,7 +6,6 @@ import { loadAssignableContacts } from "@/lib/contacts";
 import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { applyTheme } from "@/lib/theme";
-import { notifyLocalItemWrite } from "@/lib/syncWrite";
 import {
   persistItemViaSyncV3,
   persistItemsViaSyncV3,
@@ -398,14 +397,15 @@ export const useStore = create<AppState>()(
       myTagIdsByItem: {},
 
       upsertItem: (item) => {
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3({ ...item, updatedAt: new Date().toISOString() }, "upsert");
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3({ ...item, updatedAt: new Date().toISOString() }, "upsert");
+          }
           return;
         }
         set((s) => ({
           items: { ...s.items, [item.id]: { ...item, updatedAt: new Date().toISOString() } },
         }));
-        notifyLocalItemWrite(item.id);
       },
 
       patchItem: (id, patch) => {
@@ -413,8 +413,8 @@ export const useStore = create<AppState>()(
         const existing = get().items[baseId];
         if (!existing || isItemDeleted(existing)) return;
         const next = { ...existing, ...patch, updatedAt: new Date().toISOString() };
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3(next, "upsert");
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) void persistItemViaSyncV3(next, "upsert");
           return;
         }
         set((s) => ({
@@ -423,7 +423,6 @@ export const useStore = create<AppState>()(
             [baseId]: next,
           },
         }));
-        if (get().items[baseId]) notifyLocalItemWrite(baseId);
       },
 
       toggleTaskDone: (id) => {
@@ -439,17 +438,18 @@ export const useStore = create<AppState>()(
       addItem: (partial) => {
         const item = createItem(partial);
         const promptId = maybeQueueGroupPrompt(item);
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3(item, "upsert").then(() => {
-            if (promptId) set({ groupPromptItemId: promptId });
-          });
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(item, "upsert").then(() => {
+              if (promptId) set({ groupPromptItemId: promptId });
+            });
+          }
           return item;
         }
         set((s) => ({
           items: { ...s.items, [item.id]: item },
           groupPromptItemId: promptId ?? s.groupPromptItemId,
         }));
-        notifyLocalItemWrite(item.id);
         return item;
       },
 
@@ -458,12 +458,14 @@ export const useStore = create<AppState>()(
         const target = get().items[baseId];
         if (!target || isSharedItem(target) || isItemDeleted(target)) return;
         const tomb = tombstoneItem(target, get().authUserId);
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3(tomb, "delete").then(() => {
-            set((s) => ({
-              editingId: s.editingId === baseId ? null : s.editingId,
-            }));
-          });
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(tomb, "delete").then(() => {
+              set((s) => ({
+                editingId: s.editingId === baseId ? null : s.editingId,
+              }));
+            });
+          }
           return;
         }
         set((s) => ({
@@ -473,7 +475,6 @@ export const useStore = create<AppState>()(
           },
           editingId: s.editingId === baseId ? null : s.editingId,
         }));
-        if (get().items[baseId]) notifyLocalItemWrite(baseId);
       },
 
       removeSharedItem: (id) =>
@@ -496,12 +497,14 @@ export const useStore = create<AppState>()(
         copy.reminders = src.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
         const srcTags = get().myTagIdsByItem[baseId] ?? src.tagIds ?? [];
         if (srcTags.length) copy.tagIds = [...srcTags];
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3(copy, "upsert").then(async () => {
-            if (srcTags.length) {
-              await persistTagAssignmentViaSyncV3(copy.id, [...srcTags]);
-            }
-          });
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(copy, "upsert").then(async () => {
+              if (srcTags.length) {
+                await persistTagAssignmentViaSyncV3(copy.id, [...srcTags]);
+              }
+            });
+          }
           return copy;
         }
         set((s) => ({
@@ -510,7 +513,6 @@ export const useStore = create<AppState>()(
             ? { myTagIdsByItem: { ...s.myTagIdsByItem, [copy.id]: [...srcTags] } }
             : {}),
         }));
-        notifyLocalItemWrite(copy.id);
         return copy;
       },
 
@@ -536,12 +538,11 @@ export const useStore = create<AppState>()(
         copy.participants = clip.participants.map((p) => ({ ...p, id: uid() }));
         copy.attachments = clip.attachments.map((a) => ({ ...a, id: uid() }));
         copy.reminders = clip.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3(copy, "upsert");
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) void persistItemViaSyncV3(copy, "upsert");
           return copy;
         }
         set((s) => ({ items: { ...s.items, [copy.id]: copy } }));
-        notifyLocalItemWrite(copy.id);
         return copy;
       },
 
@@ -618,16 +619,18 @@ export const useStore = create<AppState>()(
             });
           }
         }
-        if (shouldUseSyncV3Mutations()) {
-          void (async () => {
-            await persistItemsViaSyncV3(
-              touched.map((t) => ({ draft: t.draft, operationType: "upsert" as const })),
-            );
-            if (target) await persistGroupViaSyncV3(target, "delete");
-            set((s) => ({
-              activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
-            }));
-          })();
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void (async () => {
+              await persistItemsViaSyncV3(
+                touched.map((t) => ({ draft: t.draft, operationType: "upsert" as const })),
+              );
+              if (target) await persistGroupViaSyncV3(target, "delete");
+              set((s) => ({
+                activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
+              }));
+            })();
+          }
           return;
         }
         set((s) => {
@@ -643,7 +646,6 @@ export const useStore = create<AppState>()(
             activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
           };
         });
-        for (const t of touched) notifyLocalItemWrite(t.draft.id);
       },
 
       setActiveGroupFilter: (id) => set({ activeGroupFilter: id }),
@@ -676,14 +678,16 @@ export const useStore = create<AppState>()(
           return;
         }
         const promptId = maybeQueueGroupPrompt(draft);
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3(draft, "upsert").then(() => {
-            set((s) => ({
-              draft: null,
-              editingId: null,
-              groupPromptItemId: promptId ?? s.groupPromptItemId,
-            }));
-          });
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(draft, "upsert").then(() => {
+              set((s) => ({
+                draft: null,
+                editingId: null,
+                groupPromptItemId: promptId ?? s.groupPromptItemId,
+              }));
+            });
+          }
           return;
         }
         set((s) => ({
@@ -692,7 +696,6 @@ export const useStore = create<AppState>()(
           editingId: null,
           groupPromptItemId: promptId ?? s.groupPromptItemId,
         }));
-        notifyLocalItemWrite(draft.id);
       },
 
       discardDraft: () => set({ draft: null, editingId: null }),
@@ -758,14 +761,13 @@ export const useStore = create<AppState>()(
           groupPromptDismissed: true,
           updatedAt: new Date().toISOString(),
         };
-        if (shouldUseSyncV3Mutations()) {
-          void persistItemViaSyncV3(next, "upsert");
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) void persistItemViaSyncV3(next, "upsert");
           return;
         }
         set((s) => ({
           items: { ...s.items, [itemId]: next },
         }));
-        notifyLocalItemWrite(itemId);
       },
       clearGroupPrompt: () => set({ groupPromptItemId: null }),
 
@@ -815,19 +817,21 @@ export const useStore = create<AppState>()(
         const before = get().items;
         const scrubbed = scrubTagIdFromItems(before, id);
         const changed = Object.keys(scrubbed).filter((k) => scrubbed[k] !== before[k]);
-        if (shouldUseSyncV3Mutations()) {
-          void (async () => {
-            await persistItemsViaSyncV3(
-              changed.map((itemId) => ({
-                draft: { ...scrubbed[itemId]!, updatedAt: new Date().toISOString() },
-                operationType: "upsert" as const,
-              })),
-            );
-            await persistTagViaSyncV3(tag, "delete");
-            set((s) => ({
-              myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
-            }));
-          })();
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void (async () => {
+              await persistItemsViaSyncV3(
+                changed.map((itemId) => ({
+                  draft: { ...scrubbed[itemId]!, updatedAt: new Date().toISOString() },
+                  operationType: "upsert" as const,
+                })),
+              );
+              await persistTagViaSyncV3(tag, "delete");
+              set((s) => ({
+                myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
+              }));
+            })();
+          }
           return;
         }
         set((s) => {
@@ -839,25 +843,23 @@ export const useStore = create<AppState>()(
             items: scrubbed,
           };
         });
-        const after = get().items;
-        for (const itemId of Object.keys(after)) {
-          if (before[itemId] !== after[itemId]) notifyLocalItemWrite(itemId);
-        }
       },
 
       setItemTagIds: (itemId, tagIds) => {
         const baseId = baseItemId(itemId);
         const item = get().items[baseId];
-        if (shouldUseSyncV3Mutations()) {
-          void (async () => {
-            if (item && !isSharedItem(item)) {
-              await persistItemViaSyncV3(
-                { ...item, tagIds, updatedAt: new Date().toISOString() },
-                "upsert",
-              );
-            }
-            await persistTagAssignmentViaSyncV3(baseId, tagIds);
-          })();
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void (async () => {
+              if (item && !isSharedItem(item)) {
+                await persistItemViaSyncV3(
+                  { ...item, tagIds, updatedAt: new Date().toISOString() },
+                  "upsert",
+                );
+              }
+              await persistTagAssignmentViaSyncV3(baseId, tagIds);
+            })();
+          }
           return;
         }
         set((s) => {
@@ -877,9 +879,6 @@ export const useStore = create<AppState>()(
             },
           };
         });
-        if (get().items[baseId] && !isSharedItem(get().items[baseId]!)) {
-          notifyLocalItemWrite(baseId);
-        }
       },
     }),
     {

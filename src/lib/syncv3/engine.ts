@@ -2,10 +2,16 @@ import { getMeta, openSyncV3Db, type SyncV3Db } from "@/lib/syncv3/db";
 import type { MigrationState } from "@/lib/syncv3/types";
 
 /**
- * Jedyny przełącznik writera.
- * v3 aktywny ⇔ migrationState === 'active'
- * v2 wyłączony gdy active — bez auto-rollbacku do v2.
+ * Writer modes (cloud user):
+ * - v3: write + worker push (migrationState === active)
+ * - v3_local: write entity+op, worker NIE wysyła (stany migracji)
+ * - blocked: failed — brak mutacji sync
+ * - local_only: brak userId / brak cloud
+ *
+ * v2 item writer: USUNIĘTY z runtime.
  */
+export type WriterMode = "v3" | "v3_local" | "blocked" | "local_only";
+
 export async function isSyncV3Active(
   userId: string,
   db?: SyncV3Db,
@@ -23,36 +29,43 @@ export async function getMigrationState(
   return (await getMeta(database)).migrationState;
 }
 
-/** Czy wolno przyjąć mutacje v3 (active). Przed active — tylko migrator. */
+export function resolveWriterMode(migrationState: MigrationState): WriterMode {
+  if (migrationState === "active") return "v3";
+  if (migrationState === "failed") return "blocked";
+  if (migrationState === "not_started") return "v3_local"; // bootstrap zaraz startuje migrację; mutacje → v3
+  // backing_up | migrating | verifying | awaiting_remote | cutover_ready
+  return "v3_local";
+}
+
+/** Mutacje sync dozwolone (IDB entity+op). */
 export async function canAcceptV3Mutations(
+  userId: string,
+  db?: SyncV3Db,
+): Promise<boolean> {
+  const mode = resolveWriterMode(await getMigrationState(userId, db));
+  return mode === "v3" || mode === "v3_local";
+}
+
+/** Worker push tylko przy active. */
+export async function canRunV3Worker(
   userId: string,
   db?: SyncV3Db,
 ): Promise<boolean> {
   return isSyncV3Active(userId, db);
 }
 
-/** Czy writer v2 może enqueue/push. */
+/** @deprecated v2 writer usunięty — zawsze false dla cloud user. */
 export async function canRunV2Writer(
-  userId: string | null,
-  db?: SyncV3Db,
+  _userId: string | null,
+  _db?: SyncV3Db,
 ): Promise<boolean> {
-  if (!userId) return true; // brak konta — lokalnie v2 cache
-  const active = await isSyncV3Active(userId, db);
-  return !active;
+  return false;
 }
 
-/**
- * Po rollbacku binarki: jeśli meta.active i brak wsparcia v3 — tryb bezpieczny
- * (brak writera v2 nad pending v3). Testowane w engine.test.ts.
- */
-export function resolveWriterMode(migrationState: MigrationState): "v2" | "v3" | "safe_readonly" {
-  if (migrationState === "active") return "v3";
-  if (
-    migrationState === "not_started" ||
-    migrationState === "failed"
-  ) {
-    return "v2";
-  }
-  // backing_up … cutover_ready: nie włączaj v2 (mogą istnieć parcialne entity)
-  return "safe_readonly";
+export function migrationStateAllowsV3Writes(state: MigrationState): boolean {
+  return resolveWriterMode(state) !== "blocked";
+}
+
+export function migrationStateAllowsWorker(state: MigrationState): boolean {
+  return state === "active";
 }
