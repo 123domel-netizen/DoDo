@@ -112,3 +112,12 @@ export function itemIdsMissingInCloud(input: {
   }
   return missing;
 }
+
+/** Dzieli upsert na paczki — jeden ogromny request potrafi paść w całości (timeout / body). */
+export function chunkIds<T>(items: T[], size: number): T[][] {
+  const n = Math.max(1, Math.floor(size));
+  if (items.length <= n) return items.length ? [items] : [];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n));
+  return out;
+}

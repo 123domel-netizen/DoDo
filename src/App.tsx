@@ -10,6 +10,7 @@ import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { NotificationPermissionPrompt } from "@/components/prompts/NotificationPermissionPrompt";
 import { AppUpdatePrompt } from "@/components/prompts/AppUpdatePrompt";
 import { R2PreviewBanner } from "@/components/media/R2PreviewBanner";
+import { SyncPendingBanner } from "@/components/SyncPendingBanner";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
@@ -80,55 +81,60 @@ export default function App() {
       {/* Poza AuthGate — widoczny także na ekranie logowania (potwierdzenie bundla). */}
       <R2PreviewBanner />
       <AuthGate>
-        <GroupSelectPrompt />
-        <NotificationPermissionPrompt />
-        <AppUpdatePrompt />
-      {isMobile ? (
-        <MobileShell />
-      ) : (
         <div className="flex h-full flex-col">
-          <Toolbar todoOpen={panelOpen} onToggleTodo={togglePanel} />
-          <div className="flex min-h-0 flex-1">
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-hidden">
-                <CalendarView />
-              </div>
-              {cloudEnabled && (
-                <div
-                  className={`min-h-0 shrink-0 overflow-hidden border-t border-line bg-surface ${
-                    hubCollapsed
-                      ? "h-9"
-                      : hubExpanded
-                        ? "h-[min(46vh,460px)]"
-                        : "h-[min(30vh,280px)]"
-                  }`}
-                >
-                  <ErrorBoundary label="hub" compact>
-                    <Suspense
-                      fallback={
-                        <div className="flex h-full items-center justify-center text-xs text-ink-faint">
-                          Ładowanie hubu…
-                        </div>
-                      }
-                    >
-                      <div className="h-full min-h-0">
-                        <WorkspaceHub />
+          <SyncPendingBanner />
+          <div className="relative min-h-0 flex-1">
+            <GroupSelectPrompt />
+            <NotificationPermissionPrompt />
+            <AppUpdatePrompt />
+            {isMobile ? (
+              <MobileShell />
+            ) : (
+              <div className="flex h-full flex-col">
+                <Toolbar todoOpen={panelOpen} onToggleTodo={togglePanel} />
+                <div className="flex min-h-0 flex-1">
+                  <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      <CalendarView />
+                    </div>
+                    {cloudEnabled && (
+                      <div
+                        className={`min-h-0 shrink-0 overflow-hidden border-t border-line bg-surface ${
+                          hubCollapsed
+                            ? "h-9"
+                            : hubExpanded
+                              ? "h-[min(46vh,460px)]"
+                              : "h-[min(30vh,280px)]"
+                        }`}
+                      >
+                        <ErrorBoundary label="hub" compact>
+                          <Suspense
+                            fallback={
+                              <div className="flex h-full items-center justify-center text-xs text-ink-faint">
+                                Ładowanie hubu…
+                              </div>
+                            }
+                          >
+                            <div className="h-full min-h-0">
+                              <WorkspaceHub />
+                            </div>
+                          </Suspense>
+                        </ErrorBoundary>
                       </div>
-                    </Suspense>
-                  </ErrorBoundary>
+                    )}
+                  </main>
+                  {panelOpen && (
+                    <aside className="relative w-full max-w-[520px] shrink-0 border-l border-accent/20 bg-gradient-to-b from-sidebar/70 to-surface shadow-panel md:w-[380px] lg:w-[400px] xl:w-[460px] 2xl:w-[520px]">
+                      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-accent/35 via-accent/10 to-transparent" />
+                      <SidePanel />
+                    </aside>
+                  )}
+                  <GroupRail />
                 </div>
-              )}
-            </main>
-            {panelOpen && (
-              <aside className="relative w-full max-w-[520px] shrink-0 border-l border-accent/20 bg-gradient-to-b from-sidebar/70 to-surface shadow-panel md:w-[380px] lg:w-[400px] xl:w-[460px] 2xl:w-[520px]">
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-accent/35 via-accent/10 to-transparent" />
-                <SidePanel />
-              </aside>
+              </div>
             )}
-            <GroupRail />
           </div>
         </div>
-      )}
       </AuthGate>
     </ErrorBoundary>
   );

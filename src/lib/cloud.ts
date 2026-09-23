@@ -37,13 +37,34 @@ import {
   syncState,
   trackStoreDirty,
 } from "@/lib/syncState";
-import { itemIdsMissingInCloud } from "@/lib/syncOutbox";
+import { chunkIds, itemIdsMissingInCloud } from "@/lib/syncOutbox";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
  * in, local items are mirrored to the `items` table and remote changes are
  * streamed back via Realtime. Without configuration the app stays fully local.
  */
+
+const ITEM_PULL_PAGE_SIZE = 1000;
+const ITEM_UPSERT_CHUNK_SIZE = 100;
+
+/** PostgREST ucina wynik do ~1000 wierszy — bez paginacji reconcile „gubi” zdalne ID. */
+async function fetchAllItemRows(): Promise<{
+  rows: Record<string, unknown>[];
+  error: string | null;
+}> {
+  if (!supabase || !userId) return { rows: [], error: null };
+  const rows: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += ITEM_PULL_PAGE_SIZE) {
+    const to = from + ITEM_PULL_PAGE_SIZE - 1;
+    const { data, error } = await supabase.from("items").select("*").range(from, to);
+    if (error) return { rows, error: error.message };
+    const page = (data ?? []) as Record<string, unknown>[];
+    rows.push(...page);
+    if (page.length < ITEM_PULL_PAGE_SIZE) break;
+  }
+  return { rows, error: null };
+}
 
 let userId: string | null = null;
 let userEmail: string | null = null;
@@ -638,11 +659,14 @@ async function pushParticipantPatches(items: Item[]): Promise<string[]> {
 
 async function pullAll(replace = false) {
   if (!supabase || !userId) return;
-  const { data, error } = await supabase.from("items").select("*");
-  if (error) return;
+  const { rows, error } = await fetchAllItemRows();
+  if (error) {
+    console.warn("[cloud] item pull failed:", error);
+    return;
+  }
   const participantByItem = await pullOwnerParticipantRows();
   const owned: Record<string, Item> = {};
-  for (const row of data ?? []) {
+  for (const row of rows) {
     let item = rowToItem(row, "owner");
     const dbRows = participantByItem[item.id];
     if (dbRows?.length) {
@@ -868,6 +892,8 @@ export async function tryAutoCloudRefresh(): Promise<boolean> {
     await flushPendingPush();
     const ok = await cloudMergeRefresh();
     if (ok) lastAutoPullAt = new Date().toISOString();
+    // Pull mógł dopiero co wykryć never-pushed — wyślij zanim zniknie szansa.
+    if (hasPendingPush()) await flushPendingPush();
     return ok;
   } finally {
     autoPullInProgress = false;
@@ -928,8 +954,11 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     teardownRealtime();
     userEmail = null;
     useStore.getState().setAuthUser(null, null);
-    resetLocalUserState();
+    // Najpierw zmiana klucza IDB — inaczej resetLocalUserState() zapisuje pusty
+    // `items` pod kluczem zalogowanego użytkownika i kasuje wpisy, które nigdy
+    // nie zdążyły wyjść do chmury (telefon widzi je, PC już nigdy).
     await switchPersistUser(null);
+    resetLocalUserState();
     previousUserId = null;
     groupsReady = false;
     lastGroupsSnapshot = "";
@@ -959,7 +988,19 @@ export async function handleAuthUserChange(nextUserId: string | null) {
   userEmail = sessionData.user?.email?.toLowerCase() ?? null;
   useStore.getState().setAuthUser(nextUserId, userEmail);
 
-  if (isUserSwitch) resetLocalUserState();
+  // Przy zmianie konta czyścimy tylko UI — NIE kasujemy items przed pullem.
+  // Wcześniejszy resetLocalUserState() zapisywał pusty store do IDB i niszczył
+  // never-pushed zanim pullAll(replace) zdążył je zachować / wysłać.
+  if (isUserSwitch) {
+    useStore.setState({
+      clipboard: null,
+      editingId: null,
+      draft: null,
+      teamMembers: [],
+      groupPromptItemId: null,
+      orgInviteNotice: null,
+    });
+  }
 
   try {
     // Accept pending org invites before loading membership / contacts.
@@ -1044,16 +1085,21 @@ async function pushDirtyItems() {
     return row;
   });
 
-  const { error } = await supabase.from("items").upsert(rows);
-  if (error) {
-    console.warn("[cloud] item upsert failed:", error.message);
-    syncState.lastPushError = error.message;
-    return;
+  // Paczkami: jeden padnięty ogromny upsert nie może blokować całej kolejki.
+  for (const rowChunk of chunkIds(rows, ITEM_UPSERT_CHUNK_SIZE)) {
+    const { error } = await supabase.from("items").upsert(rowChunk);
+    if (error) {
+      console.warn("[cloud] item upsert failed:", error.message);
+      syncState.lastPushError = error.message;
+      break;
+    }
+    for (const row of rowChunk) pushedIds.push(row.id as string);
   }
 
+  const pushedSet = new Set(pushedIds);
   for (const item of ownedItems) {
+    if (!pushedSet.has(item.id)) continue;
     await syncItemParticipants(item);
-    pushedIds.push(item.id);
   }
 
   clearDirtyItems(pushedIds);
@@ -1180,7 +1226,10 @@ function bindSyncLifecycle() {
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
+      // Mobile PWA często dostaje tylko `hidden`, bez wiarygodnego pagehide —
+      // to ostatnia szansa, żeby kolejka i push nie zostały w RAM.
       void persistOutboxNow();
+      void flushPendingPush();
       return;
     }
     void flushPendingPush();
