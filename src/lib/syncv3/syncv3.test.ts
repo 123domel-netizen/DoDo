@@ -26,6 +26,7 @@ import {
   type SyncV3Meta,
 } from "@/lib/syncv3";
 import { DEFAULT_META } from "@/lib/syncv3/types";
+import { setSyncV3ActiveFlag } from "@/lib/syncv3/activeFlag";
 
 const ITEM_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ITEM_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -50,6 +51,7 @@ async function withUser(
   } finally {
     db.close();
     await deleteSyncV3Db(userId);
+    setSyncV3ActiveFlag(false);
   }
 }
 
@@ -62,6 +64,7 @@ async function forceActive(db: Awaited<ReturnType<typeof openSyncV3Db>>) {
     completedAt: new Date().toISOString(),
   };
   await putMeta(db, meta);
+  setSyncV3ActiveFlag(true);
 }
 
 function baseDraft(over: Record<string, unknown> = {}) {
@@ -292,6 +295,9 @@ describe("Sync v3 — migration", () => {
           } as never),
         ),
       },
+      groups: [],
+      tags: {},
+      myTagIdsByItem: {},
       dirtyItemIds: [ITEM_POISON],
       dirtyParticipantIds: [],
       outboxItemIds: [ITEM_POISON],
