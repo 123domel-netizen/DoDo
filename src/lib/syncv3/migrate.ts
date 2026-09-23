@@ -12,10 +12,12 @@ import {
   type SyncV3Db,
 } from "@/lib/syncv3/db";
 import { loadOutbox } from "@/lib/syncOutbox";
-import type { Item } from "@/types";
+import type { Group, Item, UserTag } from "@/types";
 import {
   SYNC_V3_ENGINE_VERSION,
   SYNC_V3_MIGRATION_VERSION,
+  type CanonicalItem,
+  type EntityRecord,
   type MigrationState,
   type SyncOperation,
   type SyncV3Meta,
@@ -24,6 +26,9 @@ import { uid } from "@/lib/factory";
 
 export interface LegacyV2Snapshot {
   items: Record<string, Item>;
+  groups: Group[];
+  tags: Record<string, UserTag>;
+  myTagIdsByItem: Record<string, string[]>;
   dirtyItemIds: string[];
   dirtyParticipantIds: string[];
   outboxItemIds: string[];
@@ -56,13 +61,14 @@ function setState(
 function makePendingOp(
   userId: string,
   entityId: string,
-  snapshot: ReturnType<typeof normalizeToCanonical>,
+  snapshot: CanonicalItem,
   now: string,
+  entityType: SyncOperation["entityType"] = "item",
 ): SyncOperation {
   return {
     operationId: newOperationId(),
     userId,
-    entityType: "item",
+    entityType,
     entityId,
     operationType: snapshot.deletedAt ? "delete" : "upsert",
     payload: snapshot,
@@ -75,6 +81,10 @@ function makePendingOp(
     lastErrorMessage: null,
     status: "pending",
   };
+}
+
+function asCanonSnapshot(obj: Record<string, unknown> & { id: string }): CanonicalItem {
+  return obj as unknown as CanonicalItem;
 }
 
 /**
@@ -102,14 +112,18 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
   if (meta.migrationState === "backing_up" || meta.migrationState === "migrating") {
     if (meta.migrationState === "backing_up") {
       const legacy = await opts.loadLegacy();
+      // Nie zastępuj istniejącego backupu pustym raw — restart w trakcie migrating
+      // nie może wyzerować już utworzonego dumpa.
       const backupId = meta.backupId ?? uid();
-      await putBackup(db, {
-        backupId,
-        userId: opts.userId,
-        createdAt: now,
-        zustandPersistRaw: legacy.zustandPersistRaw,
-        outboxRaw: legacy.outboxRaw,
-      });
+      if (!meta.backupId) {
+        await putBackup(db, {
+          backupId,
+          userId: opts.userId,
+          createdAt: now,
+          zustandPersistRaw: legacy.zustandPersistRaw,
+          outboxRaw: legacy.outboxRaw,
+        });
+      }
       meta = setState(meta, "migrating", { backupId });
       await putMeta(db, meta);
 
@@ -122,9 +136,9 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
           { localRevision: 1, ownerUserId: opts.userId },
         );
         snapshot.id = id;
-        const entity = {
+        const entity: EntityRecord = {
           entityId: id,
-          entityType: "item" as const,
+          entityType: "item",
           userId: opts.userId,
           snapshot,
           localRevision: 1,
@@ -135,6 +149,74 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
           : [];
         await commitEntityAndOperations(db, {
           entity,
+          upsertOps: ops,
+          deleteOpIds: [],
+        });
+      }
+
+      for (const g of legacy.groups) {
+        const snap = asCanonSnapshot({
+          ...g,
+          id: g.id,
+          localRevision: 1,
+          updatedAt: now,
+        });
+        await commitEntityAndOperations(db, {
+          entity: {
+            entityId: g.id,
+            entityType: "group",
+            userId: opts.userId,
+            snapshot: snap,
+            localRevision: 1,
+            updatedAt: now,
+          },
+          upsertOps: [],
+          deleteOpIds: [],
+        });
+      }
+
+      for (const tag of Object.values(legacy.tags)) {
+        const snap = asCanonSnapshot({
+          ...tag,
+          id: tag.id,
+          localRevision: 1,
+          updatedAt: tag.updatedAt ?? now,
+        });
+        await commitEntityAndOperations(db, {
+          entity: {
+            entityId: tag.id,
+            entityType: "user_tag",
+            userId: opts.userId,
+            snapshot: snap,
+            localRevision: 1,
+            updatedAt: snap.updatedAt,
+          },
+          upsertOps: [],
+          deleteOpIds: [],
+        });
+      }
+
+      for (const [itemId, tagIds] of Object.entries(legacy.myTagIdsByItem)) {
+        const entityId = `ta:${itemId}`;
+        const snap = asCanonSnapshot({
+          id: entityId,
+          itemId,
+          tagIds,
+          localRevision: 1,
+          updatedAt: now,
+        });
+        const ops: SyncOperation[] = legacy.tagAssignmentsDirty
+          ? [makePendingOp(opts.userId, entityId, snap, now, "tag_assignment")]
+          : [];
+        await commitEntityAndOperations(db, {
+          entity: {
+            entityId,
+            entityType: "tag_assignment",
+            userId: opts.userId,
+            snapshot: snap,
+            localRevision: 1,
+            updatedAt: now,
+          },
           upsertOps: ops,
           deleteOpIds: [],
         });
@@ -157,6 +239,7 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
     const entities = await listEntities(db, opts.userId);
 
     for (const ent of entities) {
+      if (ent.entityType !== "item") continue;
       if (ent.snapshot.shareRole === "participant") continue;
       if (remote.has(ent.entityId)) continue;
       const active = await getActiveOperationsForEntity(
@@ -189,25 +272,39 @@ export async function runSyncV3Migration(opts: MigrateOptions): Promise<SyncV3Me
   return meta;
 }
 
+function parsePersistRaw(raw: unknown): {
+  items: Record<string, Item>;
+  groups: Group[];
+  tags: Record<string, UserTag>;
+  myTagIdsByItem: Record<string, string[]>;
+} {
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { items: {}, groups: [], tags: {}, myTagIdsByItem: {} };
+    }
+  }
+  const state = (parsed as { state?: Record<string, unknown> } | null)?.state ?? {};
+  return {
+    items: (state.items as Record<string, Item>) ?? {},
+    groups: (state.groups as Group[]) ?? [],
+    tags: (state.tags as Record<string, UserTag>) ?? {},
+    myTagIdsByItem: (state.myTagIdsByItem as Record<string, string[]>) ?? {},
+  };
+}
+
 export async function loadLegacyFromIdb(userId: string): Promise<LegacyV2Snapshot> {
   const persistKey = `kalendarz-todo-v1-${userId}`;
   const raw = await idbGet(persistKey);
-  let items: Record<string, Item> = {};
-  if (typeof raw === "string") {
-    try {
-      const parsed = JSON.parse(raw) as { state?: { items?: Record<string, Item> } };
-      items = parsed?.state?.items ?? {};
-    } catch {
-      items = {};
-    }
-  } else if (raw && typeof raw === "object") {
-    const parsed = raw as { state?: { items?: Record<string, Item> } };
-    items = parsed?.state?.items ?? {};
-  }
-
+  const parsed = parsePersistRaw(raw);
   const outbox = await loadOutbox(userId);
   return {
-    items,
+    items: parsed.items,
+    groups: parsed.groups,
+    tags: parsed.tags,
+    myTagIdsByItem: parsed.myTagIdsByItem,
     dirtyItemIds: [...outbox.itemIds],
     dirtyParticipantIds: [...outbox.participantIds],
     outboxItemIds: [...outbox.itemIds],

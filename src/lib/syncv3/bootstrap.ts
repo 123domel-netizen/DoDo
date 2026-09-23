@@ -1,17 +1,16 @@
-import { cloudEnabled, supabase } from "@/lib/supabase";
-import {
-  canRunV2Writer,
-  isSyncV3Active,
-  loadLegacyFromIdb,
-  openSyncV3Db,
-  resolveWriterMode,
-  runSyncV3Migration,
-  runSyncV3WorkerPass,
-  scheduleWakeWorker,
-  getMigrationState,
-} from "@/lib/syncv3";
+import { setSyncV3BlocksNotify } from "@/lib/syncWrite";
+import { setSyncV3ActiveFlag, isSyncV3ActiveCached as readActiveFlag } from "@/lib/syncv3/activeFlag";
+import { registerSyncV3Wake } from "@/lib/syncv3/wake";
 import { useStore } from "@/state/store";
+import { cloudEnabled, supabase } from "@/lib/supabase";
 import { fetchAllRemoteItemIdsForUser } from "@/lib/syncv3/remoteIds";
+import type { SyncOperation } from "@/lib/syncv3/types";
+import { canRunV2Writer, isSyncV3Active, getMigrationState, resolveWriterMode } from "@/lib/syncv3/engine";
+import { loadLegacyFromIdb, runSyncV3Migration } from "@/lib/syncv3/migrate";
+import { canonicalToItem } from "@/lib/syncv3/canonical";
+import { listEntities, openSyncV3Db } from "@/lib/syncv3/db";
+import { runSyncV3WorkerPass, scheduleWakeWorker } from "@/lib/syncv3/worker";
+import type { Group, Item, UserTag } from "@/types";
 
 let activeUserId: string | null = null;
 let workerTimer: ReturnType<typeof setInterval> | null = null;
@@ -25,28 +24,97 @@ export async function isV2WriterAllowed(userId: string | null): Promise<boolean>
   return canRunV2Writer(userId);
 }
 
-/** Cache synchroniczny dla store (aktualizowany po migracji). */
-let v3ActiveCache = false;
-
 export function isSyncV3ActiveCached(): boolean {
-  return v3ActiveCache;
+  return readActiveFlag();
 }
 
 export async function refreshV3ActiveCache(userId: string): Promise<boolean> {
-  v3ActiveCache = await isSyncV3Active(userId);
-  return v3ActiveCache;
+  const active = await isSyncV3Active(userId);
+  setSyncV3ActiveFlag(active);
+  setSyncV3BlocksNotify(active);
+  return active;
+}
+
+function entityPushOrder(op: SyncOperation): number {
+  switch (op.entityType) {
+    case "group":
+      return 0;
+    case "user_tag":
+      return 1;
+    case "item":
+      return 2;
+    case "participant":
+      return 3;
+    case "tag_assignment":
+      return 4;
+    default:
+      return 9;
+  }
+}
+
+/** Hydracja Zustand z entity store po cutoverze (IDB jest źródłem prawdy). */
+export async function hydrateZustandFromV3(userId: string): Promise<void> {
+  const db = await openSyncV3Db(userId);
+  const entities = await listEntities(db, userId);
+  const items: Record<string, Item> = {};
+  const groups: Group[] = [];
+  const tags: Record<string, UserTag> = {};
+  const myTagIdsByItem: Record<string, string[]> = {};
+
+  for (const ent of entities) {
+    if (ent.entityType === "item") {
+      items[ent.entityId] = canonicalToItem(ent.snapshot);
+    } else if (ent.entityType === "group") {
+      groups.push(ent.snapshot as unknown as Group);
+    } else if (ent.entityType === "user_tag") {
+      tags[ent.entityId] = ent.snapshot as unknown as UserTag;
+    } else if (ent.entityType === "tag_assignment") {
+      const snap = ent.snapshot as unknown as { itemId?: string; tagIds?: string[] };
+      myTagIdsByItem[snap.itemId ?? ent.entityId] = snap.tagIds ?? [];
+    }
+  }
+
+  useStore.setState({
+    items: { ...useStore.getState().items, ...items },
+    groups: groups.length ? groups : useStore.getState().groups,
+    tags: { ...useStore.getState().tags, ...tags },
+    myTagIdsByItem: { ...useStore.getState().myTagIdsByItem, ...myTagIdsByItem },
+  });
 }
 
 export function wakeSyncV3Worker(): void {
-  if (!activeUserId || !v3ActiveCache || !supabase) return;
+  if (!activeUserId || !readActiveFlag() || !supabase) return;
   const uid = activeUserId;
   scheduleWakeWorker(() => {
     void runSyncV3WorkerPass({
       userId: uid,
       authUserId: uid,
+      sortOps: (ops) => [...ops].sort((a, b) => entityPushOrder(a) - entityPushOrder(b)),
       transport: {
         upsertItem: async (row) => {
           const { error } = await supabase!.from("items").upsert(row);
+          return { error: error ? { code: error.code, message: error.message } : null };
+        },
+        upsertGroup: async (row) => {
+          const { error } = await supabase!.from("groups").upsert(row);
+          return { error: error ? { code: error.code, message: error.message } : null };
+        },
+        upsertUserTag: async (row) => {
+          const { error } = await supabase!.from("user_tags").upsert(row);
+          return { error: error ? { code: error.code, message: error.message } : null };
+        },
+        upsertTagAssignment: async (row) => {
+          const { error } = await supabase!
+            .from("user_item_tag_assignments")
+            .upsert(row, { onConflict: "user_id,item_id,tag_id" });
+          return { error: error ? { code: error.code, message: error.message } : null };
+        },
+        deleteGroup: async (id) => {
+          const { error } = await supabase!.from("groups").delete().eq("id", id);
+          return { error: error ? { code: error.code, message: error.message } : null };
+        },
+        deleteUserTag: async (id) => {
+          const { error } = await supabase!.from("user_tags").delete().eq("id", id);
           return { error: error ? { code: error.code, message: error.message } : null };
         },
         fetchRemoteUpdatedAt: async (id) => {
@@ -62,14 +130,14 @@ export function wakeSyncV3Worker(): void {
   });
 }
 
-function startWorkerLoop(userId: string) {
+function startWorkerLoop() {
   stopWorkerLoop();
+  registerSyncV3Wake(() => wakeSyncV3Worker());
   workerTimer = setInterval(() => {
-    if (document.visibilityState === "hidden") return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     wakeSyncV3Worker();
   }, 15_000);
   wakeSyncV3Worker();
-  void userId;
 }
 
 function stopWorkerLoop() {
@@ -78,13 +146,17 @@ function stopWorkerLoop() {
 }
 
 /**
- * Po auth: migracja → active ⇒ wyłącz v2, uruchom worker.
- * Przed active: safe_readonly / v2 wg resolveWriterMode.
+ * Call graph (normalne otwarcie aplikacji):
+ * auth resolved → userId → open v3 DB → inspect migrationState →
+ * backup v2 → migrate entities → fetch remote IDs → verify →
+ * atomic cutover active → start worker → hydrate Zustand.
+ * Pull/merge wywoływane przez cloud po bootstrapie gdy active.
  */
 export async function bootstrapSyncV3(userId: string | null): Promise<void> {
   stopWorkerLoop();
   activeUserId = userId;
-  v3ActiveCache = false;
+  setSyncV3ActiveFlag(false);
+  setSyncV3BlocksNotify(false);
   if (!userId || !cloudEnabled || !supabase) return;
 
   const db = await openSyncV3Db(userId);
@@ -98,10 +170,11 @@ export async function bootstrapSyncV3(userId: string | null): Promise<void> {
   });
 
   const mode = resolveWriterMode(meta.migrationState);
-  v3ActiveCache = mode === "v3";
+  const active = mode === "v3";
+  setSyncV3ActiveFlag(active);
+  setSyncV3BlocksNotify(active);
 
   if (meta.migrationState === "awaiting_remote") {
-    // ponów gdy online
     const onOnline = () => {
       window.removeEventListener("online", onOnline);
       void bootstrapSyncV3(userId);
@@ -109,15 +182,17 @@ export async function bootstrapSyncV3(userId: string | null): Promise<void> {
     window.addEventListener("online", onOnline);
   }
 
-  if (v3ActiveCache) {
-    startWorkerLoop(userId);
-    // Załaduj encje v3 do store jeśli puste orphan — merge w osobnym kroku; na start
-    // zachowaj istniejący Zustand (już zhydratowany z v2 key).
-    void useStore.getState();
+  if (active) {
+    await hydrateZustandFromV3(userId);
+    startWorkerLoop();
   }
 }
 
 export async function syncV3WriterModeLabel(userId: string | null): Promise<string> {
   if (!userId) return "v2";
   return resolveWriterMode(await getMigrationState(userId));
+}
+
+export function shouldRegisterV2ItemWriter(): boolean {
+  return !readActiveFlag();
 }

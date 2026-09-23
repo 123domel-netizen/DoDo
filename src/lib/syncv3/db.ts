@@ -191,7 +191,7 @@ export interface AtomicMutationWrite {
 }
 
 /**
- * Jedyna ścieżka trwałego zapisu entity + operations.
+ * Jedyna ścieżka trwałego zapisu entity + operations (mutacje lokalne).
  * Sukces ⇒ commit; błąd ⇒ abort — UI nie wolno aktualizować.
  */
 export async function commitEntityAndOperations(
@@ -204,6 +204,13 @@ export async function commitEntityAndOperations(
   entities.put(write.entity);
   for (const id of write.deleteOpIds) operations.delete(id);
   for (const op of write.upsertOps) operations.put(op);
+  await txDone(tx);
+}
+
+/** Zapis samej encji (merge remote / hydrate) — bez tworzenia lokalnej operacji. */
+export async function putEntityRecord(db: SyncV3Db, entity: EntityRecord): Promise<void> {
+  const tx = db.transaction("entities", "readwrite");
+  tx.objectStore("entities").put(entity);
   await txDone(tx);
 }
 

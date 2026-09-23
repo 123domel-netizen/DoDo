@@ -4,9 +4,10 @@ import {
   getEntity,
   listEntities,
   openSyncV3Db,
+  putEntityRecord,
   type SyncV3Db,
 } from "@/lib/syncv3/db";
-import type { CanonicalItem } from "@/lib/syncv3/types";
+import type { CanonicalItem, EntityRecord } from "@/lib/syncv3/types";
 import type { Item } from "@/types";
 
 export interface MergeRemoteItem {
@@ -22,8 +23,9 @@ export interface MergeResult {
 }
 
 /**
- * Merge remote → lokalny widok.
- * Pending local nigdy nie jest nadpisywany starszym/równym remote payloadem.
+ * Merge remote → lokalny entity store + widok.
+ * Pending local nigdy nie jest nadpisywany remote payloadem.
+ * Przyjęty remote jest utrwalany w IDB (bez nowej operacji).
  */
 export async function mergeRemoteIntoLocal(opts: {
   userId: string;
@@ -32,11 +34,12 @@ export async function mergeRemoteIntoLocal(opts: {
 }): Promise<MergeResult> {
   const db = opts.db ?? (await openSyncV3Db(opts.userId));
   const localEntities = await listEntities(db, opts.userId);
-  const byId = new Map(localEntities.map((e) => [e.entityId, e]));
+  const itemEntities = localEntities.filter((e) => e.entityType === "item");
+  const byId = new Map(itemEntities.map((e) => [e.entityId, e]));
   const protectedPendingIds: string[] = [];
   const items: Record<string, Item> = {};
 
-  for (const ent of localEntities) {
+  for (const ent of itemEntities) {
     items[ent.entityId] = canonicalToItem(ent.snapshot);
   }
 
@@ -49,7 +52,6 @@ export async function mergeRemoteIntoLocal(opts: {
     );
     if (active.length) {
       protectedPendingIds.push(remote.id);
-      // zachowaj lokalny pending snapshot
       const local = byId.get(remote.id);
       if (local) items[remote.id] = canonicalToItem(local.snapshot);
       continue;
@@ -71,6 +73,16 @@ export async function mergeRemoteIntoLocal(opts: {
       continue;
     }
 
+    const entity: EntityRecord = {
+      entityId: remote.id,
+      entityType: "item",
+      userId: opts.userId,
+      snapshot: remoteCanon,
+      localRevision: remoteCanon.localRevision,
+      updatedAt: remoteCanon.updatedAt,
+    };
+    await putEntityRecord(db, entity);
+    byId.set(remote.id, entity);
     items[remote.id] = canonicalToItem(remoteCanon);
   }
 
