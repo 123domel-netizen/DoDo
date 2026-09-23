@@ -304,7 +304,11 @@ describe("Sync v3 — migration", () => {
       outboxParticipantIds: [],
       tagAssignmentsDirty: false,
       zustandPersistRaw: { state: { items: {} } },
-      outboxRaw: { itemIds: [ITEM_POISON] },
+      outboxRaw: {
+        itemIds: [ITEM_POISON],
+        participantIds: [],
+        tagAssignmentsDirty: false,
+      },
     };
   }
 

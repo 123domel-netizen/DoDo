@@ -1,22 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
-import { notifyLocalItemWrite, registerLocalItemWriteHandler } from "./syncWrite";
+import { describe, expect, it } from "vitest";
+import { notifyLocalItemWrite } from "./syncWrite";
 
-describe("syncWrite bridge", () => {
-  it("przekazuje lokalny zapis do zarejestrowanego handlera", () => {
-    const handler = vi.fn();
-    registerLocalItemWriteHandler(handler);
-    notifyLocalItemWrite("abc");
-    expect(handler).toHaveBeenCalledWith("abc");
-    registerLocalItemWriteHandler(null);
-    notifyLocalItemWrite("abc");
-    expect(handler).toHaveBeenCalledTimes(1);
+describe("syncWrite — v2 notify removed", () => {
+  it("notifyLocalItemWrite is a no-op", () => {
+    expect(() => notifyLocalItemWrite("abc")).not.toThrow();
+    expect(() => notifyLocalItemWrite("")).not.toThrow();
   });
 
-  it("ignoruje puste id", () => {
-    const handler = vi.fn();
-    registerLocalItemWriteHandler(handler);
-    notifyLocalItemWrite("");
-    expect(handler).not.toHaveBeenCalled();
-    registerLocalItemWriteHandler(null);
+  it("does not export registerLocalItemWriteHandler", async () => {
+    const mod = await import("./syncWrite");
+    expect("registerLocalItemWriteHandler" in mod).toBe(false);
+    expect("setSyncV3BlocksNotify" in mod).toBe(false);
   });
 });

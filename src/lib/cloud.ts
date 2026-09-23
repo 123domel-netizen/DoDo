@@ -6,7 +6,6 @@ import {
   isArchiveGroup,
   isGoogleGroup,
   resolveGroupVisibility,
-  stripGoogleGroups,
 } from "@/lib/groups";
 import { isShareGroup, updateSharedItemContent, updateOwnParticipationReminders } from "@/lib/share";
 import { sanitizeItemDates, coerceItemType } from "@/lib/dates";
@@ -23,13 +22,11 @@ import { bootstrapOrgs } from "@/lib/orgs";
 import { loadAssignableContacts } from "@/lib/contacts";
 import { migrateGroupColor } from "@/lib/factory";
 import {
-  clearDirtyParticipants,
   getSyncDiagnostics,
   resetSyncState,
-  restoreOutboxForUser,
   syncState,
 } from "@/lib/syncState";
-import { bootstrapSyncV3, hydrateZustandFromV3 } from "@/lib/syncv3/bootstrap";
+import { bootstrapSyncV3, hydrateZustandFromV3, wakeSyncV3Worker } from "@/lib/syncv3/bootstrap";
 import {
   applyRemoteGroupsToStore,
   applyRemoteItemsToStore,
@@ -84,25 +81,14 @@ export async function fetchAllRemoteItemIds(): Promise<{ ids: string[]; error: s
   return { ids, error: null };
 }
 
-/**
- * v2 orphan scan / reconcileNeverPushed â€” USUNIÄTE z runtime.
- * Local-only recovery = Sync v3 migration + worker operations.
- */
-async function reconcileNeverPushed(_opts?: { flush?: boolean }): Promise<number> {
-  return 0;
-}
-void reconcileNeverPushed;
-
 let userId: string | null = null;
 let userEmail: string | null = null;
 let previousUserId: string | null = null;
 let realtimeChannel: RealtimeChannel | null = null;
-let storeSubscribed = false;
 let realtimeSubscribed = false;
 let realtimeEverSubscribed = false;
 let realtimeFailureStreak = 0;
 let realtimeResubscribeTimer: ReturnType<typeof setTimeout> | null = null;
-let pushInFlight = false;
 let lifecycleBound = false;
 
 function setApplyingRemote(v: boolean) {
@@ -112,13 +98,11 @@ function setApplyingRemote(v: boolean) {
 // Synchronizacja grup
 let groupsReady = false;
 let lastGroupsSnapshot = "";
-const pendingGroupDeletes = new Set<string>();
-const pendingTagDeletes = new Set<string>();
 let lastTagsSnapshot = "";
 let lastAssignmentsSnapshot = "";
 
 export function getCloudDomainSnapshots() {
-  return { lastTagsSnapshot, lastAssignmentsSnapshot };
+  return { lastTagsSnapshot, lastAssignmentsSnapshot, lastGroupsSnapshot, groupsReady };
 }
 
 function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
@@ -216,25 +200,6 @@ function rowToItem(row: Record<string, unknown>, shareRole: Item["shareRole"] = 
   return clean.allDay ? withNormalizedAllDay(clean) : clean;
 }
 
-function groupToRow(group: Group) {
-  const v = resolveGroupVisibility(group);
-  return {
-    id: group.id,
-    user_id: userId,
-    name: group.name,
-    color: group.color,
-    sort_order: group.sortOrder,
-    system: group.system ?? null,
-    hide_from_all: !v.showInAll,
-    show_in_sidebar: v.showInSidebar,
-    show_in_tasks: v.showInTasks,
-    show_in_events: v.showInEvents,
-    show_in_dashboard: v.showInDashboard,
-    show_in_all: v.showInAll,
-    icon: group.icon ?? null,
-  };
-}
-
 function rowToGroup(row: Record<string, unknown>): Group {
   const name = (row.name as string) ?? "";
   const base = { name, system: (row.system as Group["system"]) ?? undefined };
@@ -285,15 +250,10 @@ function groupsSnapshot(groups: Group[]): string {
   );
 }
 
-function tagToRow(tag: UserTag) {
-  return {
-    id: tag.id,
-    user_id: userId,
-    name: tag.name,
-    color: tag.color,
-    created_at: tag.createdAt,
-    updated_at: tag.updatedAt,
-  };
+function tagsSnapshot(tags: Record<string, UserTag>): string {
+  return JSON.stringify(
+    Object.values(tags).map((t) => [t.id, t.name, t.color, t.updatedAt]),
+  );
 }
 
 function rowToTag(row: Record<string, unknown>): UserTag {
@@ -305,12 +265,6 @@ function rowToTag(row: Record<string, unknown>): UserTag {
     createdAt: (row.created_at as string) ?? new Date().toISOString(),
     updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
   };
-}
-
-function tagsSnapshot(tags: Record<string, UserTag>): string {
-  return JSON.stringify(
-    Object.values(tags).map((t) => [t.id, t.name, t.color, t.updatedAt]),
-  );
 }
 
 function assignmentsSnapshot(map: Record<string, string[]>): string {
@@ -341,11 +295,6 @@ async function pullUserTags() {
   }
 }
 
-async function pushUserTags() {
-  // Push tagĂłw: wyĹ‚Ä…cznie Sync v3 worker (persistTagViaSyncV3).
-  return;
-}
-
 async function pullTagAssignments() {
   if (!supabase || !userId) return;
   const { data, error } = await supabase
@@ -369,28 +318,9 @@ async function pullTagAssignments() {
   }
 }
 
-async function pushTagAssignments() {
-  // Push assignments: Sync v3 worker.
-}
-
-function syncMyTagIdsFromOwnedItems(items: Record<string, Item>) {
-  const prev = useStore.getState().myTagIdsByItem;
-  let changed = false;
-  const next = { ...prev };
-  for (const item of Object.values(items)) {
-    if (item.shareRole === "participant") continue;
-    const ids = item.tagIds ?? [];
-    if (JSON.stringify(prev[item.id] ?? []) !== JSON.stringify(ids)) {
-      next[item.id] = ids;
-      changed = true;
-    }
-  }
-  if (changed) useStore.setState({ myTagIdsByItem: next });
-}
-
 /**
- * Sprowadza listÄ™ zdalnych grup do jednej grupy systemowej kaĹĽdego typu.
- * Zwraca teĹĽ mapÄ™ remap (stare id duplikatu â†’ id zachowane) oraz id do usuniÄ™cia.
+ * Sprowadza listę zdalnych grup do jednej grupy systemowej każdego typu.
+ * Zwraca też mapę remap (stare id duplikatu → id zachowane) oraz id do usunięcia.
  */
 function reconcileGroups(remote: Group[]): {
   groups: Group[];
@@ -400,9 +330,9 @@ function reconcileGroups(remote: Group[]): {
   const remap = new Map<string, string>();
   const deleteIds: string[] = [];
   let archiveKept: Group | null = null;
-  // SHARE jest tylko wirtualny w aplikacji â€” usuĹ„ z bazy, jeĹ›li kiedyĹ› trafiĹ‚.
-  // Deduplikacja grup uĹĽytkownika po nazwie â€” naprawia duplikaty powstaĹ‚e, gdy
-  // dwa urzÄ…dzenia zasiaĹ‚y tabelÄ™ zanim siÄ™ nawzajem zobaczyĹ‚y.
+  // SHARE jest tylko wirtualny w aplikacji — usuń z bazy, jeśli kiedyś trafił.
+  // Deduplikacja grup użytkownika po nazwie — naprawia duplikaty powstałe, gdy
+  // dwa urządzenia zasiały tabelę zanim się nawzajem zobaczyły.
   const userByName = new Map<string, Group>();
   const result: Group[] = [];
 
@@ -418,7 +348,7 @@ function reconcileGroups(remote: Group[]): {
     } else if (isShareGroup(g)) {
       deleteIds.push(g.id);
     } else if (isGoogleGroup(g)) {
-      // Legacy â€” integracja Google usuniÄ™ta.
+      // Legacy — integracja Google usunięta.
       deleteIds.push(g.id);
     } else {
       const key = g.name.trim().toLowerCase();
@@ -467,27 +397,6 @@ function clearGoogleGroupRefs(
     }
   }
   return changed ? next : items;
-}
-
-async function pushGroupsFull() {
-  if (!supabase || !userId || !groupsReady) return;
-  const groups = stripGoogleGroups(useStore.getState().groups).filter((g) => !isShareGroup(g));
-  const snap = groupsSnapshot(groups);
-  const dels = [...pendingGroupDeletes];
-  if (snap === lastGroupsSnapshot && dels.length === 0) return;
-  lastGroupsSnapshot = snap;
-  if (groups.length) {
-    const { error } = await supabase.from("groups").upsert(groups.map(groupToRow));
-    if (error) {
-      console.warn("[cloud] group upsert failed:", error.message);
-      lastGroupsSnapshot = "";
-      return;
-    }
-  }
-  if (dels.length) {
-    pendingGroupDeletes.clear();
-    await supabase.from("groups").delete().in("id", dels);
-  }
 }
 
 async function pullGroups() {
@@ -583,8 +492,12 @@ async function pullOwnerParticipantRows(): Promise<Record<string, ParticipantDbR
   return byItem;
 }
 
-async function syncItemParticipants(item: Item) {
-  if (!supabase || !userId || item.shareRole === "participant" || item.deletedAt) return;
+
+/** Owner participants sync — used by Sync v3 worker after item upsert. */
+export async function syncOwnerItemParticipants(item: Item): Promise<{ error: { message: string } | null }> {
+  if (!supabase || !userId || item.shareRole === "participant" || item.deletedAt) {
+    return { error: null };
+  }
   const rows = item.participants
     .filter((p) => p.status !== "rejected")
     .map((p) => participantRowFromParticipant(item.id, userId!, p))
@@ -610,38 +523,46 @@ async function syncItemParticipants(item: Item) {
     const { error } = await supabase.from("item_participants").upsert(rows, {
       onConflict: "item_id,participant_email",
     });
-    if (error) console.warn("[cloud] participants sync failed:", error.message);
+    if (error) return { error: { message: error.message } };
   }
+  return { error: null };
 }
 
-async function pushParticipantPatches(items: Item[]): Promise<string[]> {
-  if (!supabase || !userId) return [];
-  const pushed: string[] = [];
-  for (const item of items) {
-    if (item.shareRole !== "participant") continue;
-    let ok = true;
-    const { error: contentError } = await updateSharedItemContent(item.id, {
-      description: item.description,
-      checklist: item.checklist,
-      attachments: item.attachments,
+export async function patchParticipantViaRpc(input: {
+  itemId: string;
+  description?: string;
+  checklist?: unknown;
+  attachments?: unknown;
+  personalReminders?: unknown;
+}): Promise<{ error: { message: string } | null }> {
+  if (!supabase || !userId) return { error: { message: "no auth" } };
+  let ok = true;
+  if (
+    input.description !== undefined ||
+    input.checklist !== undefined ||
+    input.attachments !== undefined
+  ) {
+    const { error } = await updateSharedItemContent(input.itemId, {
+      description: (input.description as string) ?? "",
+      checklist: (input.checklist as Item["checklist"]) ?? [],
+      attachments: (input.attachments as Item["attachments"]) ?? [],
     });
-    if (contentError) {
-      console.warn("[cloud] participant patch failed:", contentError);
+    if (error) {
+      console.warn("[cloud] participant patch failed:", error);
       ok = false;
     }
-
-    const { error: reminderError } = await updateOwnParticipationReminders(
-      item.id,
-      item.personalReminders ?? [],
-    );
-    if (reminderError) {
-      console.warn("[cloud] personal reminders patch failed:", reminderError);
-      ok = false;
-    }
-
-    if (ok) pushed.push(item.id);
   }
-  return pushed;
+  if (input.personalReminders !== undefined) {
+    const { error } = await updateOwnParticipationReminders(
+      input.itemId,
+      (input.personalReminders as Item["personalReminders"]) ?? [],
+    );
+    if (error) {
+      console.warn("[cloud] personal reminders patch failed:", error);
+      ok = false;
+    }
+  }
+  return ok ? { error: null } : { error: { message: "participant_patch_failed" } };
 }
 
 async function pullAllViaSyncV3() {
@@ -669,7 +590,7 @@ async function pullAllViaSyncV3() {
     const result = await applyRemoteItemsToStore(userId, items);
     if (!result.ok) {
       console.warn("[cloud] remote apply failed:", result.error);
-      return; // cursor / lastPullAt nie przesuwamy
+      return;
     }
     await hydrateZustandFromV3(userId);
     syncState.lastPullAt = new Date().toISOString();
@@ -694,10 +615,6 @@ function teardownRealtime() {
   realtimeSubscribed = false;
 }
 
-/**
- * KanaĹ‚ potrafi umrzeÄ‡ po uĹ›pieniu laptopa i nigdy siÄ™ nie podnieĹ›Ä‡ â€” wtedy
- * urzÄ…dzenie przestaje widzieÄ‡ zmiany z innych urzÄ…dzeĹ„ aĹĽ do przeĹ‚adowania.
- */
 function scheduleRealtimeResubscribe() {
   if (realtimeResubscribeTimer || !userId) return;
   const attempt = Math.min(realtimeFailureStreak, 5);
@@ -709,7 +626,6 @@ function scheduleRealtimeResubscribe() {
   }, delay);
 }
 
-/** WywoĹ‚ywane po powrocie sieci / do zakĹ‚adki â€” cisza w kanale bywa milczÄ…ca. */
 function ensureRealtimeAlive() {
   if (!cloudEnabled || !supabase || !userId) return;
   if (realtimeSubscribed) return;
@@ -728,7 +644,7 @@ function setupRealtime() {
         try {
           if (payload.eventType === "DELETE") {
             const id = (payload.old as { id: string }).id;
-            const result = await applyRemoteEntities({
+            await applyRemoteEntities({
               userId: uid,
               remotes: [
                 {
@@ -741,14 +657,11 @@ function setupRealtime() {
               ],
               applyToUi: applyRemoteResultToZustand,
             });
-            if (!result.ok) return;
           } else {
             const row = payload.new as Record<string, unknown>;
             const ownerId = row.user_id as string;
             const role = ownerId === uid ? "owner" : "participant";
-            const remote = rowToItem(row, role);
-            const result = await applyRemoteItemsToStore(uid, [remote]);
-            if (!result.ok) return;
+            await applyRemoteItemsToStore(uid, [rowToItem(row, role)]);
           }
         } finally {
           setApplyingRemote(false);
@@ -761,7 +674,7 @@ function setupRealtime() {
         try {
           if (payload.eventType === "DELETE") {
             const id = (payload.old as { id: string }).id;
-            const result = await applyRemoteEntities({
+            await applyRemoteEntities({
               userId: uid,
               remotes: [
                 {
@@ -779,10 +692,8 @@ function setupRealtime() {
                 }));
               },
             });
-            if (!result.ok) return;
           } else {
-            const group = rowToGroup(payload.new as Record<string, unknown>);
-            await applyRemoteGroupsToStore(uid, [group]);
+            await applyRemoteGroupsToStore(uid, [rowToGroup(payload.new as Record<string, unknown>)]);
           }
           lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
         } finally {
@@ -835,32 +746,21 @@ function msSinceLastPull(): number | null {
   return Number.isNaN(t) ? null : Date.now() - t;
 }
 
-/** Czy bezpieczny auto-pull moĹĽe siÄ™ wykonaÄ‡ (bez side effects). */
 export function canAutoCloudRefresh(): boolean {
   if (!cloudEnabled || !supabase || !userId) return false;
   if (typeof navigator !== "undefined" && !navigator.onLine) return false;
-
   const diag = getSyncDiagnostics();
   if (!diag.syncReady || diag.syncBooting || diag.applyingRemote || diag.pushBlocked) {
     return false;
   }
-  // NiewysĹ‚ane zmiany celowo NIE blokujÄ… auto-pulla: auto-pull scala po
-  // `updated_at` i niczego lokalnie nie kasuje. WczeĹ›niejsza blokada oznaczaĹ‚a,
-  // ĹĽe jeden wpis, ktĂłrego nie daĹ‚o siÄ™ wypchnÄ…Ä‡, wyĹ‚Ä…czaĹ‚ pobieranie na staĹ‚e.
   if (autoPullInProgress) return false;
   if (useStore.getState().draft) return false;
   if (isUserActivelyEditing()) return false;
-
-  const sincePull = msSinceLastPull();
-  if (sincePull !== null && sincePull < AUTO_PULL_MIN_INTERVAL_MS) return false;
-
+  const since = msSinceLastPull();
+  if (since != null && since < AUTO_PULL_MIN_INTERVAL_MS) return false;
   return true;
 }
 
-/**
- * ScalajÄ…cy pull â€” nigdy nie kasuje lokalnych wpisĂłw, wiÄ™c jest bezpieczny
- * takĹĽe wtedy, gdy coĹ› czeka jeszcze w kolejce wysyĹ‚ki.
- */
 async function cloudMergeRefresh(): Promise<boolean> {
   if (!cloudEnabled || !supabase || !userId) return false;
   if (syncState.booting || syncState.applyingRemote) return false;
@@ -874,13 +774,11 @@ async function cloudMergeRefresh(): Promise<boolean> {
   }
 }
 
-/** Bezpieczny auto-pull: najpierw dosyĹ‚a zalegĹ‚oĹ›ci, potem scala z chmurÄ…. */
 export async function tryAutoCloudRefresh(): Promise<boolean> {
   if (!canAutoCloudRefresh()) return false;
-
   autoPullInProgress = true;
   try {
-    await flushPendingPush();
+    wakeSyncV3Worker();
     const ok = await cloudMergeRefresh();
     if (ok) lastAutoPullAt = new Date().toISOString();
     return ok;
@@ -889,16 +787,11 @@ export async function tryAutoCloudRefresh(): Promise<boolean> {
   }
 }
 
-/** PeĹ‚ny pull z chmury â€” zastÄ™puje lokalny cache itemĂłw (Sync v2). */
 export async function forceCloudRefresh(): Promise<{ ok: boolean; message: string }> {
   if (!cloudEnabled || !supabase || !userId) {
-    return { ok: false, message: "Synchronizacja niedostÄ™pna" };
+    return { ok: false, message: "Synchronizacja niedostepna" };
   }
-
-  // Najpierw dosyĹ‚ka: pull z podmianÄ… nie moĹĽe wyprzedziÄ‡ zmian, ktĂłre jeszcze
-  // nie dotarĹ‚y do chmury (to byĹ‚a prosta droga do cichej utraty wydarzenia).
-  await flushPendingPush();
-
+  wakeSyncV3Worker();
   syncState.pushBlocked = true;
   syncState.booting = true;
   try {
@@ -906,7 +799,6 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
     await pullTagAssignments();
     await pullGroups();
     await pullAll(true);
-
     const orgs = await bootstrapOrgs();
     useStore.getState().setOrgBootstrap(orgs);
     const st = useStore.getState();
@@ -915,21 +807,18 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
       ownerUserId: st.authUserId,
     });
     st.setTeamMembers(contacts);
-
     lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
     lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
     lastAssignmentsSnapshot = assignmentsSnapshot(useStore.getState().myTagIdsByItem);
-
-    return { ok: true, message: "Dane odĹ›wieĹĽone" };
+    return { ok: true, message: "Dane odswiezone" };
   } catch (err) {
     console.warn("[cloud] force refresh failed:", err);
-    return { ok: false, message: "OdĹ›wieĹĽanie nie powiodĹ‚o siÄ™" };
+    return { ok: false, message: "Odswiezenie nie powiodlo sie" };
   } finally {
     syncState.booting = false;
     syncState.pushBlocked = false;
     syncState.ready = true;
-    // Pull mĂłgĹ‚ wykryÄ‡ wpisy nieobecne w chmurze â€” wyĹ›lij je od razu.
-    void flushPendingPush();
+    wakeSyncV3Worker();
   }
 }
 
@@ -943,15 +832,11 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     teardownRealtime();
     userEmail = null;
     useStore.getState().setAuthUser(null, null);
-    // Najpierw zmiana klucza IDB â€” inaczej resetLocalUserState() zapisuje pusty
-    // `items` pod kluczem zalogowanego uĹĽytkownika i kasuje wpisy, ktĂłre nigdy
-    // nie zdÄ…ĹĽyĹ‚y wyjĹ›Ä‡ do chmury (telefon widzi je, PC juĹĽ nigdy).
     await switchPersistUser(null);
     resetLocalUserState();
     previousUserId = null;
     groupsReady = false;
     lastGroupsSnapshot = "";
-    pendingGroupDeletes.clear();
     resetSyncState();
     syncState.ready = true;
     await bootstrapSyncV3(null);
@@ -963,24 +848,15 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 
   syncState.booting = true;
   syncState.ready = false;
-
   groupsReady = false;
   lastGroupsSnapshot = "";
-  pendingGroupDeletes.clear();
 
   await switchPersistUser(nextUserId);
-  // Kolejka przeĹĽywa restart â€” inaczej zmiany zrobione tuĹĽ przed zamkniÄ™ciem
-  // aplikacji zostawaĹ‚y tylko w lokalnym cache'u i nie trafiaĹ‚y na inne urzÄ…dzenia.
-  const restored = await restoreOutboxForUser(nextUserId);
-  if (restored) console.info(`[cloud] odtworzono kolejkÄ™ wysyĹ‚ki: ${restored}`);
 
   const { data: sessionData } = await supabase.auth.getUser();
   userEmail = sessionData.user?.email?.toLowerCase() ?? null;
   useStore.getState().setAuthUser(nextUserId, userEmail);
 
-  // Przy zmianie konta czyĹ›cimy tylko UI â€” NIE kasujemy items przed pullem.
-  // WczeĹ›niejszy resetLocalUserState() zapisywaĹ‚ pusty store do IDB i niszczyĹ‚
-  // never-pushed zanim pullAll(replace) zdÄ…ĹĽyĹ‚ je zachowaÄ‡ / wysĹ‚aÄ‡.
   if (isUserSwitch) {
     useStore.setState({
       clipboard: null,
@@ -993,7 +869,6 @@ export async function handleAuthUserChange(nextUserId: string | null) {
   }
 
   try {
-    // Accept pending org invites before loading membership / contacts.
     const orgs = await bootstrapOrgs();
     useStore.getState().setOrgBootstrap(orgs);
     {
@@ -1005,7 +880,6 @@ export async function handleAuthUserChange(nextUserId: string | null) {
       st.setTeamMembers(contacts);
     }
 
-    // Sync v3: migracja â†’ flags â†’ hydrate â†’ pull IDB-first â†’ realtime
     await bootstrapSyncV3(nextUserId);
     await pullUserTags();
     await pullTagAssignments();
@@ -1020,74 +894,13 @@ export async function handleAuthUserChange(nextUserId: string | null) {
   }
 }
 
-async function pushDirtyItems() {
-  // v2 item push removed — Sync v3 worker only.
-}
-
-async function pushDirtyParticipants() {
-  if (!supabase || !userId) return;
-
-  const dirtyIds = [...syncState.dirtyParticipantIds];
-  if (!dirtyIds.length) return;
-
-  const state = useStore.getState();
-  const items = dirtyIds
-    .map((id) => state.items[id])
-    .filter((i): i is Item => Boolean(i) && i.shareRole === "participant");
-
-  const missingIds = dirtyIds.filter((id) => !state.items[id]);
-  if (missingIds.length) clearDirtyParticipants(missingIds);
-
-  if (!items.length) return;
-
-  const pushed = await pushParticipantPatches(items);
-  clearDirtyParticipants(pushed);
-}
-
-async function runPush(): Promise<boolean> {
-  if (!supabase || !userId) return true;
-  if (syncState.booting || syncState.pushBlocked) return false;
-  if (pushInFlight) return false;
-  pushInFlight = true;
-  try {
-    const { wakeSyncV3Worker } = await import("@/lib/syncv3/bootstrap");
-    wakeSyncV3Worker();
-    await pushDirtyParticipants();
-    syncState.lastPushAt = new Date().toISOString();
-  } finally {
-    pushInFlight = false;
-  }
-  syncState.v2PushFailureMsg = null;
-  return true;
-}
-
-function schedulePushRetry() {
-  // v2 item retry removed
-}
-
-function schedulePush() {
-  void import("@/lib/syncv3/bootstrap").then((m) => m.wakeSyncV3Worker());
-}
-
-// Retain schedulePush for online wake path callers.
-void schedulePush;
-
-
-/** Internal wake — no manual flush UI. */
-export async function flushPendingPush(): Promise<boolean> {
-  const { wakeSyncV3Worker } = await import("@/lib/syncv3/bootstrap");
-  wakeSyncV3Worker();
-  return runPush();
-}
-
-/** Lifecycle: realtime + v3 worker wake. No v2 orphan/push timers. */
 function bindSyncLifecycle() {
   if (lifecycleBound || typeof window === "undefined") return;
   lifecycleBound = true;
 
   window.addEventListener("online", () => {
     realtimeFailureStreak = 0;
-    void import("@/lib/syncv3/bootstrap").then((m) => m.wakeSyncV3Worker());
+    wakeSyncV3Worker();
     ensureRealtimeAlive();
   });
 
@@ -1096,23 +909,8 @@ function bindSyncLifecycle() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") return;
     ensureRealtimeAlive();
-    void import("@/lib/syncv3/bootstrap").then((m) => m.wakeSyncV3Worker());
+    wakeSyncV3Worker();
   });
-}
-
-function trackGroupChange(prev: Group[], next: Group[]) {
-  if (syncState.applyingRemote || prev === next) return;
-  const nextIds = new Set(next.map((g) => g.id));
-  for (const g of prev) {
-    if (!nextIds.has(g.id)) pendingGroupDeletes.add(g.id);
-  }
-}
-
-function trackTagChange(prev: Record<string, UserTag>, next: Record<string, UserTag>) {
-  if (syncState.applyingRemote || prev === next) return;
-  for (const id of Object.keys(prev)) {
-    if (!next[id]) pendingTagDeletes.add(id);
-  }
 }
 
 export async function initCloudSync() {
@@ -1125,13 +923,11 @@ export async function initCloudSync() {
   syncState.ready = false;
   try {
     setSyncDebugHooks({
-      getPushInFlight: () => pushInFlight,
+      getPushInFlight: () => false,
       getCloudModuleUserId: () => userId,
       previewItemRow: (item: Item) => itemToRow(item) as Record<string, unknown>,
     });
     installSyncDebugApi();
-
-    // v2 notify/enqueue/trackStoreDirty removed — Sync v3 commitLocalMutation only.
 
     const { data } = await supabase.auth.getUser();
     await handleAuthUserChange(data.user?.id ?? null);
@@ -1140,14 +936,6 @@ export async function initCloudSync() {
       void handleAuthUserChange(session?.user?.id ?? null);
     });
 
-    if (!storeSubscribed) {
-      storeSubscribed = true;
-      useStore.subscribe((state, prev) => {
-        // Domain deletes still tracked for cleanup helpers; push via Sync v3.
-        trackGroupChange(prev.groups, state.groups);
-        trackTagChange(prev.tags, state.tags);
-      });
-    }
     bindSyncLifecycle();
   } catch (err) {
     console.warn("[cloud] sync disabled:", err);
@@ -1160,13 +948,3 @@ export async function initCloudSync() {
     }
   }
 }
-
-void pushDirtyItems;
-void schedulePushRetry;
-void schedulePush;
-void pushUserTags;
-void pushTagAssignments;
-void pushGroupsFull;
-void syncItemParticipants;
-void syncMyTagIdsFromOwnedItems;
-void tagToRow;

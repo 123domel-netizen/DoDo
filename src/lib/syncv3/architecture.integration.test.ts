@@ -116,7 +116,11 @@ describe("Sync v3 — real v2 storage bootstrap", () => {
           outboxParticipantIds: [],
           tagAssignmentsDirty: false,
           zustandPersistRaw: null,
-          outboxRaw: null,
+          outboxRaw: {
+            itemIds: [],
+            participantIds: [],
+            tagAssignmentsDirty: false,
+          },
         }),
         remote: { fetchRemoteItemIds: async () => ({ ids: [], error: null }) },
       });
