@@ -10,7 +10,7 @@ import {
 } from "@/lib/groups";
 import { isShareGroup, updateSharedItemContent, updateOwnParticipationReminders } from "@/lib/share";
 import { mergeItemOnSync } from "@/lib/items";
-import { sanitizeItemDates } from "@/lib/dates";
+import { sanitizeItemDates, coerceItemType } from "@/lib/dates";
 import {
   participantRowFromParticipant,
   mergeParticipantsWithDb,
@@ -145,16 +145,21 @@ function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
   return {
     id: item.id,
     user_id: userId,
-    type: item.type,
-    title: item.title,
-    description: item.description,
+    type: coerceItemType(item),
+    title: typeof item.title === "string" ? item.title : item.title == null ? "" : String(item.title),
+    description:
+      typeof item.description === "string"
+        ? item.description
+        : item.description == null
+          ? ""
+          : String(item.description),
     start_at: item.start,
     end_at: item.end,
-    all_day: item.allDay,
+    all_day: Boolean(item.allDay),
     group_id: item.groupId,
-    show_in_calendar: item.showInCalendar,
-    show_in_todo: item.showInTodo,
-    done: item.done,
+    show_in_calendar: Boolean(item.showInCalendar),
+    show_in_todo: Boolean(item.showInTodo),
+    done: Boolean(item.done),
     payload: {
       checklist: item.checklist,
       participants: item.participants,
@@ -1129,25 +1134,55 @@ async function pushDirtyItems() {
   }
 
   const localGroupIds = new Set(useStore.getState().groups.map((g) => g.id));
-  const rows = ownedItems.map((item) => {
-    const row = itemToRow(item, payloadExtrasById.get(item.id));
-    if (row.group_id && !localGroupIds.has(row.group_id)) row.group_id = null;
-    return row;
-  });
 
-  // Paczkami: jeden padnięty ogromny upsert nie może blokować całej kolejki.
+  // Sanityzacja przed upsertem: jeden legacy wpis z type=null potrafił wywalić
+  // całą paczkę (NOT NULL) i zatrzymać kolejkę 100+ zmian na stałe.
+  const prepared: { item: Item; row: ReturnType<typeof itemToRow> }[] = [];
+  const skippedIds: string[] = [];
+  for (const raw of ownedItems) {
+    const { item } = sanitizeItemDates(raw);
+    if (item !== raw) {
+      useStore.setState((s) =>
+        s.items[item.id] ? { items: { ...s.items, [item.id]: item } } : {},
+      );
+    }
+    if (item.type !== "event" && item.type !== "task") {
+      skippedIds.push(item.id);
+      continue;
+    }
+    const row = itemToRow(item, payloadExtrasById.get(item.id));
+    if (row.group_id && !localGroupIds.has(row.group_id as string)) row.group_id = null;
+    prepared.push({ item, row });
+  }
+  if (skippedIds.length) {
+    console.warn(`[cloud] pominięto ${skippedIds.length} wpis(ów) nie nadających się do upsertu`);
+    clearDirtyItems(skippedIds);
+  }
+
+  const rows = prepared.map((p) => p.row);
+
+  // Paczkami; przy błędzie — per wiersz, żeby jeden trucizna nie blokowała reszty.
   for (const rowChunk of chunkIds(rows, ITEM_UPSERT_CHUNK_SIZE)) {
     const { error } = await supabase.from("items").upsert(rowChunk);
-    if (error) {
-      console.warn("[cloud] item upsert failed:", error.message);
-      syncState.lastPushError = error.message;
-      break;
+    if (!error) {
+      for (const row of rowChunk) pushedIds.push(row.id as string);
+      continue;
     }
-    for (const row of rowChunk) pushedIds.push(row.id as string);
+    console.warn("[cloud] item upsert chunk failed:", error.message);
+    syncState.lastPushError = error.message;
+    for (const row of rowChunk) {
+      const { error: rowError } = await supabase.from("items").upsert(row);
+      if (rowError) {
+        console.warn(`[cloud] item upsert ${row.id}:`, rowError.message);
+        syncState.lastPushError = rowError.message;
+        continue;
+      }
+      pushedIds.push(row.id as string);
+    }
   }
 
   const pushedSet = new Set(pushedIds);
-  for (const item of ownedItems) {
+  for (const { item } of prepared) {
     if (!pushedSet.has(item.id)) continue;
     await syncItemParticipants(item);
   }
