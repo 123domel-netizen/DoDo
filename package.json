@@ -23,11 +23,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b",
-    "lint": "eslint \"src/**/*.{ts,tsx,js,jsx}\" --max-warnings 200",
+    "lint": "eslint \"src/**/*.{ts,tsx,js,jsx}\" --max-warnings 0",
     "check:guards": "node scripts/check-repo-guards.mjs",
+    "check:syncv3-architecture": "node scripts/check-syncv3-architecture.mjs",
+    "check:syncv3-bundle": "node scripts/check-syncv3-bundle.mjs",
+    "check:syncv3-legacy-isolation": "node scripts/check-syncv3-legacy-isolation.mjs",
+    "check:syncv3-ownership": "node scripts/check-syncv3-ownership.mjs",
     "check:rpc-exposure": "node scripts/verify-rpc-exposure.mjs",
     "audit:incident": "node scripts/audit-security-incident.mjs",
-    "verify": "npm run check:guards && npm run lint && npm run typecheck && npm test && npm run build"
+    "verify": "npm run check:guards && npm run check:syncv3-architecture && npm run check:syncv3-legacy-isolation && npm run check:syncv3-ownership && npm run lint && npm run typecheck && npm test && npm run build && npm run check:syncv3-bundle"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
