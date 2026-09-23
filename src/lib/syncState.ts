@@ -14,7 +14,8 @@ export const syncState = {
   applyingRemote: false,
   lastPullAt: null as string | null,
   lastPushAt: null as string | null,
-  lastPushError: null as string | null,
+  /** Wewnętrzny diagnostyczny komunikat v2 — nie eksponowany w UI. */
+  v2PushFailureMsg: null as string | null,
   dirtyItemIds: new Set<string>(),
   /** SHARE uczestnik — osobna kolejka (nie push jako owned). */
   dirtyParticipantIds: new Set<string>(),
@@ -150,7 +151,7 @@ export function resetSyncState() {
   syncState.applyingRemote = false;
   syncState.lastPullAt = null;
   syncState.lastPushAt = null;
-  syncState.lastPushError = null;
+  syncState.v2PushFailureMsg = null;
   syncState.dirtyItemIds.clear();
   syncState.dirtyParticipantIds.clear();
   syncState.tagAssignmentsDirty = false;
@@ -189,7 +190,7 @@ export function getSyncDiagnostics() {
     pushBlocked: syncState.pushBlocked,
     lastPullAt: syncState.lastPullAt,
     lastPushAt: syncState.lastPushAt,
-    lastPushError: syncState.lastPushError,
+    v2PushFailureMsg: syncState.v2PushFailureMsg,
     localItemsCount: all.length,
     visibleItemsCount: visible.length,
     deletedItemsCount: deleted.length,

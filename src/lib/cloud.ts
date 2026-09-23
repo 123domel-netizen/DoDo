@@ -39,7 +39,8 @@ import {
 } from "@/lib/syncState";
 import { chunkIds, itemIdsMissingInCloud, loadOutbox } from "@/lib/syncOutbox";
 import { registerLocalItemWriteHandler } from "@/lib/syncWrite";
-import { bootstrapSyncV3, isV2WriterAllowed } from "@/lib/syncv3/bootstrap";
+import { bootstrapSyncV3, hydrateZustandFromV3, isV2WriterAllowed, shouldRegisterV2ItemWriter } from "@/lib/syncv3/bootstrap";
+import { mergeRemoteIntoLocal } from "@/lib/syncv3/merge";
 import {
   beginSyncDebugCorrelation,
   getActiveSyncDebugCorrelation,
@@ -102,6 +103,7 @@ async function fetchAllRemoteItemIds(): Promise<{ ids: string[]; error: string |
  * (boot / applyingRemote) albo outbox zgubił ID.
  */
 async function reconcileNeverPushed(opts?: { flush?: boolean }): Promise<number> {
+  if (!shouldRegisterV2ItemWriter()) return 0;
   if (!supabase || !userId) return 0;
   if (syncState.booting || syncState.applyingRemote || syncState.pushBlocked) return 0;
 
@@ -721,7 +723,46 @@ async function pushParticipantPatches(items: Item[]): Promise<string[]> {
   return pushed;
 }
 
+async function pullAllViaSyncV3() {
+  if (!supabase || !userId) return;
+  const { rows, error } = await fetchAllItemRows();
+  if (error) {
+    console.warn("[cloud] item pull failed:", error);
+    return;
+  }
+  const participantByItem = await pullOwnerParticipantRows();
+  const remoteItems: Array<{ id: string; updatedAt: string; raw: Item }> = [];
+  for (const row of rows) {
+    let item = rowToItem(row, "owner");
+    const dbRows = participantByItem[item.id];
+    if (dbRows?.length) {
+      item = { ...item, participants: mergeParticipantsWithDb(item.participants, dbRows) };
+    }
+    remoteItems.push({ id: item.id, updatedAt: item.updatedAt, raw: item });
+  }
+  const shared = await pullSharedItems();
+  for (const item of Object.values(shared)) {
+    remoteItems.push({ id: item.id, updatedAt: item.updatedAt, raw: item });
+  }
+
+  setApplyingRemote(true);
+  try {
+    const merged = await mergeRemoteIntoLocal({ userId, remoteItems });
+    useStore.setState({ items: merged.items });
+    syncMyTagIdsFromOwnedItems(merged.items);
+    await hydrateZustandFromV3(userId);
+  } finally {
+    setApplyingRemote(false);
+  }
+  // Po active: NIE enqueue v2 / orphan — local-only czeka w operations v3.
+  syncState.lastPullAt = new Date().toISOString();
+}
+
 async function pullAll(replace = false) {
+  if (!shouldRegisterV2ItemWriter()) {
+    await pullAllViaSyncV3();
+    return;
+  }
   if (!supabase || !userId) return;
   const { rows, error } = await fetchAllItemRows();
   if (error) {
@@ -773,11 +814,15 @@ async function pullAll(replace = false) {
   }
 
   if (neverPushedIds.length) {
-    console.warn(
-      `[cloud] ${neverPushedIds.length} wpis(ów) nie ma w chmurze — ponawiam wysyłkę`,
-    );
-    for (const id of neverPushedIds) enqueueItem(id);
-    schedulePush();
+    if (!shouldRegisterV2ItemWriter()) {
+      // v3: never-pushed obsługuje migrator/worker, nie enqueue v2
+    } else {
+      console.warn(
+        `[cloud] ${neverPushedIds.length} wpis(ów) nie ma w chmurze — ponawiam wysyłkę`,
+      );
+      for (const id of neverPushedIds) enqueueItem(id);
+      schedulePush();
+    }
   }
   syncState.lastPullAt = new Date().toISOString();
 }
@@ -1082,13 +1127,24 @@ export async function handleAuthUserChange(nextUserId: string | null) {
       st.setTeamMembers(contacts);
     }
 
-    // Grupy najpierw — items.group_id ma klucz obcy do groups(id).
-    await pullUserTags();
-    await pullTagAssignments();
-    await pullGroups();
-    await pullAll(isUserSwitch);
+    // Sync v3 najpierw: migracja → active → worker → hydrate.
+    // Dopiero potem pull (v3: merge do IDB; v2: klasyczny pull).
+    await bootstrapSyncV3(nextUserId);
 
-    pendingGroupDeletes.clear();
+    if (await isV2WriterAllowed(nextUserId)) {
+      await pullUserTags();
+      await pullTagAssignments();
+      await pullGroups();
+      await pullAll(isUserSwitch);
+      pendingGroupDeletes.clear();
+      void flushPendingPush().then(() => reconcileNeverPushed({ flush: true }));
+    } else {
+      // v3 active: pull grup/tagów nadal z chmury do UI; items przez merge IDB.
+      await pullUserTags();
+      await pullTagAssignments();
+      await pullGroups();
+      await pullAllViaSyncV3();
+    }
 
     teardownRealtime();
     setupRealtime();
@@ -1096,15 +1152,10 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     syncState.booting = false;
     syncState.ready = true;
   }
-
-  // Sync v3: migracja + cutover. Gdy active — writer v2 milczy.
-  await bootstrapSyncV3(nextUserId);
-  if (await isV2WriterAllowed(nextUserId)) {
-    void flushPendingPush().then(() => reconcileNeverPushed({ flush: true }));
-  }
 }
 
 async function pushDirtyItems() {
+  if (!shouldRegisterV2ItemWriter()) return;
   if (!supabase || !userId) return;
 
   const dirtyIds = [...syncState.dirtyItemIds];
@@ -1354,7 +1405,7 @@ async function pushDirtyItems() {
       continue;
     }
     console.warn("[cloud] item upsert chunk failed:", error.message);
-    syncState.lastPushError = error.message;
+    syncState.v2PushFailureMsg = error.message;
     if (isSyncDebugEnabled() && (chunkHasWatch || watchedId)) {
       syncDebugTrace({
         correlationId: corr,
@@ -1389,7 +1440,7 @@ async function pushDirtyItems() {
       const { error: rowError } = await supabase.from("items").upsert(row);
       if (rowError) {
         console.warn(`[cloud] item upsert ${row.id}:`, rowError.message);
-        syncState.lastPushError = rowError.message;
+        syncState.v2PushFailureMsg = rowError.message;
         if (isWatchedItem(row.id as string) || (isSyncDebugEnabled() && rowError.message)) {
           syncDebugTrace({
             correlationId: corr,
@@ -1442,7 +1493,7 @@ async function pushDirtyItems() {
         itemId: watchedId,
         stage: "DIRTY_RETAINED",
         result: "retained_in_dirty",
-        snapshot: { lastPushError: syncState.lastPushError },
+        snapshot: { v2PushFailureMsg: syncState.v2PushFailureMsg },
       });
     }
   }
@@ -1465,7 +1516,7 @@ async function pushDirtyItems() {
           ? persisted.itemIds.includes(watchedId) ||
             persisted.participantIds.includes(watchedId)
           : null,
-        lastPushError: syncState.lastPushError,
+        v2PushFailureMsg: syncState.v2PushFailureMsg,
       },
     });
   }
@@ -1580,7 +1631,7 @@ async function runPush(): Promise<boolean> {
           dirtyItems: syncState.dirtyItemIds.size,
           dirtyParticipants: syncState.dirtyParticipantIds.size,
           tagAssignmentsDirty: syncState.tagAssignmentsDirty,
-          lastPushError: syncState.lastPushError,
+          v2PushFailureMsg: syncState.v2PushFailureMsg,
           watchStillDirty: watchedId ? syncState.dirtyItemIds.has(watchedId) : null,
         },
       });
@@ -1588,7 +1639,7 @@ async function runPush(): Promise<boolean> {
     return false;
   }
   pushFailureStreak = 0;
-  syncState.lastPushError = null;
+  syncState.v2PushFailureMsg = null;
   if (corr) {
     syncDebugTrace({
       correlationId: corr,
@@ -1684,6 +1735,7 @@ function bindSyncLifecycle() {
   lifecycleBound = true;
 
   window.addEventListener("online", () => {
+    if (!shouldRegisterV2ItemWriter()) return;
     pushFailureStreak = 0;
     realtimeFailureStreak = 0;
     void flushPendingPush();
@@ -1692,24 +1744,25 @@ function bindSyncLifecycle() {
 
   window.addEventListener("pagehide", () => {
     void persistOutboxNow();
-    void flushPendingPush();
+    if (shouldRegisterV2ItemWriter()) void flushPendingPush();
   });
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
-      // Mobile PWA często dostaje tylko `hidden`, bez wiarygodnego pagehide —
-      // to ostatnia szansa, żeby kolejka i push nie zostały w RAM.
       void persistOutboxNow();
-      void flushPendingPush();
+      if (shouldRegisterV2ItemWriter()) void flushPendingPush();
       return;
     }
-    void flushPendingPush();
+    if (shouldRegisterV2ItemWriter()) {
+      void flushPendingPush();
+      void reconcileNeverPushed({ flush: true });
+    }
     ensureRealtimeAlive();
-    void reconcileNeverPushed({ flush: true });
   });
 
-  if (!orphanScanTimer) {
+  if (!orphanScanTimer && shouldRegisterV2ItemWriter()) {
     orphanScanTimer = setInterval(() => {
+      if (!shouldRegisterV2ItemWriter()) return;
       if (document.visibilityState !== "visible") return;
       void reconcileNeverPushed({ flush: true });
     }, ORPHAN_SCAN_INTERVAL_MS);
@@ -1750,27 +1803,11 @@ export async function initCloudSync() {
     // Zapis z UI (także w trakcie bootu) zawsze trafia do trwałej kolejki —
     // wcześniej subscribe gubił commitDraft, gdy booting/applyingRemote=true.
     registerLocalItemWriteHandler((itemId) => {
-      void (async () => {
-        const allowV2 = await isV2WriterAllowed(userId);
-        if (!allowV2) {
-          // Sync v3: pozostałe ścieżki (duplicate, tags, …) → entity+op (bez drugiego setState).
-          const item = useStore.getState().items[itemId];
-          if (item && userId) {
-            const { commitLocalMutation } = await import("@/lib/syncv3");
-            const { wakeSyncV3Worker } = await import("@/lib/syncv3/bootstrap");
-            await commitLocalMutation({
-              userId,
-              draft: item,
-              operationType: item.deletedAt ? "delete" : "upsert",
-              wakeWorker: () => wakeSyncV3Worker(),
-            });
-          }
-          return;
-        }
-        enqueueItem(itemId);
-        void persistOutboxNow();
-        if (shouldSchedulePush()) schedulePush();
-      })();
+      // Po Sync v3 active notify jest zablokowane w syncWrite — tu tylko v2.
+      if (!shouldRegisterV2ItemWriter()) return;
+      enqueueItem(itemId);
+      void persistOutboxNow();
+      if (shouldSchedulePush()) schedulePush();
     });
 
     const { data } = await supabase.auth.getUser();
@@ -1786,7 +1823,7 @@ export async function initCloudSync() {
         trackGroupChange(prev.groups, state.groups);
         trackTagChange(prev.tags, state.tags);
         void isV2WriterAllowed(userId).then((allow) => {
-          if (!allow) return;
+          if (!allow || !shouldRegisterV2ItemWriter()) return;
           trackStoreDirty(prev, state);
           schedulePush();
         });

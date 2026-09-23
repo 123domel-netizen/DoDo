@@ -12,6 +12,7 @@ export function resolveTheme(pref: ThemePreference): "light" | "dark" {
 }
 
 export function applyTheme(pref: ThemePreference) {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
   const resolved = resolveTheme(pref);
   const root = document.documentElement;
 
