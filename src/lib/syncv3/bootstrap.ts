@@ -1,4 +1,3 @@
-import { setSyncV3BlocksNotify } from "@/lib/syncWrite";
 import {
   setSyncV3WriteFlags,
   resetSyncV3Flags,
@@ -47,7 +46,6 @@ export async function refreshV3ActiveCache(userId: string): Promise<boolean> {
     workerEnabled: worker,
     migrationBlocked: resolveWriterMode(state) === "blocked",
   });
-  setSyncV3BlocksNotify(true); // notify nigdy nie jest durability po Sync v3
   return worker;
 }
 
@@ -55,23 +53,36 @@ function entityPushOrder(op: SyncOperation): number {
   switch (op.entityType) {
     case "group":
       return 0;
-    case "user_tag":
-      return 1;
     case "item":
+      return 1;
+    case "user_tag":
       return 2;
-    case "participant":
-      return 3;
     case "tag_assignment":
+      return 3;
+    case "participant":
       return 4;
+    case "personal_reminder":
+      return 5;
     default:
       return 9;
   }
 }
 
+function parentItemIdOf(op: SyncOperation): string | null {
+  if (op.parentItemId) return op.parentItemId;
+  const snap = op.payload as unknown as { itemId?: string; parentItemId?: string };
+  if (typeof snap.parentItemId === "string") return snap.parentItemId;
+  if (typeof snap.itemId === "string") return snap.itemId;
+  if (op.entityType === "tag_assignment") return parseTagAssignmentItemId(op.entityId);
+  if (op.entityType === "participant" || op.entityType === "personal_reminder") {
+    return op.entityId.replace(/^pp:|^pr:/, "");
+  }
+  return null;
+}
+
 /**
- * FK readiness: tag_assignment czeka aż item i tagi istnieją lokalnie LUB
- * nie ma dla nich pending parent ops — wtedy defer (nextAttemptAt +5s), bez
- * blokowania niezależnych operacji w tej samej kolejce.
+ * FK readiness — child ops stay pending without bumping nextAttemptAt.
+ * Independent ops of other entities still process in the same pass.
  */
 export async function filterFkReadyOperations(
   _userId: string,
@@ -80,45 +91,55 @@ export async function filterFkReadyOperations(
 ): Promise<{ ready: SyncOperation[]; deferred: SyncOperation[] }> {
   const ready: SyncOperation[] = [];
   const deferred: SyncOperation[] = [];
-  const pendingParents = new Set(
-    ops
-      .filter((o) => o.entityType === "group" || o.entityType === "user_tag" || o.entityType === "item")
-      .map((o) => `${o.entityType}:${o.entityId}`),
-  );
+  const pendingByKey = new Set(ops.map((o) => `${o.entityType}:${o.entityId}`));
 
   for (const op of ops) {
-    if (op.entityType === "tag_assignment") {
-      const itemId = parseTagAssignmentItemId(op.entityId);
-      const snap = op.payload as unknown as { tagIds?: string[] };
-      const itemMissing =
-        pendingParents.has(`item:${itemId}`) || !(await getEntity(db, itemId));
-      let tagMissing = false;
-      for (const tagId of snap.tagIds ?? []) {
-        if (pendingParents.has(`user_tag:${tagId}`)) {
-          tagMissing = true;
-          break;
-        }
-        if (!(await getEntity(db, tagId))) {
-          // tag może już być w chmurze — pozwól workerowi spróbować; defer tylko gdy parent w TEJ kolejce
-          tagMissing = false;
-        }
-      }
-      if (itemMissing && pendingParents.has(`item:${itemId}`)) {
-        deferred.push(op);
-        continue;
-      }
-      if (tagMissing) {
-        deferred.push(op);
-        continue;
-      }
-    }
     if (op.entityType === "item") {
       const groupId = (op.payload as { groupId?: string | null }).groupId;
-      if (groupId && pendingParents.has(`group:${groupId}`)) {
+      if (groupId && pendingByKey.has(`group:${groupId}`)) {
         deferred.push(op);
         continue;
       }
+      ready.push(op);
+      continue;
     }
+
+    if (op.entityType === "tag_assignment") {
+      const itemId = parentItemIdOf(op);
+      const snap = op.payload as unknown as { tagIds?: string[] };
+      if (itemId && pendingByKey.has(`item:${itemId}`)) {
+        deferred.push(op);
+        continue;
+      }
+      let waitTag = false;
+      for (const tagId of snap.tagIds ?? []) {
+        if (pendingByKey.has(`user_tag:${tagId}`)) {
+          waitTag = true;
+          break;
+        }
+      }
+      if (waitTag) {
+        deferred.push(op);
+        continue;
+      }
+      ready.push(op);
+      continue;
+    }
+
+    if (op.entityType === "participant" || op.entityType === "personal_reminder") {
+      const itemId = parentItemIdOf(op);
+      if (itemId && pendingByKey.has(`item:${itemId}`)) {
+        deferred.push(op);
+        continue;
+      }
+      if (itemId && !(await getEntity(db, itemId))) {
+        deferred.push(op);
+        continue;
+      }
+      ready.push(op);
+      continue;
+    }
+
     ready.push(op);
   }
   return { ready, deferred };
@@ -147,6 +168,27 @@ export async function hydrateZustandFromV3(userId: string): Promise<void> {
       const snap = ent.snapshot as unknown as { itemId?: string; tagIds?: string[] };
       myTagIdsByItem[snap.itemId ?? parseTagAssignmentItemId(ent.entityId)] =
         snap.tagIds ?? [];
+    } else if (ent.entityType === "participant" || ent.entityType === "personal_reminder") {
+      const snap = ent.snapshot as unknown as {
+        itemId?: string;
+        description?: string;
+        checklist?: Item["checklist"];
+        attachments?: Item["attachments"];
+        personalReminders?: Item["personalReminders"];
+      };
+      const itemId = snap.itemId ?? ent.entityId.replace(/^pp:|^pr:/, "");
+      const cur = items[itemId] ?? useStore.getState().items[itemId];
+      if (cur) {
+        items[itemId] = {
+          ...cur,
+          ...(snap.description !== undefined ? { description: snap.description } : {}),
+          ...(snap.checklist !== undefined ? { checklist: snap.checklist } : {}),
+          ...(snap.attachments !== undefined ? { attachments: snap.attachments } : {}),
+          ...(snap.personalReminders !== undefined
+            ? { personalReminders: snap.personalReminders }
+            : {}),
+        };
+      }
     }
   }
 
@@ -165,24 +207,16 @@ export function wakeSyncV3Worker(): void {
     void (async () => {
       const db = await openSyncV3Db(uid);
       const pending = await listReadyOperations(db, uid);
-      const { ready, deferred } = await filterFkReadyOperations(uid, pending, db);
-      const now = new Date().toISOString();
-      const { updateOperation } = await import("@/lib/syncv3/db");
-      for (const op of deferred) {
-        await updateOperation(db, {
-          ...op,
-          nextAttemptAt: new Date(Date.now() + 5_000).toISOString(),
-          updatedAt: now,
-          lastErrorCode: "fk_deferred",
-          lastErrorMessage: "waiting for parent entity in queue",
-        });
-      }
+      const { ready } = await filterFkReadyOperations(uid, pending, db);
+      // Deferred stay pending with unchanged nextAttemptAt — no fk_deferred burns.
       await runSyncV3WorkerPass({
         userId: uid,
         authUserId: uid,
         db,
-        sortOps: (ops) => [...ops].sort((a, b) => entityPushOrder(a) - entityPushOrder(b)),
-        // Worker i tak listuje ready — defer już przesunięte; filtrujemy do ready ids
+        sortOps: (ops) =>
+          [...ops]
+            .filter((o) => ready.some((r) => r.operationId === o.operationId))
+            .sort((a, b) => entityPushOrder(a) - entityPushOrder(b)),
         transport: {
           upsertItem: async (row) => {
             const { error } = await supabase!.from("items").upsert(row);
@@ -210,6 +244,20 @@ export function wakeSyncV3Worker(): void {
             const { error } = await supabase!.from("user_tags").delete().eq("id", id);
             return { error: error ? { code: error.code, message: error.message } : null };
           },
+          syncOwnerParticipants: async (itemId, participants) => {
+            const { syncOwnerItemParticipants } = await import("@/lib/cloud");
+            const item = useStore.getState().items[itemId] ?? {
+              id: itemId,
+              participants: (participants as Item["participants"]) ?? [],
+              shareRole: "owner" as const,
+              deletedAt: null,
+            };
+            return syncOwnerItemParticipants(item as Item);
+          },
+          patchParticipant: async (payload) => {
+            const { patchParticipantViaRpc } = await import("@/lib/cloud");
+            return patchParticipantViaRpc(payload);
+          },
           fetchRemoteUpdatedAt: async (id) => {
             const { data } = await supabase!
               .from("items")
@@ -220,7 +268,6 @@ export function wakeSyncV3Worker(): void {
           },
         },
       });
-      void ready;
     })();
   });
 }
@@ -249,7 +296,6 @@ export async function bootstrapSyncV3(userId: string | null): Promise<void> {
   stopWorkerLoop();
   activeUserId = userId;
   resetSyncV3Flags();
-  setSyncV3BlocksNotify(true);
   if (!userId || !cloudEnabled || !supabase) return;
 
   const db = await openSyncV3Db(userId);
@@ -270,7 +316,6 @@ export async function bootstrapSyncV3(userId: string | null): Promise<void> {
     workerEnabled: worker,
     migrationBlocked: mode === "blocked",
   });
-  setSyncV3BlocksNotify(true);
 
   if (meta.migrationState === "awaiting_remote") {
     const onOnline = () => {
