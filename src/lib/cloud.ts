@@ -1104,10 +1104,13 @@ async function pushDirtyItems() {
   if (!supabase || !userId) return;
 
   const dirtyIds = [...syncState.dirtyItemIds];
-  const watchedId = getWatchedItemId();
-  const corr = getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation();
+  const debugOn = isSyncDebugEnabled();
+  const watchedId = debugOn ? getWatchedItemId() : null;
+  const corr = debugOn
+    ? (getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation())
+    : null;
 
-  if (isSyncDebugEnabled()) {
+  if (debugOn && corr) {
     syncDebugTrace({
       correlationId: corr,
       itemId: watchedId,

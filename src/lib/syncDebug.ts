@@ -206,7 +206,7 @@ function safeRowSnapshot(row: Record<string, unknown>): Record<string, unknown> 
 
 export function syncDebugTrace(
   partial: Omit<SyncPushTraceEntry, "timestamp" | "correlationId"> & {
-    correlationId?: string;
+    correlationId?: string | null;
   },
 ) {
   if (!isSyncDebugEnabled()) return;
@@ -227,6 +227,7 @@ export function syncDebugTrace(
 }
 
 export function isWatchedItem(itemId: string | null | undefined): boolean {
+  if (!isSyncDebugEnabled()) return false;
   if (!itemId) return false;
   const watched = getWatchedItemId();
   return Boolean(watched && watched === itemId);
