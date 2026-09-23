@@ -178,7 +178,8 @@ describe("Sync v3 — architecture guards", () => {
     setSyncV3ActiveFlag(true);
     expect(shouldRegisterV2ItemWriter()).toBe(false);
     setSyncV3ActiveFlag(false);
-    expect(shouldRegisterV2ItemWriter()).toBe(true);
+    // v2 writer permanently removed from runtime
+    expect(shouldRegisterV2ItemWriter()).toBe(false);
   });
 
   it("commit creates entity+operation atomically", async () => {

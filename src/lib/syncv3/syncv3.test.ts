@@ -26,7 +26,7 @@ import {
   type SyncV3Meta,
 } from "@/lib/syncv3";
 import { DEFAULT_META } from "@/lib/syncv3/types";
-import { setSyncV3ActiveFlag } from "@/lib/syncv3/activeFlag";
+import { setSyncV3WriteFlags, resetSyncV3Flags } from "@/lib/syncv3/activeFlag";
 
 const ITEM_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ITEM_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -51,7 +51,7 @@ async function withUser(
   } finally {
     db.close();
     await deleteSyncV3Db(userId);
-    setSyncV3ActiveFlag(false);
+    resetSyncV3Flags();
   }
 }
 
@@ -64,7 +64,7 @@ async function forceActive(db: Awaited<ReturnType<typeof openSyncV3Db>>) {
     completedAt: new Date().toISOString(),
   };
   await putMeta(db, meta);
-  setSyncV3ActiveFlag(true);
+  setSyncV3WriteFlags({ writesEnabled: true, workerEnabled: true });
 }
 
 function baseDraft(over: Record<string, unknown> = {}) {
@@ -396,10 +396,11 @@ describe("Sync v3 — merge & engine", () => {
     });
   });
 
-  it("writer modes and no auto v2 after active", async () => {
+  it("writer modes: v3 / v3_local / blocked", async () => {
     expect(resolveWriterMode("active")).toBe("v3");
-    expect(resolveWriterMode("not_started")).toBe("v2");
-    expect(resolveWriterMode("migrating")).toBe("safe_readonly");
+    expect(resolveWriterMode("not_started")).toBe("v3_local");
+    expect(resolveWriterMode("migrating")).toBe("v3_local");
+    expect(resolveWriterMode("failed")).toBe("blocked");
     await withUser(async ({ userId, db }) => {
       await forceActive(db);
       await commitLocalMutation({ userId, db, draft: baseDraft() });
