@@ -6,3 +6,4 @@ export * from "@/lib/syncv3/migrate";
 export * from "@/lib/syncv3/worker";
 export * from "@/lib/syncv3/merge";
 export * from "@/lib/syncv3/engine";
+export * from "@/lib/syncv3/domains";

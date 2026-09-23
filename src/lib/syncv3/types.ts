@@ -22,7 +22,7 @@ export type OperationStatus =
 
 export type OperationType = "upsert" | "delete";
 
-export type EntityType = "item";
+export type EntityType = "item" | "group" | "user_tag" | "tag_assignment" | "participant";
 
 /** Kanoniczny snapshot wysyłany do Supabase — bez undefined. */
 export interface CanonicalItem {

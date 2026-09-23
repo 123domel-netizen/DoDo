@@ -21,6 +21,17 @@ export interface PushTransport {
     id: string,
     row: Record<string, unknown>,
   ): Promise<{ error: { code?: string; message: string } | null }>;
+  upsertGroup?(
+    row: Record<string, unknown>,
+  ): Promise<{ error: { code?: string; message: string } | null }>;
+  deleteGroup?(id: string): Promise<{ error: { code?: string; message: string } | null }>;
+  upsertUserTag?(
+    row: Record<string, unknown>,
+  ): Promise<{ error: { code?: string; message: string } | null }>;
+  deleteUserTag?(id: string): Promise<{ error: { code?: string; message: string } | null }>;
+  upsertTagAssignment?(
+    row: Record<string, unknown>,
+  ): Promise<{ error: { code?: string; message: string } | null }>;
   fetchRemoteUpdatedAt?(id: string): Promise<string | null>;
 }
 
@@ -35,24 +46,21 @@ function nextAttemptIso(attemptCount: number, now = Date.now()): string {
 function isPermanent(code?: string, message?: string): boolean {
   const m = `${code ?? ""} ${message ?? ""}`.toLowerCase();
   return (
-    m.includes("23502") || // not null
-    m.includes("23503") || // fk
-    m.includes("42501") || // insufficient privilege / rls-ish
+    m.includes("23502") ||
+    m.includes("23503") ||
+    m.includes("42501") ||
     m.includes("not-null") ||
     m.includes("foreign key") ||
     m.includes("row-level security")
   );
 }
 
-/**
- * Przetwarza gotowe operacje pojedynczo.
- * Jeden błąd nie blokuje pozostałych.
- */
 export async function runSyncV3WorkerPass(opts: {
   userId: string;
   transport: PushTransport;
   db?: SyncV3Db;
   authUserId: string;
+  sortOps?: (ops: SyncOperation[]) => SyncOperation[];
 }): Promise<{ processed: number; acked: number; failed: number }> {
   const db = opts.db ?? (await openSyncV3Db(opts.userId));
   const meta = await getMeta(db);
@@ -63,7 +71,8 @@ export async function runSyncV3WorkerPass(opts: {
     return { processed: 0, acked: 0, failed: 0 };
   }
 
-  const ready = await listReadyOperations(db, opts.userId);
+  let ready = await listReadyOperations(db, opts.userId);
+  if (opts.sortOps) ready = opts.sortOps(ready);
   let acked = 0;
   let failed = 0;
 
@@ -71,7 +80,11 @@ export async function runSyncV3WorkerPass(opts: {
     await processOne(db, op, opts);
     const after = await import("@/lib/syncv3/db").then((m) => m.getOperation(db, op.operationId));
     if (!after) acked += 1;
-    else if (after.status === "quarantined" || after.status === "failed" || after.status === "pending") {
+    else if (
+      after.status === "quarantined" ||
+      after.status === "failed" ||
+      after.status === "pending"
+    ) {
       if (after.status !== "pending" || after.attemptCount > op.attemptCount) failed += 1;
     }
   }
@@ -85,41 +98,101 @@ async function processOne(
   opts: { transport: PushTransport; authUserId: string },
 ): Promise<void> {
   const now = new Date().toISOString();
-  const inFlight: SyncOperation = {
-    ...op,
-    status: "in_flight",
-    updatedAt: now,
-  };
+  const inFlight: SyncOperation = { ...op, status: "in_flight", updatedAt: now };
   await updateOperation(db, inFlight);
 
-  const validated = validateCanonicalForPush(op.payload);
-  if (!validated.ok) {
-    await updateOperation(db, {
-      ...inFlight,
-      status: "quarantined",
-      attemptCount: op.attemptCount + 1,
-      lastErrorCode: validated.code,
-      lastErrorMessage: validated.message,
-      nextAttemptAt: nextAttemptIso(op.attemptCount + 1),
-    });
-    return;
-  }
+  let result: { error: { code?: string; message: string } | null };
 
-  // Stale guard: nie nadpisuj nowszego remote starszym snapshotem przy retry
-  if (opts.transport.fetchRemoteUpdatedAt) {
-    const remoteAt = await opts.transport.fetchRemoteUpdatedAt(op.entityId);
-    if (isStaleAgainstRemote(op.payload.updatedAt, remoteAt)) {
-      // Lokalna op jest starsza niż remote — ACK jako zbędna (nie cofaj chmury)
-      await ackOperation(db, op.operationId, op.localRevision);
+  if (op.entityType === "item") {
+    const validated = validateCanonicalForPush(op.payload);
+    if (!validated.ok) {
+      await updateOperation(db, {
+        ...inFlight,
+        status: "quarantined",
+        attemptCount: op.attemptCount + 1,
+        lastErrorCode: validated.code,
+        lastErrorMessage: validated.message,
+        nextAttemptAt: nextAttemptIso(op.attemptCount + 1),
+      });
       return;
     }
+    if (opts.transport.fetchRemoteUpdatedAt) {
+      const remoteAt = await opts.transport.fetchRemoteUpdatedAt(op.entityId);
+      if (isStaleAgainstRemote(op.payload.updatedAt, remoteAt)) {
+        await ackOperation(db, op.operationId, op.localRevision);
+        return;
+      }
+    }
+    const row = canonicalToSupabaseRow(op.payload, opts.authUserId);
+    result =
+      op.operationType === "delete" && opts.transport.deleteItem
+        ? await opts.transport.deleteItem(op.entityId, row)
+        : await opts.transport.upsertItem(row);
+  } else if (op.entityType === "group") {
+    const snap = op.payload as unknown as Record<string, unknown>;
+    if (op.operationType === "delete") {
+      result = opts.transport.deleteGroup
+        ? await opts.transport.deleteGroup(op.entityId)
+        : { error: { message: "deleteGroup unsupported" } };
+    } else {
+      const row = {
+        id: op.entityId,
+        user_id: opts.authUserId,
+        name: snap.name,
+        color: snap.color,
+        sort_order: snap.sortOrder ?? 0,
+        icon: snap.icon ?? null,
+        show_in_sidebar: snap.showInSidebar ?? true,
+        show_in_tasks: snap.showInTasks ?? true,
+        show_in_events: snap.showInEvents ?? true,
+        show_in_dashboard: snap.showInDashboard ?? true,
+        show_in_all: snap.showInAll ?? true,
+      };
+      result = opts.transport.upsertGroup
+        ? await opts.transport.upsertGroup(row)
+        : { error: { message: "upsertGroup unsupported" } };
+    }
+  } else if (op.entityType === "user_tag") {
+    const snap = op.payload as unknown as Record<string, unknown>;
+    if (op.operationType === "delete") {
+      result = opts.transport.deleteUserTag
+        ? await opts.transport.deleteUserTag(op.entityId)
+        : { error: { message: "deleteUserTag unsupported" } };
+    } else {
+      result = opts.transport.upsertUserTag
+        ? await opts.transport.upsertUserTag({
+            id: op.entityId,
+            user_id: opts.authUserId,
+            name: snap.name,
+            color: snap.color,
+            created_at: snap.createdAt,
+            updated_at: snap.updatedAt,
+          })
+        : { error: { message: "upsertUserTag unsupported" } };
+    }
+  } else if (op.entityType === "tag_assignment") {
+    const snap = op.payload as unknown as { itemId: string; tagIds: string[] };
+    const rows = (snap.tagIds ?? []).map((tagId) => ({
+      user_id: opts.authUserId,
+      item_id: snap.itemId ?? op.entityId,
+      tag_id: tagId,
+    }));
+    // Upsert each; empty list = no rows (assignments cleared remotely by separate delete path later)
+    result = { error: null };
+    if (opts.transport.upsertTagAssignment) {
+      for (const row of rows) {
+        const r = await opts.transport.upsertTagAssignment(row);
+        if (r.error) {
+          result = r;
+          break;
+        }
+      }
+    } else {
+      result = { error: { message: "upsertTagAssignment unsupported" } };
+    }
+  } else {
+    result = { error: { message: `unsupported entityType ${op.entityType}` } };
   }
-
-  const row = canonicalToSupabaseRow(op.payload, opts.authUserId);
-  const result =
-    op.operationType === "delete" && opts.transport.deleteItem
-      ? await opts.transport.deleteItem(op.entityId, row)
-      : await opts.transport.upsertItem(row);
 
   if (!result.error) {
     await ackOperation(db, op.operationId, op.localRevision);
