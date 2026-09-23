@@ -1750,12 +1750,27 @@ export async function initCloudSync() {
     // Zapis z UI (także w trakcie bootu) zawsze trafia do trwałej kolejki —
     // wcześniej subscribe gubił commitDraft, gdy booting/applyingRemote=true.
     registerLocalItemWriteHandler((itemId) => {
-      void isV2WriterAllowed(userId).then((allow) => {
-        if (!allow) return;
+      void (async () => {
+        const allowV2 = await isV2WriterAllowed(userId);
+        if (!allowV2) {
+          // Sync v3: pozostałe ścieżki (duplicate, tags, …) → entity+op (bez drugiego setState).
+          const item = useStore.getState().items[itemId];
+          if (item && userId) {
+            const { commitLocalMutation } = await import("@/lib/syncv3");
+            const { wakeSyncV3Worker } = await import("@/lib/syncv3/bootstrap");
+            await commitLocalMutation({
+              userId,
+              draft: item,
+              operationType: item.deletedAt ? "delete" : "upsert",
+              wakeWorker: () => wakeSyncV3Worker(),
+            });
+          }
+          return;
+        }
         enqueueItem(itemId);
         void persistOutboxNow();
         if (shouldSchedulePush()) schedulePush();
-      });
+      })();
     });
 
     const { data } = await supabase.auth.getUser();
