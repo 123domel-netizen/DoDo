@@ -6,6 +6,7 @@ import { loadAssignableContacts } from "@/lib/contacts";
 import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { applyTheme } from "@/lib/theme";
+import { notifyLocalItemWrite } from "@/lib/syncWrite";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import { defaultGroupVisibility } from "@/lib/groups";
 import { defaultGroupIconForName } from "@/lib/groupIcons";
@@ -386,14 +387,16 @@ export const useStore = create<AppState>()(
       tags: {},
       myTagIdsByItem: {},
 
-      upsertItem: (item) =>
+      upsertItem: (item) => {
         set((s) => ({
           items: { ...s.items, [item.id]: { ...item, updatedAt: new Date().toISOString() } },
-        })),
+        }));
+        notifyLocalItemWrite(item.id);
+      },
 
-      patchItem: (id, patch) =>
+      patchItem: (id, patch) => {
+        const baseId = baseItemId(id);
         set((s) => {
-          const baseId = baseItemId(id);
           const existing = s.items[baseId];
           if (!existing || isItemDeleted(existing)) return {};
           return {
@@ -402,7 +405,9 @@ export const useStore = create<AppState>()(
               [baseId]: { ...existing, ...patch, updatedAt: new Date().toISOString() },
             },
           };
-        }),
+        });
+        if (get().items[baseId]) notifyLocalItemWrite(baseId);
+      },
 
       toggleTaskDone: (id) => {
         const s = get();
@@ -421,12 +426,13 @@ export const useStore = create<AppState>()(
           items: { ...s.items, [item.id]: item },
           groupPromptItemId: promptId ?? s.groupPromptItemId,
         }));
+        notifyLocalItemWrite(item.id);
         return item;
       },
 
-      deleteItem: (id) =>
+      deleteItem: (id) => {
+        const baseId = baseItemId(id);
         set((s) => {
-          const baseId = baseItemId(id);
           const target = s.items[baseId];
           if (!target || isSharedItem(target) || isItemDeleted(target)) return {};
           return {
@@ -436,7 +442,9 @@ export const useStore = create<AppState>()(
             },
             editingId: s.editingId === baseId ? null : s.editingId,
           };
-        }),
+        });
+        if (get().items[baseId]) notifyLocalItemWrite(baseId);
+      },
 
       removeSharedItem: (id) =>
         set((s) => {
@@ -463,6 +471,7 @@ export const useStore = create<AppState>()(
             ? { myTagIdsByItem: { ...s.myTagIdsByItem, [copy.id]: [...srcTags] } }
             : {}),
         }));
+        notifyLocalItemWrite(copy.id);
         return copy;
       },
 
@@ -489,6 +498,7 @@ export const useStore = create<AppState>()(
         copy.attachments = clip.attachments.map((a) => ({ ...a, id: uid() }));
         copy.reminders = clip.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
         set((s) => ({ items: { ...s.items, [copy.id]: copy } }));
+        notifyLocalItemWrite(copy.id);
         return copy;
       },
 
@@ -535,20 +545,26 @@ export const useStore = create<AppState>()(
           };
         }),
 
-      deleteGroup: (id) =>
+      deleteGroup: (id) => {
+        const touched: string[] = [];
         set((s) => {
           const target = s.groups.find((g) => g.id === id);
           if (target && isGroupStructureLocked(target)) return {};
           const items = { ...s.items };
           for (const key of Object.keys(items)) {
-            if (items[key].groupId === id) items[key] = { ...items[key], groupId: null };
+            if (items[key].groupId === id) {
+              items[key] = { ...items[key], groupId: null };
+              touched.push(key);
+            }
           }
           return {
             groups: s.groups.filter((g) => g.id !== id),
             items,
             activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
           };
-        }),
+        });
+        for (const itemId of touched) notifyLocalItemWrite(itemId);
+      },
 
       setActiveGroupFilter: (id) => set({ activeGroupFilter: id }),
 
@@ -569,18 +585,25 @@ export const useStore = create<AppState>()(
             : {},
         ),
 
-      commitDraft: () =>
-        set((s) => {
-          if (!s.draft) return { editingId: null };
-          if (isEmptyDraft(s.draft)) return { draft: null, editingId: null };
-          const promptId = maybeQueueGroupPrompt(s.draft);
-          return {
-            items: { ...s.items, [s.draft.id]: s.draft },
-            draft: null,
-            editingId: null,
-            groupPromptItemId: promptId ?? s.groupPromptItemId,
-          };
-        }),
+      commitDraft: () => {
+        const draft = get().draft;
+        if (!draft) {
+          set({ editingId: null });
+          return;
+        }
+        if (isEmptyDraft(draft)) {
+          set({ draft: null, editingId: null });
+          return;
+        }
+        const promptId = maybeQueueGroupPrompt(draft);
+        set((s) => ({
+          items: { ...s.items, [draft.id]: draft },
+          draft: null,
+          editingId: null,
+          groupPromptItemId: promptId ?? s.groupPromptItemId,
+        }));
+        notifyLocalItemWrite(draft.id);
+      },
 
       discardDraft: () => set({ draft: null, editingId: null }),
 
@@ -637,7 +660,7 @@ export const useStore = create<AppState>()(
         })),
       clearOrgInviteNotice: () => set({ orgInviteNotice: null }),
       setAuthUser: (id, email) => set({ authUserId: id, authUserEmail: email }),
-      dismissGroupPrompt: (itemId) =>
+      dismissGroupPrompt: (itemId) => {
         set((s) => {
           const it = s.items[itemId];
           if (!it) return {};
@@ -647,7 +670,9 @@ export const useStore = create<AppState>()(
               [itemId]: { ...it, groupPromptDismissed: true, updatedAt: new Date().toISOString() },
             },
           };
-        }),
+        });
+        if (get().items[itemId]) notifyLocalItemWrite(itemId);
+      },
       clearGroupPrompt: () => set({ groupPromptItemId: null }),
 
       addTag: (name, color) => {
@@ -685,7 +710,8 @@ export const useStore = create<AppState>()(
           };
         }),
 
-      deleteTag: (id) =>
+      deleteTag: (id) => {
+        const before = get().items;
         set((s) => {
           if (!s.tags[id]) return {};
           const tags = { ...s.tags };
@@ -695,11 +721,16 @@ export const useStore = create<AppState>()(
             myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
             items: scrubTagIdFromItems(s.items, id),
           };
-        }),
+        });
+        const after = get().items;
+        for (const itemId of Object.keys(after)) {
+          if (before[itemId] !== after[itemId]) notifyLocalItemWrite(itemId);
+        }
+      },
 
-      setItemTagIds: (itemId, tagIds) =>
+      setItemTagIds: (itemId, tagIds) => {
+        const baseId = baseItemId(itemId);
         set((s) => {
-          const baseId = baseItemId(itemId);
           const item = s.items[baseId];
           const myTagIdsByItem = { ...s.myTagIdsByItem, [baseId]: tagIds };
           if (!item) return { myTagIdsByItem };
@@ -715,7 +746,11 @@ export const useStore = create<AppState>()(
               },
             },
           };
-        }),
+        });
+        if (get().items[baseId] && !isSharedItem(get().items[baseId]!)) {
+          notifyLocalItemWrite(baseId);
+        }
+      },
     }),
     {
       name: "kalendarz-todo-v1-local",

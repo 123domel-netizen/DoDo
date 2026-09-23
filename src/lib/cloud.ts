@@ -38,6 +38,7 @@ import {
   trackStoreDirty,
 } from "@/lib/syncState";
 import { chunkIds, itemIdsMissingInCloud } from "@/lib/syncOutbox";
+import { registerLocalItemWriteHandler } from "@/lib/syncWrite";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
@@ -47,6 +48,7 @@ import { chunkIds, itemIdsMissingInCloud } from "@/lib/syncOutbox";
 
 const ITEM_PULL_PAGE_SIZE = 1000;
 const ITEM_UPSERT_CHUNK_SIZE = 100;
+const ORPHAN_SCAN_INTERVAL_MS = 90_000;
 
 /** PostgREST ucina wynik do ~1000 wierszy — bez paginacji reconcile „gubi” zdalne ID. */
 async function fetchAllItemRows(): Promise<{
@@ -66,6 +68,51 @@ async function fetchAllItemRows(): Promise<{
   return { rows, error: null };
 }
 
+/** Lekki skan: same ID-y z chmury (bez payloadu) — do doganiania never-pushed. */
+async function fetchAllRemoteItemIds(): Promise<{ ids: string[]; error: string | null }> {
+  if (!supabase || !userId) return { ids: [], error: null };
+  const ids: string[] = [];
+  for (let from = 0; ; from += ITEM_PULL_PAGE_SIZE) {
+    const to = from + ITEM_PULL_PAGE_SIZE - 1;
+    const { data, error } = await supabase.from("items").select("id").range(from, to);
+    if (error) return { ids, error: error.message };
+    const page = data ?? [];
+    for (const row of page) {
+      if (typeof row.id === "string" && row.id) ids.push(row.id);
+    }
+    if (page.length < ITEM_PULL_PAGE_SIZE) break;
+  }
+  return { ids, error: null };
+}
+
+/**
+ * Lokalne wpisy, których nie ma w chmurze → kolejka + opcjonalny flush.
+ * To jest siatka bezpieczeństwa na wypadek, gdy subscribe pominął zapis
+ * (boot / applyingRemote) albo outbox zgubił ID.
+ */
+async function reconcileNeverPushed(opts?: { flush?: boolean }): Promise<number> {
+  if (!supabase || !userId) return 0;
+  if (syncState.booting || syncState.applyingRemote || syncState.pushBlocked) return 0;
+
+  const { ids, error } = await fetchAllRemoteItemIds();
+  if (error) {
+    console.warn("[cloud] orphan id scan failed:", error);
+    return 0;
+  }
+
+  const missing = itemIdsMissingInCloud({
+    localItems: useStore.getState().items,
+    remoteItemIds: ids,
+  });
+  if (!missing.length) return 0;
+
+  console.warn(`[cloud] orphan scan: ${missing.length} lokalnych wpis(ów) bez chmury`);
+  for (const id of missing) enqueueItem(id);
+  void persistOutboxNow();
+  if (opts?.flush !== false) await flushPendingPush();
+  return missing.length;
+}
+
 let userId: string | null = null;
 let userEmail: string | null = null;
 let previousUserId: string | null = null;
@@ -80,6 +127,7 @@ let pushInFlight = false;
 let pushFailureStreak = 0;
 let pushRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let lifecycleBound = false;
+let orphanScanTimer: ReturnType<typeof setInterval> | null = null;
 
 function setApplyingRemote(v: boolean) {
   syncState.applyingRemote = v;
@@ -894,6 +942,8 @@ export async function tryAutoCloudRefresh(): Promise<boolean> {
     if (ok) lastAutoPullAt = new Date().toISOString();
     // Pull mógł dopiero co wykryć never-pushed — wyślij zanim zniknie szansa.
     if (hasPendingPush()) await flushPendingPush();
+    // Lekki skan ID — łapie wpisy pominięte przez subscribe w trakcie bootu.
+    await reconcileNeverPushed({ flush: true });
     return ok;
   } finally {
     autoPullInProgress = false;
@@ -1032,7 +1082,7 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 
   // Dopiero teraz wolno wysyłać: kolejka jest odtworzona, a pull dołożył wpisy,
   // których zabrakło w chmurze.
-  void flushPendingPush();
+  void flushPendingPush().then(() => reconcileNeverPushed({ flush: true }));
 }
 
 async function pushDirtyItems() {
@@ -1234,7 +1284,15 @@ function bindSyncLifecycle() {
     }
     void flushPendingPush();
     ensureRealtimeAlive();
+    void reconcileNeverPushed({ flush: true });
   });
+
+  if (!orphanScanTimer) {
+    orphanScanTimer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void reconcileNeverPushed({ flush: true });
+    }, ORPHAN_SCAN_INTERVAL_MS);
+  }
 }
 
 function trackGroupChange(prev: Group[], next: Group[]) {
@@ -1260,6 +1318,14 @@ export async function initCloudSync() {
   syncState.booting = true;
   syncState.ready = false;
   try {
+    // Zapis z UI (także w trakcie bootu) zawsze trafia do trwałej kolejki —
+    // wcześniej subscribe gubił commitDraft, gdy booting/applyingRemote=true.
+    registerLocalItemWriteHandler((itemId) => {
+      enqueueItem(itemId);
+      void persistOutboxNow();
+      if (shouldSchedulePush()) schedulePush();
+    });
+
     const { data } = await supabase.auth.getUser();
     await handleAuthUserChange(data.user?.id ?? null);
 
