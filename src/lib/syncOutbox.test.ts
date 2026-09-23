@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_OUTBOX,
+  chunkIds,
   isEmptyOutbox,
   itemIdsMissingInCloud,
   normalizePersistedOutbox,
@@ -80,5 +81,13 @@ describe("rekoncyliacja po pullu", () => {
         remoteItemIds: [],
       }),
     ).toEqual(["deleted"]);
+  });
+});
+
+describe("chunkIds", () => {
+  it("dzieli listę na paczki stałej wielkości", () => {
+    expect(chunkIds([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+    expect(chunkIds([], 10)).toEqual([]);
+    expect(chunkIds(["a"], 50)).toEqual([["a"]]);
   });
 });
