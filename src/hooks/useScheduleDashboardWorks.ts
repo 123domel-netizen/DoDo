@@ -43,6 +43,7 @@ export function useScheduleDashboardWorks(opts?: {
       soonDays: opts?.soonDays,
       minUpcoming: opts?.minUpcoming,
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- tick is a version bump from schedule repo subscribers
   }, [
     enabled,
     useCloud,

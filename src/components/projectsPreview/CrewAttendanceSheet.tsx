@@ -130,7 +130,10 @@ export function CrewAttendanceSheet({
   onDelete,
 }: CrewAttendanceSheetProps) {
   const today = todayIso();
-  const options = crewOptions?.length ? crewOptions : [initialCrew];
+  const options = useMemo(
+    () => (crewOptions?.length ? crewOptions : [initialCrew]),
+    [crewOptions, initialCrew],
+  );
   const sortedOptions = useMemo(
     () => sortCrewsByAttendanceUsage(options, attendanceHistory),
     [options, attendanceHistory],

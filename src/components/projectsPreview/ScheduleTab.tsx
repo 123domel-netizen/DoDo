@@ -703,6 +703,7 @@ export function ScheduleTab({
     range.end,
     contentRange.days,
     dayPx,
+    labelPx,
     highlightBlockId,
     highlightDate,
     rows.length,

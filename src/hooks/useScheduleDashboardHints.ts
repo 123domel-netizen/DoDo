@@ -86,5 +86,7 @@ export function useScheduleDashboardHints(opts: {
       maxToday: opts.maxToday,
       maxUpcoming: opts.maxUpcoming,
     });
+  // tick: schedule repo subscriber version — forces recompute when local schedule mutates
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- tick is a version bump, not a value read
   }, [enabled, useCloud, cloudHints, opts.maxToday, opts.maxUpcoming, tick]);
 }
