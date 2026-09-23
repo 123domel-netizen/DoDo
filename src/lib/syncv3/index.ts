@@ -7,3 +7,5 @@ export * from "@/lib/syncv3/worker";
 export * from "@/lib/syncv3/merge";
 export * from "@/lib/syncv3/engine";
 export * from "@/lib/syncv3/domains";
+export * from "@/lib/syncv3/remoteApply";
+export * from "@/lib/syncv3/entityIds";

@@ -1,4 +1,4 @@
-import type { RealtimeChannel } from "@supabase/supabase-js";
+﻿import type { RealtimeChannel } from "@supabase/supabase-js";
 import { withNormalizedAllDay } from "@/lib/allDay";
 import {
   ensureArchiveGroup,
@@ -9,7 +9,6 @@ import {
   stripGoogleGroups,
 } from "@/lib/groups";
 import { isShareGroup, updateSharedItemContent, updateOwnParticipationReminders } from "@/lib/share";
-import { mergeItemOnSync } from "@/lib/items";
 import { sanitizeItemDates, coerceItemType } from "@/lib/dates";
 import {
   participantRowFromParticipant,
@@ -22,35 +21,24 @@ import { resetLocalUserState, switchPersistUser, useStore } from "@/state/store"
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { bootstrapOrgs } from "@/lib/orgs";
 import { loadAssignableContacts } from "@/lib/contacts";
-import { migrateGroupColor, LEGACY_GROUP_COLOR_MAP } from "@/lib/factory";
+import { migrateGroupColor } from "@/lib/factory";
 import {
-  clearDirtyItems,
   clearDirtyParticipants,
-  clearTagAssignmentsDirty,
-  enqueueItem,
   getSyncDiagnostics,
-  hasPendingPush,
-  persistOutboxNow,
   resetSyncState,
   restoreOutboxForUser,
-  shouldSchedulePush,
   syncState,
-  trackStoreDirty,
 } from "@/lib/syncState";
-import { chunkIds, itemIdsMissingInCloud, loadOutbox } from "@/lib/syncOutbox";
-import { registerLocalItemWriteHandler } from "@/lib/syncWrite";
-import { bootstrapSyncV3, hydrateZustandFromV3, isV2WriterAllowed, shouldRegisterV2ItemWriter } from "@/lib/syncv3/bootstrap";
-import { mergeRemoteIntoLocal } from "@/lib/syncv3/merge";
+import { bootstrapSyncV3, hydrateZustandFromV3 } from "@/lib/syncv3/bootstrap";
 import {
-  beginSyncDebugCorrelation,
-  getActiveSyncDebugCorrelation,
-  getWatchedItemId,
-  installSyncDebugApi,
-  isSyncDebugEnabled,
-  isWatchedItem,
-  setSyncDebugHooks,
-  syncDebugTrace,
-} from "@/lib/syncDebug";
+  applyRemoteGroupsToStore,
+  applyRemoteItemsToStore,
+  applyRemoteTagAssignmentsToStore,
+  applyRemoteTagsToStore,
+  applyRemoteResultToZustand,
+} from "@/lib/syncv3/cloudRemoteBridge";
+import { applyRemoteEntities } from "@/lib/syncv3/remoteApply";
+import { installSyncDebugApi, setSyncDebugHooks } from "@/lib/syncDebug";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
@@ -59,10 +47,8 @@ import {
  */
 
 const ITEM_PULL_PAGE_SIZE = 1000;
-const ITEM_UPSERT_CHUNK_SIZE = 100;
-const ORPHAN_SCAN_INTERVAL_MS = 90_000;
 
-/** PostgREST ucina wynik do ~1000 wierszy — bez paginacji reconcile „gubi” zdalne ID. */
+/** PostgREST ucina wynik do ~1000 wierszy â€” bez paginacji reconcile â€žgubiâ€ť zdalne ID. */
 async function fetchAllItemRows(): Promise<{
   rows: Record<string, unknown>[];
   error: string | null;
@@ -80,8 +66,9 @@ async function fetchAllItemRows(): Promise<{
   return { rows, error: null };
 }
 
-/** Lekki skan: same ID-y z chmury (bez payloadu) — do doganiania never-pushed. */
-async function fetchAllRemoteItemIds(): Promise<{ ids: string[]; error: string | null }> {
+/** Lekki skan: same ID-y z chmury (bez payloadu) â€” do doganiania never-pushed. */
+/** Lekki skan remote ID — używany przez Sync v3 remoteIds; zachowany dla testów. */
+export async function fetchAllRemoteItemIds(): Promise<{ ids: string[]; error: string | null }> {
   if (!supabase || !userId) return { ids: [], error: null };
   const ids: string[] = [];
   for (let from = 0; ; from += ITEM_PULL_PAGE_SIZE) {
@@ -98,38 +85,17 @@ async function fetchAllRemoteItemIds(): Promise<{ ids: string[]; error: string |
 }
 
 /**
- * Lokalne wpisy, których nie ma w chmurze → kolejka + opcjonalny flush.
- * To jest siatka bezpieczeństwa na wypadek, gdy subscribe pominął zapis
- * (boot / applyingRemote) albo outbox zgubił ID.
+ * v2 orphan scan / reconcileNeverPushed â€” USUNIÄTE z runtime.
+ * Local-only recovery = Sync v3 migration + worker operations.
  */
-async function reconcileNeverPushed(opts?: { flush?: boolean }): Promise<number> {
-  if (!shouldRegisterV2ItemWriter()) return 0;
-  if (!supabase || !userId) return 0;
-  if (syncState.booting || syncState.applyingRemote || syncState.pushBlocked) return 0;
-
-  const { ids, error } = await fetchAllRemoteItemIds();
-  if (error) {
-    console.warn("[cloud] orphan id scan failed:", error);
-    return 0;
-  }
-
-  const missing = itemIdsMissingInCloud({
-    localItems: useStore.getState().items,
-    remoteItemIds: ids,
-  });
-  if (!missing.length) return 0;
-
-  console.warn(`[cloud] orphan scan: ${missing.length} lokalnych wpis(ów) bez chmury`);
-  for (const id of missing) enqueueItem(id);
-  void persistOutboxNow();
-  if (opts?.flush !== false) await flushPendingPush();
-  return missing.length;
+async function reconcileNeverPushed(_opts?: { flush?: boolean }): Promise<number> {
+  return 0;
 }
+void reconcileNeverPushed;
 
 let userId: string | null = null;
 let userEmail: string | null = null;
 let previousUserId: string | null = null;
-let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let realtimeChannel: RealtimeChannel | null = null;
 let storeSubscribed = false;
 let realtimeSubscribed = false;
@@ -137,10 +103,7 @@ let realtimeEverSubscribed = false;
 let realtimeFailureStreak = 0;
 let realtimeResubscribeTimer: ReturnType<typeof setTimeout> | null = null;
 let pushInFlight = false;
-let pushFailureStreak = 0;
-let pushRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let lifecycleBound = false;
-let orphanScanTimer: ReturnType<typeof setInterval> | null = null;
 
 function setApplyingRemote(v: boolean) {
   syncState.applyingRemote = v;
@@ -153,6 +116,10 @@ const pendingGroupDeletes = new Set<string>();
 const pendingTagDeletes = new Set<string>();
 let lastTagsSnapshot = "";
 let lastAssignmentsSnapshot = "";
+
+export function getCloudDomainSnapshots() {
+  return { lastTagsSnapshot, lastAssignmentsSnapshot };
+}
 
 function itemToRow(item: Item, payloadExtras?: Record<string, unknown>) {
   return {
@@ -244,7 +211,7 @@ function rowToItem(row: Record<string, unknown>, shareRole: Item["shareRole"] = 
   };
   const { item: clean, demotedDueDate } = sanitizeItemDates(item);
   if (demotedDueDate) {
-    console.warn(`[cloud] item ${clean.id}: niepoprawny start/end — zdjęto termin z kalendarza`);
+    console.warn(`[cloud] item ${clean.id}: niepoprawny start/end â€” zdjÄ™to termin z kalendarza`);
   }
   return clean.allDay ? withNormalizedAllDay(clean) : clean;
 }
@@ -361,40 +328,22 @@ async function pullUserTags() {
     console.warn("[cloud] tags pull failed:", error.message);
     return;
   }
-  const tags: Record<string, UserTag> = {};
-  let colorsMigrated = false;
+  const tags: UserTag[] = [];
   for (const row of data ?? []) {
-    const raw = ((row.color as string) ?? "").toLowerCase();
-    if (raw in LEGACY_GROUP_COLOR_MAP) colorsMigrated = true;
-    tags[row.id as string] = rowToTag(row);
+    tags.push(rowToTag(row));
   }
-  useStore.setState({ tags });
-  lastTagsSnapshot = tagsSnapshot(tags);
-  if (colorsMigrated) {
-    lastTagsSnapshot = "";
-    await pushUserTags();
+  setApplyingRemote(true);
+  try {
+    const result = await applyRemoteTagsToStore(userId, tags);
+    if (result.ok) lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
+  } finally {
+    setApplyingRemote(false);
   }
 }
 
 async function pushUserTags() {
-  if (!supabase || !userId) return;
-  for (const id of pendingTagDeletes) {
-    await supabase.from("user_tags").delete().eq("id", id).eq("user_id", userId);
-  }
-  pendingTagDeletes.clear();
-
-  const tags = useStore.getState().tags;
-  const snapshot = tagsSnapshot(tags);
-  if (snapshot === lastTagsSnapshot) return;
-  const rows = Object.values(tags).map(tagToRow);
-  if (rows.length) {
-    const { error } = await supabase.from("user_tags").upsert(rows);
-    if (error) {
-      console.warn("[cloud] tags push failed:", error.message);
-      return;
-    }
-  }
-  lastTagsSnapshot = snapshot;
+  // Push tagĂłw: wyĹ‚Ä…cznie Sync v3 worker (persistTagViaSyncV3).
+  return;
 }
 
 async function pullTagAssignments() {
@@ -411,38 +360,17 @@ async function pullTagAssignments() {
   for (const row of data ?? []) {
     remote[row.item_id as string] = (row.tag_ids as string[]) ?? [];
   }
-  const local = useStore.getState().myTagIdsByItem;
-  const merged = { ...local, ...remote };
-  useStore.setState({ myTagIdsByItem: merged });
-  lastAssignmentsSnapshot = assignmentsSnapshot(merged);
+  setApplyingRemote(true);
+  try {
+    const result = await applyRemoteTagAssignmentsToStore(userId, remote);
+    if (result.ok) lastAssignmentsSnapshot = assignmentsSnapshot(useStore.getState().myTagIdsByItem);
+  } finally {
+    setApplyingRemote(false);
+  }
 }
 
 async function pushTagAssignments() {
-  if (!supabase || !userId) return;
-  const map = useStore.getState().myTagIdsByItem;
-  const snapshot = assignmentsSnapshot(map);
-  if (snapshot === lastAssignmentsSnapshot) return;
-
-  const rows = Object.entries(map)
-    .filter(([, ids]) => ids.length > 0)
-    .map(([itemId, tagIds]) => ({
-      user_id: userId,
-      item_id: itemId,
-      tag_ids: tagIds,
-      updated_at: new Date().toISOString(),
-    }));
-
-  if (rows.length) {
-    const { error } = await supabase.from("user_item_tag_assignments").upsert(rows, {
-      onConflict: "user_id,item_id",
-    });
-    if (error) {
-      console.warn("[cloud] tag assignments push failed:", error.message);
-      return;
-    }
-  }
-  lastAssignmentsSnapshot = snapshot;
-  clearTagAssignmentsDirty();
+  // Push assignments: Sync v3 worker.
 }
 
 function syncMyTagIdsFromOwnedItems(items: Record<string, Item>) {
@@ -461,8 +389,8 @@ function syncMyTagIdsFromOwnedItems(items: Record<string, Item>) {
 }
 
 /**
- * Sprowadza listę zdalnych grup do jednej grupy systemowej każdego typu.
- * Zwraca też mapę remap (stare id duplikatu → id zachowane) oraz id do usunięcia.
+ * Sprowadza listÄ™ zdalnych grup do jednej grupy systemowej kaĹĽdego typu.
+ * Zwraca teĹĽ mapÄ™ remap (stare id duplikatu â†’ id zachowane) oraz id do usuniÄ™cia.
  */
 function reconcileGroups(remote: Group[]): {
   groups: Group[];
@@ -472,9 +400,9 @@ function reconcileGroups(remote: Group[]): {
   const remap = new Map<string, string>();
   const deleteIds: string[] = [];
   let archiveKept: Group | null = null;
-  // SHARE jest tylko wirtualny w aplikacji — usuń z bazy, jeśli kiedyś trafił.
-  // Deduplikacja grup użytkownika po nazwie — naprawia duplikaty powstałe, gdy
-  // dwa urządzenia zasiały tabelę zanim się nawzajem zobaczyły.
+  // SHARE jest tylko wirtualny w aplikacji â€” usuĹ„ z bazy, jeĹ›li kiedyĹ› trafiĹ‚.
+  // Deduplikacja grup uĹĽytkownika po nazwie â€” naprawia duplikaty powstaĹ‚e, gdy
+  // dwa urzÄ…dzenia zasiaĹ‚y tabelÄ™ zanim siÄ™ nawzajem zobaczyĹ‚y.
   const userByName = new Map<string, Group>();
   const result: Group[] = [];
 
@@ -490,7 +418,7 @@ function reconcileGroups(remote: Group[]): {
     } else if (isShareGroup(g)) {
       deleteIds.push(g.id);
     } else if (isGoogleGroup(g)) {
-      // Legacy — integracja Google usunięta.
+      // Legacy â€” integracja Google usuniÄ™ta.
       deleteIds.push(g.id);
     } else {
       const key = g.name.trim().toLowerCase();
@@ -571,16 +499,10 @@ async function pullGroups() {
     return;
   }
   const remote = (data ?? []).map(rowToGroup);
-  const colorsMigrated = (data ?? []).some((row) => {
-    const c = ((row.color as string) ?? "").toLowerCase();
-    return c in LEGACY_GROUP_COLOR_MAP;
-  });
 
   if (remote.length === 0) {
-    // Pierwsze urządzenie: zasiej bazę lokalnymi grupami.
     groupsReady = true;
-    lastGroupsSnapshot = "";
-    await pushGroupsFull();
+    lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
     return;
   }
 
@@ -590,24 +512,23 @@ async function pullGroups() {
 
   setApplyingRemote(true);
   try {
-    useStore.setState((s) => ({
-      groups: ensured,
-      items: clearGoogleGroupRefs(remapItemGroups(s.items, remap), googleIds),
-    }));
+    const result = await applyRemoteGroupsToStore(userId, ensured);
+    if (!result.ok) return;
+    // Remap google refs lokalnie po IDB apply (items juĹĽ w store)
+    if (remap.size || googleIds.size) {
+      useStore.setState((s) => ({
+        items: clearGoogleGroupRefs(remapItemGroups(s.items, remap), googleIds),
+      }));
+    }
+    lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
   } finally {
     setApplyingRemote(false);
   }
 
   groupsReady = true;
-  lastGroupsSnapshot = groupsSnapshot(ensured);
 
   if (deleteIds.length) {
     await supabase.from("groups").delete().in("id", deleteIds);
-  }
-  // Dosyłka, gdy ensure dodał brakującą grupę systemową, remap lub migracja kolorów.
-  if (ensured.length !== remote.length - deleteIds.length || remap.size || colorsMigrated) {
-    lastGroupsSnapshot = "";
-    await pushGroupsFull();
   }
 }
 
@@ -731,100 +652,34 @@ async function pullAllViaSyncV3() {
     return;
   }
   const participantByItem = await pullOwnerParticipantRows();
-  const remoteItems: Array<{ id: string; updatedAt: string; raw: Item }> = [];
+  const items: Item[] = [];
   for (const row of rows) {
     let item = rowToItem(row, "owner");
     const dbRows = participantByItem[item.id];
     if (dbRows?.length) {
       item = { ...item, participants: mergeParticipantsWithDb(item.participants, dbRows) };
     }
-    remoteItems.push({ id: item.id, updatedAt: item.updatedAt, raw: item });
+    items.push(item);
   }
   const shared = await pullSharedItems();
-  for (const item of Object.values(shared)) {
-    remoteItems.push({ id: item.id, updatedAt: item.updatedAt, raw: item });
-  }
+  items.push(...Object.values(shared));
 
   setApplyingRemote(true);
   try {
-    const merged = await mergeRemoteIntoLocal({ userId, remoteItems });
-    useStore.setState({ items: merged.items });
-    syncMyTagIdsFromOwnedItems(merged.items);
+    const result = await applyRemoteItemsToStore(userId, items);
+    if (!result.ok) {
+      console.warn("[cloud] remote apply failed:", result.error);
+      return; // cursor / lastPullAt nie przesuwamy
+    }
     await hydrateZustandFromV3(userId);
+    syncState.lastPullAt = new Date().toISOString();
   } finally {
     setApplyingRemote(false);
   }
-  // Po active: NIE enqueue v2 / orphan — local-only czeka w operations v3.
-  syncState.lastPullAt = new Date().toISOString();
 }
 
-async function pullAll(replace = false) {
-  if (!shouldRegisterV2ItemWriter()) {
-    await pullAllViaSyncV3();
-    return;
-  }
-  if (!supabase || !userId) return;
-  const { rows, error } = await fetchAllItemRows();
-  if (error) {
-    console.warn("[cloud] item pull failed:", error);
-    return;
-  }
-  const participantByItem = await pullOwnerParticipantRows();
-  const owned: Record<string, Item> = {};
-  for (const row of rows) {
-    let item = rowToItem(row, "owner");
-    const dbRows = participantByItem[item.id];
-    if (dbRows?.length) {
-      item = { ...item, participants: mergeParticipantsWithDb(item.participants, dbRows) };
-    }
-    owned[item.id] = item;
-  }
-
-  const shared = await pullSharedItems();
-  const remoteItems = { ...owned, ...shared };
-
-  // Wpisy, które mamy lokalnie, a których nie ma w chmurze, nigdy nie zostały
-  // wysłane (usuwanie jest miękkie — tombstone zostaje wierszem). Pull nie może
-  // ich skasować, a kolejka musi je odzyskać nawet gdy zgubiła je awaria.
-  const localBefore = useStore.getState().items;
-  const neverPushedIds = itemIdsMissingInCloud({
-    localItems: localBefore,
-    remoteItemIds: Object.keys(remoteItems),
-  });
-
-  setApplyingRemote(true);
-  try {
-    let next: Record<string, Item>;
-    if (replace) {
-      next = { ...remoteItems };
-      for (const id of neverPushedIds) {
-        const local = localBefore[id];
-        if (local) next[id] = local;
-      }
-    } else {
-      next = { ...localBefore };
-      for (const [id, remote] of Object.entries(remoteItems)) {
-        next[id] = mergeItemOnSync(localBefore[id], remote);
-      }
-    }
-    useStore.setState({ items: next });
-    syncMyTagIdsFromOwnedItems(next);
-  } finally {
-    setApplyingRemote(false);
-  }
-
-  if (neverPushedIds.length) {
-    if (!shouldRegisterV2ItemWriter()) {
-      // v3: never-pushed obsługuje migrator/worker, nie enqueue v2
-    } else {
-      console.warn(
-        `[cloud] ${neverPushedIds.length} wpis(ów) nie ma w chmurze — ponawiam wysyłkę`,
-      );
-      for (const id of neverPushedIds) enqueueItem(id);
-      schedulePush();
-    }
-  }
-  syncState.lastPullAt = new Date().toISOString();
+async function pullAll(_replace = false) {
+  await pullAllViaSyncV3();
 }
 
 function teardownRealtime() {
@@ -840,8 +695,8 @@ function teardownRealtime() {
 }
 
 /**
- * Kanał potrafi umrzeć po uśpieniu laptopa i nigdy się nie podnieść — wtedy
- * urządzenie przestaje widzieć zmiany z innych urządzeń aż do przeładowania.
+ * KanaĹ‚ potrafi umrzeÄ‡ po uĹ›pieniu laptopa i nigdy siÄ™ nie podnieĹ›Ä‡ â€” wtedy
+ * urzÄ…dzenie przestaje widzieÄ‡ zmiany z innych urzÄ…dzeĹ„ aĹĽ do przeĹ‚adowania.
  */
 function scheduleRealtimeResubscribe() {
   if (realtimeResubscribeTimer || !userId) return;
@@ -854,7 +709,7 @@ function scheduleRealtimeResubscribe() {
   }, delay);
 }
 
-/** Wywoływane po powrocie sieci / do zakładki — cisza w kanale bywa milcząca. */
+/** WywoĹ‚ywane po powrocie sieci / do zakĹ‚adki â€” cisza w kanale bywa milczÄ…ca. */
 function ensureRealtimeAlive() {
   if (!cloudEnabled || !supabase || !userId) return;
   if (realtimeSubscribed) return;
@@ -864,54 +719,81 @@ function ensureRealtimeAlive() {
 
 function setupRealtime() {
   if (!supabase || !userId || realtimeChannel) return;
+  const uid = userId;
   realtimeChannel = supabase
-    .channel(`items-sync-${userId}`)
+    .channel(`items-sync-${uid}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "items" }, (payload) => {
-      setApplyingRemote(true);
-      try {
-        if (payload.eventType === "DELETE") {
-          const id = (payload.old as { id: string }).id;
-          const next = { ...useStore.getState().items };
-          delete next[id];
-          useStore.setState({ items: next });
-        } else {
-          const row = payload.new as Record<string, unknown>;
-          const ownerId = row.user_id as string;
-          const role = ownerId === userId ? "owner" : "participant";
-          const remote = rowToItem(row, role);
-          const local = useStore.getState().items[remote.id];
-          const merged = mergeItemOnSync(local, remote);
-          useStore.setState((s) => ({ items: { ...s.items, [remote.id]: merged } }));
+      void (async () => {
+        setApplyingRemote(true);
+        try {
+          if (payload.eventType === "DELETE") {
+            const id = (payload.old as { id: string }).id;
+            const result = await applyRemoteEntities({
+              userId: uid,
+              remotes: [
+                {
+                  entityType: "item",
+                  entityId: id,
+                  snapshot: { id, updatedAt: new Date().toISOString() },
+                  updatedAt: new Date().toISOString(),
+                  deleted: true,
+                },
+              ],
+              applyToUi: applyRemoteResultToZustand,
+            });
+            if (!result.ok) return;
+          } else {
+            const row = payload.new as Record<string, unknown>;
+            const ownerId = row.user_id as string;
+            const role = ownerId === uid ? "owner" : "participant";
+            const remote = rowToItem(row, role);
+            const result = await applyRemoteItemsToStore(uid, [remote]);
+            if (!result.ok) return;
+          }
+        } finally {
+          setApplyingRemote(false);
         }
-      } finally {
-        setApplyingRemote(false);
-      }
+      })();
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "groups" }, (payload) => {
-      setApplyingRemote(true);
-      try {
-        if (payload.eventType === "DELETE") {
-          const id = (payload.old as { id: string }).id;
-          useStore.setState((s) => ({ groups: s.groups.filter((g) => g.id !== id) }));
-        } else {
-          const group = rowToGroup(payload.new as Record<string, unknown>);
-          useStore.setState((s) => ({
-            groups: s.groups.some((g) => g.id === group.id)
-              ? s.groups.map((g) => (g.id === group.id ? group : g))
-              : [...s.groups, group],
-          }));
+      void (async () => {
+        setApplyingRemote(true);
+        try {
+          if (payload.eventType === "DELETE") {
+            const id = (payload.old as { id: string }).id;
+            const result = await applyRemoteEntities({
+              userId: uid,
+              remotes: [
+                {
+                  entityType: "group",
+                  entityId: id,
+                  snapshot: { id },
+                  updatedAt: new Date().toISOString(),
+                  deleted: true,
+                },
+              ],
+              applyToUi: (r) => {
+                if (!r.ok) return;
+                useStore.setState((s) => ({
+                  groups: s.groups.filter((g) => g.id !== id),
+                }));
+              },
+            });
+            if (!result.ok) return;
+          } else {
+            const group = rowToGroup(payload.new as Record<string, unknown>);
+            await applyRemoteGroupsToStore(uid, [group]);
+          }
+          lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
+        } finally {
+          setApplyingRemote(false);
         }
-        lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
-      } finally {
-        setApplyingRemote(false);
-      }
+      })();
     })
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
         realtimeSubscribed = true;
         realtimeFailureStreak = 0;
-        // Po *ponownym* podłączeniu dociągnij, co uciekło w czasie ciszy.
-        // Pierwsze podłączenie następuje tuż po pullu z bootstrapu.
         if (realtimeEverSubscribed) void cloudMergeRefresh();
         realtimeEverSubscribed = true;
         return;
@@ -953,7 +835,7 @@ function msSinceLastPull(): number | null {
   return Number.isNaN(t) ? null : Date.now() - t;
 }
 
-/** Czy bezpieczny auto-pull może się wykonać (bez side effects). */
+/** Czy bezpieczny auto-pull moĹĽe siÄ™ wykonaÄ‡ (bez side effects). */
 export function canAutoCloudRefresh(): boolean {
   if (!cloudEnabled || !supabase || !userId) return false;
   if (typeof navigator !== "undefined" && !navigator.onLine) return false;
@@ -962,9 +844,9 @@ export function canAutoCloudRefresh(): boolean {
   if (!diag.syncReady || diag.syncBooting || diag.applyingRemote || diag.pushBlocked) {
     return false;
   }
-  // Niewysłane zmiany celowo NIE blokują auto-pulla: auto-pull scala po
-  // `updated_at` i niczego lokalnie nie kasuje. Wcześniejsza blokada oznaczała,
-  // że jeden wpis, którego nie dało się wypchnąć, wyłączał pobieranie na stałe.
+  // NiewysĹ‚ane zmiany celowo NIE blokujÄ… auto-pulla: auto-pull scala po
+  // `updated_at` i niczego lokalnie nie kasuje. WczeĹ›niejsza blokada oznaczaĹ‚a,
+  // ĹĽe jeden wpis, ktĂłrego nie daĹ‚o siÄ™ wypchnÄ…Ä‡, wyĹ‚Ä…czaĹ‚ pobieranie na staĹ‚e.
   if (autoPullInProgress) return false;
   if (useStore.getState().draft) return false;
   if (isUserActivelyEditing()) return false;
@@ -976,8 +858,8 @@ export function canAutoCloudRefresh(): boolean {
 }
 
 /**
- * Scalający pull — nigdy nie kasuje lokalnych wpisów, więc jest bezpieczny
- * także wtedy, gdy coś czeka jeszcze w kolejce wysyłki.
+ * ScalajÄ…cy pull â€” nigdy nie kasuje lokalnych wpisĂłw, wiÄ™c jest bezpieczny
+ * takĹĽe wtedy, gdy coĹ› czeka jeszcze w kolejce wysyĹ‚ki.
  */
 async function cloudMergeRefresh(): Promise<boolean> {
   if (!cloudEnabled || !supabase || !userId) return false;
@@ -992,7 +874,7 @@ async function cloudMergeRefresh(): Promise<boolean> {
   }
 }
 
-/** Bezpieczny auto-pull: najpierw dosyła zaległości, potem scala z chmurą. */
+/** Bezpieczny auto-pull: najpierw dosyĹ‚a zalegĹ‚oĹ›ci, potem scala z chmurÄ…. */
 export async function tryAutoCloudRefresh(): Promise<boolean> {
   if (!canAutoCloudRefresh()) return false;
 
@@ -1001,24 +883,20 @@ export async function tryAutoCloudRefresh(): Promise<boolean> {
     await flushPendingPush();
     const ok = await cloudMergeRefresh();
     if (ok) lastAutoPullAt = new Date().toISOString();
-    // Pull mógł dopiero co wykryć never-pushed — wyślij zanim zniknie szansa.
-    if (hasPendingPush()) await flushPendingPush();
-    // Lekki skan ID — łapie wpisy pominięte przez subscribe w trakcie bootu.
-    await reconcileNeverPushed({ flush: true });
     return ok;
   } finally {
     autoPullInProgress = false;
   }
 }
 
-/** Pełny pull z chmury — zastępuje lokalny cache itemów (Sync v2). */
+/** PeĹ‚ny pull z chmury â€” zastÄ™puje lokalny cache itemĂłw (Sync v2). */
 export async function forceCloudRefresh(): Promise<{ ok: boolean; message: string }> {
   if (!cloudEnabled || !supabase || !userId) {
-    return { ok: false, message: "Synchronizacja niedostępna" };
+    return { ok: false, message: "Synchronizacja niedostÄ™pna" };
   }
 
-  // Najpierw dosyłka: pull z podmianą nie może wyprzedzić zmian, które jeszcze
-  // nie dotarły do chmury (to była prosta droga do cichej utraty wydarzenia).
+  // Najpierw dosyĹ‚ka: pull z podmianÄ… nie moĹĽe wyprzedziÄ‡ zmian, ktĂłre jeszcze
+  // nie dotarĹ‚y do chmury (to byĹ‚a prosta droga do cichej utraty wydarzenia).
   await flushPendingPush();
 
   syncState.pushBlocked = true;
@@ -1042,15 +920,15 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
     lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
     lastAssignmentsSnapshot = assignmentsSnapshot(useStore.getState().myTagIdsByItem);
 
-    return { ok: true, message: "Dane odświeżone" };
+    return { ok: true, message: "Dane odĹ›wieĹĽone" };
   } catch (err) {
     console.warn("[cloud] force refresh failed:", err);
-    return { ok: false, message: "Odświeżanie nie powiodło się" };
+    return { ok: false, message: "OdĹ›wieĹĽanie nie powiodĹ‚o siÄ™" };
   } finally {
     syncState.booting = false;
     syncState.pushBlocked = false;
     syncState.ready = true;
-    // Pull mógł wykryć wpisy nieobecne w chmurze — wyślij je od razu.
+    // Pull mĂłgĹ‚ wykryÄ‡ wpisy nieobecne w chmurze â€” wyĹ›lij je od razu.
     void flushPendingPush();
   }
 }
@@ -1065,9 +943,9 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     teardownRealtime();
     userEmail = null;
     useStore.getState().setAuthUser(null, null);
-    // Najpierw zmiana klucza IDB — inaczej resetLocalUserState() zapisuje pusty
-    // `items` pod kluczem zalogowanego użytkownika i kasuje wpisy, które nigdy
-    // nie zdążyły wyjść do chmury (telefon widzi je, PC już nigdy).
+    // Najpierw zmiana klucza IDB â€” inaczej resetLocalUserState() zapisuje pusty
+    // `items` pod kluczem zalogowanego uĹĽytkownika i kasuje wpisy, ktĂłre nigdy
+    // nie zdÄ…ĹĽyĹ‚y wyjĹ›Ä‡ do chmury (telefon widzi je, PC juĹĽ nigdy).
     await switchPersistUser(null);
     resetLocalUserState();
     previousUserId = null;
@@ -1091,18 +969,18 @@ export async function handleAuthUserChange(nextUserId: string | null) {
   pendingGroupDeletes.clear();
 
   await switchPersistUser(nextUserId);
-  // Kolejka przeżywa restart — inaczej zmiany zrobione tuż przed zamknięciem
-  // aplikacji zostawały tylko w lokalnym cache'u i nie trafiały na inne urządzenia.
+  // Kolejka przeĹĽywa restart â€” inaczej zmiany zrobione tuĹĽ przed zamkniÄ™ciem
+  // aplikacji zostawaĹ‚y tylko w lokalnym cache'u i nie trafiaĹ‚y na inne urzÄ…dzenia.
   const restored = await restoreOutboxForUser(nextUserId);
-  if (restored) console.info(`[cloud] odtworzono kolejkę wysyłki: ${restored}`);
+  if (restored) console.info(`[cloud] odtworzono kolejkÄ™ wysyĹ‚ki: ${restored}`);
 
   const { data: sessionData } = await supabase.auth.getUser();
   userEmail = sessionData.user?.email?.toLowerCase() ?? null;
   useStore.getState().setAuthUser(nextUserId, userEmail);
 
-  // Przy zmianie konta czyścimy tylko UI — NIE kasujemy items przed pullem.
-  // Wcześniejszy resetLocalUserState() zapisywał pusty store do IDB i niszczył
-  // never-pushed zanim pullAll(replace) zdążył je zachować / wysłać.
+  // Przy zmianie konta czyĹ›cimy tylko UI â€” NIE kasujemy items przed pullem.
+  // WczeĹ›niejszy resetLocalUserState() zapisywaĹ‚ pusty store do IDB i niszczyĹ‚
+  // never-pushed zanim pullAll(replace) zdÄ…ĹĽyĹ‚ je zachowaÄ‡ / wysĹ‚aÄ‡.
   if (isUserSwitch) {
     useStore.setState({
       clipboard: null,
@@ -1127,24 +1005,12 @@ export async function handleAuthUserChange(nextUserId: string | null) {
       st.setTeamMembers(contacts);
     }
 
-    // Sync v3 najpierw: migracja → active → worker → hydrate.
-    // Dopiero potem pull (v3: merge do IDB; v2: klasyczny pull).
+    // Sync v3: migracja â†’ flags â†’ hydrate â†’ pull IDB-first â†’ realtime
     await bootstrapSyncV3(nextUserId);
-
-    if (await isV2WriterAllowed(nextUserId)) {
-      await pullUserTags();
-      await pullTagAssignments();
-      await pullGroups();
-      await pullAll(isUserSwitch);
-      pendingGroupDeletes.clear();
-      void flushPendingPush().then(() => reconcileNeverPushed({ flush: true }));
-    } else {
-      // v3 active: pull grup/tagów nadal z chmury do UI; items przez merge IDB.
-      await pullUserTags();
-      await pullTagAssignments();
-      await pullGroups();
-      await pullAllViaSyncV3();
-    }
+    await pullUserTags();
+    await pullTagAssignments();
+    await pullGroups();
+    await pullAll(false);
 
     teardownRealtime();
     setupRealtime();
@@ -1155,371 +1021,7 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 }
 
 async function pushDirtyItems() {
-  if (!shouldRegisterV2ItemWriter()) return;
-  if (!supabase || !userId) return;
-
-  const dirtyIds = [...syncState.dirtyItemIds];
-  const debugOn = isSyncDebugEnabled();
-  const watchedId = debugOn ? getWatchedItemId() : null;
-  const corr = debugOn
-    ? (getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation())
-    : null;
-
-  if (debugOn && corr) {
-    syncDebugTrace({
-      correlationId: corr,
-      itemId: watchedId,
-      stage: "PENDING_IDS_CAPTURED",
-      result: `dirtyItemIds=${dirtyIds.length}`,
-      snapshot: {
-        dirtyIdsSample: dirtyIds.slice(0, 40),
-        watchedId,
-        watchedInDirty: watchedId ? dirtyIds.includes(watchedId) : null,
-      },
-    });
-    if (watchedId) {
-      if (dirtyIds.includes(watchedId)) {
-        syncDebugTrace({
-          correlationId: corr,
-          itemId: watchedId,
-          stage: "TARGET_ID_PRESENT",
-          result: "present_in_dirtyItemIds",
-        });
-      } else {
-        syncDebugTrace({
-          correlationId: corr,
-          itemId: watchedId,
-          stage: "TARGET_ID_ABSENT",
-          result: "absent_from_dirtyItemIds",
-          skipReason: "not_in_dirty",
-        });
-      }
-    }
-  }
-
-  if (!dirtyIds.length) return;
-
-  const state = useStore.getState();
-  const ownedItems = dirtyIds
-    .map((id) => state.items[id])
-    .filter((i): i is Item => Boolean(i) && i.shareRole !== "participant");
-
-  if (watchedId && isSyncDebugEnabled()) {
-    const raw = state.items[watchedId];
-    if (!raw) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "ITEM_MISSING_IN_STORE",
-        result: "missing_from_store",
-        skipReason: "missing_from_store",
-      });
-    } else if (raw.shareRole === "participant") {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "TARGET_EXCLUDED_FROM_BATCH",
-        result: "participant_item",
-        skipReason: "participant_item",
-        snapshot: {
-          title: raw.title,
-          type: raw.type,
-          shareRole: raw.shareRole,
-        },
-      });
-    } else {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "ITEM_FOUND_IN_STORE",
-        result: "found",
-        snapshot: {
-          title: raw.title,
-          type: raw.type,
-          coercedType: coerceItemType(raw),
-          groupId: raw.groupId,
-          shareRole: raw.shareRole ?? null,
-          deletedAt: raw.deletedAt ?? null,
-          updatedAt: raw.updatedAt,
-        },
-      });
-    }
-  }
-
-  const missingIds = dirtyIds.filter((id) => !state.items[id]);
-  if (missingIds.length) clearDirtyItems(missingIds);
-
-  if (!ownedItems.length) return;
-
-  const pushedIds: string[] = [];
-  const ids = ownedItems.map((i) => i.id);
-  const payloadExtrasById = new Map<string, Record<string, unknown>>();
-  const { data: existingRows } = await supabase
-    .from("items")
-    .select("id, payload")
-    .in("id", ids);
-  for (const row of existingRows ?? []) {
-    const payload = (row.payload ?? {}) as Record<string, unknown>;
-    const extras: Record<string, unknown> = {};
-    if (payload.googleReminderEventIds) {
-      extras.googleReminderEventIds = payload.googleReminderEventIds;
-    }
-    if (payload.syncSource) extras.syncSource = payload.syncSource;
-    if (payload.googleRecurrence) extras.googleRecurrence = payload.googleRecurrence;
-    if (payload.googleRecurringSeriesId) {
-      extras.googleRecurringSeriesId = payload.googleRecurringSeriesId;
-    }
-    if (payload.googleRecurrenceExceptions) {
-      extras.googleRecurrenceExceptions = payload.googleRecurrenceExceptions;
-    }
-    if (payload.googleCalendarEventId) {
-      extras.googleCalendarEventId = payload.googleCalendarEventId;
-    }
-    if (Object.keys(extras).length) payloadExtrasById.set(row.id as string, extras);
-  }
-
-  const localGroupIds = new Set(useStore.getState().groups.map((g) => g.id));
-
-  // Sanityzacja przed upsertem: jeden legacy wpis z type=null potrafił wywalić
-  // całą paczkę (NOT NULL) i zatrzymać kolejkę 100+ zmian na stałe.
-  const prepared: { item: Item; row: ReturnType<typeof itemToRow> }[] = [];
-  const skippedIds: string[] = [];
-  for (const raw of ownedItems) {
-    const { item } = sanitizeItemDates(raw);
-    if (item !== raw) {
-      useStore.setState((s) =>
-        s.items[item.id] ? { items: { ...s.items, [item.id]: item } } : {},
-      );
-    }
-    if (item.type !== "event" && item.type !== "task") {
-      skippedIds.push(item.id);
-      if (isWatchedItem(item.id)) {
-        syncDebugTrace({
-          correlationId: corr,
-          itemId: item.id,
-          stage: "TARGET_EXCLUDED_FROM_BATCH",
-          result: "invalid_payload_type",
-          skipReason: "invalid_payload",
-          snapshot: { type: item.type, title: item.title },
-        });
-      }
-      continue;
-    }
-    if (isWatchedItem(item.id)) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: item.id,
-        stage: "ITEM_TO_ROW_INPUT",
-        result: "ok",
-        snapshot: {
-          title: item.title,
-          type: item.type,
-          groupId: item.groupId,
-          start: item.start,
-          end: item.end,
-          updatedAt: item.updatedAt,
-          deletedAt: item.deletedAt ?? null,
-        },
-      });
-    }
-    const row = itemToRow(item, payloadExtrasById.get(item.id));
-    if (row.group_id && !localGroupIds.has(row.group_id as string)) row.group_id = null;
-    if (isWatchedItem(item.id)) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: item.id,
-        stage: "ITEM_TO_ROW_OUTPUT",
-        result: "ok",
-        snapshot: {
-          id: row.id,
-          user_id: row.user_id,
-          type: row.type,
-          title: row.title,
-          group_id: row.group_id,
-          start_at: row.start_at,
-          end_at: row.end_at,
-          deleted_at: row.deleted_at,
-          updated_at: row.updated_at,
-        },
-      });
-    }
-    prepared.push({ item, row });
-  }
-  if (skippedIds.length) {
-    console.warn(`[cloud] pominięto ${skippedIds.length} wpis(ów) nie nadających się do upsertu`);
-    clearDirtyItems(skippedIds);
-  }
-
-  if (watchedId && isSyncDebugEnabled()) {
-    const included = prepared.some((p) => p.item.id === watchedId);
-    syncDebugTrace({
-      correlationId: corr,
-      itemId: watchedId,
-      stage: included ? "TARGET_INCLUDED_IN_BATCH" : "TARGET_EXCLUDED_FROM_BATCH",
-      result: included ? "included" : "excluded",
-      skipReason: included
-        ? undefined
-        : dirtyIds.includes(watchedId)
-          ? skippedIds.includes(watchedId)
-            ? "invalid_payload"
-            : "unknown"
-          : "not_in_dirty",
-      snapshot: {
-        preparedCount: prepared.length,
-        skippedIdsSample: skippedIds.slice(0, 20),
-      },
-    });
-  }
-
-  const rows = prepared.map((p) => p.row);
-
-  // Paczkami; przy błędzie — per wiersz, żeby jeden trucizna nie blokowała reszty.
-  for (const rowChunk of chunkIds(rows, ITEM_UPSERT_CHUNK_SIZE)) {
-    const chunkHasWatch = watchedId
-      ? rowChunk.some((r) => r.id === watchedId)
-      : false;
-    if (chunkHasWatch) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "SUPABASE_UPSERT_STARTED",
-        result: `chunk_size=${rowChunk.length}`,
-        snapshot: {
-          mode: "chunk",
-          chunkIds: rowChunk.map((r) => r.id),
-        },
-      });
-    }
-    const { error } = await supabase.from("items").upsert(rowChunk);
-    if (!error) {
-      for (const row of rowChunk) pushedIds.push(row.id as string);
-      if (chunkHasWatch) {
-        syncDebugTrace({
-          correlationId: corr,
-          itemId: watchedId,
-          stage: "SUPABASE_UPSERT_RESULT",
-          result: "chunk_ok",
-          snapshot: { mode: "chunk", chunkSize: rowChunk.length },
-        });
-      }
-      continue;
-    }
-    console.warn("[cloud] item upsert chunk failed:", error.message);
-    syncState.v2PushFailureMsg = error.message;
-    if (isSyncDebugEnabled() && (chunkHasWatch || watchedId)) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "SUPABASE_UPSERT_RESULT",
-        result: "chunk_failed",
-        snapshot: {
-          mode: "chunk",
-          message: error.message,
-          code: (error as { code?: string }).code ?? null,
-          details: (error as { details?: string }).details ?? null,
-          chunkIds: rowChunk.map((r) => r.id),
-          watchInChunk: chunkHasWatch,
-        },
-      });
-    }
-    for (const row of rowChunk) {
-      if (isWatchedItem(row.id as string)) {
-        syncDebugTrace({
-          correlationId: corr,
-          itemId: row.id as string,
-          stage: "SUPABASE_UPSERT_STARTED",
-          result: "per_row_fallback",
-          snapshot: {
-            mode: "row",
-            type: row.type,
-            user_id: row.user_id,
-            title: row.title,
-          },
-        });
-      }
-      const { error: rowError } = await supabase.from("items").upsert(row);
-      if (rowError) {
-        console.warn(`[cloud] item upsert ${row.id}:`, rowError.message);
-        syncState.v2PushFailureMsg = rowError.message;
-        if (isWatchedItem(row.id as string) || (isSyncDebugEnabled() && rowError.message)) {
-          syncDebugTrace({
-            correlationId: corr,
-            itemId: row.id as string,
-            stage: "SUPABASE_UPSERT_RESULT",
-            result: "row_failed",
-            snapshot: {
-              mode: "row",
-              message: rowError.message,
-              code: (rowError as { code?: string }).code ?? null,
-              details: (rowError as { details?: string }).details ?? null,
-              title: row.title,
-              type: row.type,
-              user_id: row.user_id,
-            },
-          });
-        }
-        continue;
-      }
-      pushedIds.push(row.id as string);
-      if (isWatchedItem(row.id as string)) {
-        syncDebugTrace({
-          correlationId: corr,
-          itemId: row.id as string,
-          stage: "SUPABASE_UPSERT_RESULT",
-          result: "row_ok",
-          snapshot: { mode: "row" },
-        });
-      }
-    }
-  }
-
-  const pushedSet = new Set(pushedIds);
-  for (const { item } of prepared) {
-    if (!pushedSet.has(item.id)) continue;
-    await syncItemParticipants(item);
-  }
-
-  if (watchedId && isSyncDebugEnabled()) {
-    if (pushedSet.has(watchedId)) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "DIRTY_CLEARED",
-        result: "cleared",
-      });
-    } else if (dirtyIds.includes(watchedId)) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "DIRTY_RETAINED",
-        result: "retained_in_dirty",
-        snapshot: { v2PushFailureMsg: syncState.v2PushFailureMsg },
-      });
-    }
-  }
-
-  clearDirtyItems(pushedIds);
-
-  if (isSyncDebugEnabled()) {
-    // Tylko odczyt — clearDirtyItems i tak schedule'uje persist; tu nie zapisujemy.
-    const authId = useStore.getState().authUserId;
-    const persisted = await loadOutbox(authId);
-    syncDebugTrace({
-      correlationId: corr,
-      itemId: watchedId,
-      stage: "OUTBOX_PERSISTED_AFTER_ATTEMPT",
-      result: "observed",
-      snapshot: {
-        dirtyRemainingRam: syncState.dirtyItemIds.size,
-        watchStillDirtyRam: watchedId ? syncState.dirtyItemIds.has(watchedId) : null,
-        watchInPersistedOutbox: watchedId
-          ? persisted.itemIds.includes(watchedId) ||
-            persisted.participantIds.includes(watchedId)
-          : null,
-        v2PushFailureMsg: syncState.v2PushFailureMsg,
-      },
-    });
-  }
+  // v2 item push removed — Sync v3 worker only.
 }
 
 async function pushDirtyParticipants() {
@@ -1542,231 +1044,60 @@ async function pushDirtyParticipants() {
   clearDirtyParticipants(pushed);
 }
 
-const PUSH_DEBOUNCE_MS = 800;
-const PUSH_RETRY_BASE_MS = 5_000;
-const PUSH_RETRY_MAX_MS = 5 * 60_000;
-
-/**
- * Jedno przejście kolejki. Zwraca `true`, gdy nic nie zostało do wysłania.
- * Nieudany push zostaje w kolejce (trwałej) i jest ponawiany z backoffem —
- * wcześniej pojedynczy błąd sieci oznaczał, że wpis nie trafiał do chmury już
- * nigdy, bo nic nie planowało kolejnej próby.
- */
 async function runPush(): Promise<boolean> {
-  if (userId && !(await isV2WriterAllowed(userId))) return true;
-
-  const corr = isSyncDebugEnabled()
-    ? (getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation())
-    : null;
-  const watchedId = getWatchedItemId();
-
-  if (!shouldSchedulePush() || !supabase || !userId) {
-    if (corr) {
-      const reason = !supabase
-        ? "no_supabase"
-        : !userId
-          ? "no_auth_user"
-          : syncState.pushBlocked
-            ? "push_blocked"
-            : syncState.booting
-              ? "booting"
-              : syncState.applyingRemote
-                ? "applying_remote"
-                : !syncState.ready
-                  ? "sync_not_ready"
-                  : "unknown";
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "RUN_PUSH_EARLY_RETURN",
-        result: reason,
-        skipReason: reason,
-        snapshot: {
-          ready: syncState.ready,
-          booting: syncState.booting,
-          applyingRemote: syncState.applyingRemote,
-          pushBlocked: syncState.pushBlocked,
-          hasUserId: Boolean(userId),
-          hasSupabase: Boolean(supabase),
-        },
-      });
-    }
-    return false;
-  }
-  if (pushInFlight) {
-    if (corr) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "RUN_PUSH_EARLY_RETURN",
-        result: "in_flight_early_return",
-        skipReason: "in_flight_early_return",
-      });
-    }
-    return false;
-  }
-
+  if (!supabase || !userId) return true;
+  if (syncState.booting || syncState.pushBlocked) return false;
+  if (pushInFlight) return false;
   pushInFlight = true;
   try {
-    await pushGroupsFull();
-    await pushUserTags();
-    await pushDirtyItems();
+    const { wakeSyncV3Worker } = await import("@/lib/syncv3/bootstrap");
+    wakeSyncV3Worker();
     await pushDirtyParticipants();
-    await pushTagAssignments();
     syncState.lastPushAt = new Date().toISOString();
   } finally {
     pushInFlight = false;
   }
-
-  if (hasPendingPush()) {
-    pushFailureStreak += 1;
-    schedulePushRetry();
-    if (corr) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "SEND_ATTEMPT_FINISHED",
-        result: "pending_remains",
-        snapshot: {
-          dirtyItems: syncState.dirtyItemIds.size,
-          dirtyParticipants: syncState.dirtyParticipantIds.size,
-          tagAssignmentsDirty: syncState.tagAssignmentsDirty,
-          v2PushFailureMsg: syncState.v2PushFailureMsg,
-          watchStillDirty: watchedId ? syncState.dirtyItemIds.has(watchedId) : null,
-        },
-      });
-    }
-    return false;
-  }
-  pushFailureStreak = 0;
   syncState.v2PushFailureMsg = null;
-  if (corr) {
-    syncDebugTrace({
-      correlationId: corr,
-      itemId: watchedId,
-      stage: "SEND_ATTEMPT_FINISHED",
-      result: "queue_empty",
-      snapshot: { lastPushAt: syncState.lastPushAt },
-    });
-  }
   return true;
 }
 
 function schedulePushRetry() {
-  if (pushRetryTimer) return;
-  if (typeof navigator !== "undefined" && !navigator.onLine) return;
-  const delay = Math.min(
-    PUSH_RETRY_BASE_MS * 2 ** Math.min(pushFailureStreak - 1, 6),
-    PUSH_RETRY_MAX_MS,
-  );
-  pushRetryTimer = setTimeout(() => {
-    pushRetryTimer = null;
-    void runPush();
-  }, delay);
+  // v2 item retry removed
 }
 
 function schedulePush() {
-  if (!shouldSchedulePush() || !supabase || !userId) return;
-  if (pushTimer) clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => {
-    pushTimer = null;
-    void runPush();
-  }, PUSH_DEBOUNCE_MS);
+  void import("@/lib/syncv3/bootstrap").then((m) => m.wakeSyncV3Worker());
 }
 
-/** Natychmiastowa wysyłka z pominięciem debounce'u (powrót do apki, online, refresh). */
+// Retain schedulePush for online wake path callers.
+void schedulePush;
+
+
+/** Internal wake — no manual flush UI. */
 export async function flushPendingPush(): Promise<boolean> {
-  const corr = isSyncDebugEnabled()
-    ? (getActiveSyncDebugCorrelation() ?? beginSyncDebugCorrelation())
-    : null;
-  const watchedId = getWatchedItemId();
-  if (corr) {
-    syncDebugTrace({
-      correlationId: corr,
-      itemId: watchedId,
-      stage: "FLUSH_ENTERED",
-      result: "entered",
-      snapshot: {
-        dirtyItems: syncState.dirtyItemIds.size,
-        dirtyParticipants: syncState.dirtyParticipantIds.size,
-        tagAssignmentsDirty: syncState.tagAssignmentsDirty,
-        navigatorOnline: typeof navigator !== "undefined" ? navigator.onLine : null,
-        pushInFlight,
-      },
-    });
-  }
-
-  if (pushTimer) {
-    clearTimeout(pushTimer);
-    pushTimer = null;
-  }
-  if (pushRetryTimer) {
-    clearTimeout(pushRetryTimer);
-    pushRetryTimer = null;
-  }
-  if (!hasPendingPush()) {
-    if (corr) {
-      syncDebugTrace({
-        correlationId: corr,
-        itemId: watchedId,
-        stage: "SEND_ATTEMPT_FINISHED",
-        result: "empty_pending",
-        skipReason: "empty_pending",
-      });
-    }
-    return true;
-  }
-  const ok = await runPush();
-  // `runPush` odmawia pracy w trakcie bootu / blokady pulla. Bez tego kolejka
-  // czekałaby wtedy na przypadkową kolejną zmianę w store.
-  if (!ok && hasPendingPush() && !pushRetryTimer) {
-    pushFailureStreak += 1;
-    schedulePushRetry();
-  }
-  return ok;
+  const { wakeSyncV3Worker } = await import("@/lib/syncv3/bootstrap");
+  wakeSyncV3Worker();
+  return runPush();
 }
 
-/**
- * Zdarzenia cyklu życia strony. Na telefonie PWA znika w tle bez ostrzeżenia,
- * więc `pagehide` / `hidden` to ostatni moment, żeby utrwalić kolejkę.
- */
+/** Lifecycle: realtime + v3 worker wake. No v2 orphan/push timers. */
 function bindSyncLifecycle() {
   if (lifecycleBound || typeof window === "undefined") return;
   lifecycleBound = true;
 
   window.addEventListener("online", () => {
-    if (!shouldRegisterV2ItemWriter()) return;
-    pushFailureStreak = 0;
     realtimeFailureStreak = 0;
-    void flushPendingPush();
+    void import("@/lib/syncv3/bootstrap").then((m) => m.wakeSyncV3Worker());
     ensureRealtimeAlive();
   });
 
-  window.addEventListener("pagehide", () => {
-    void persistOutboxNow();
-    if (shouldRegisterV2ItemWriter()) void flushPendingPush();
-  });
+  window.addEventListener("pagehide", () => {});
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") {
-      void persistOutboxNow();
-      if (shouldRegisterV2ItemWriter()) void flushPendingPush();
-      return;
-    }
-    if (shouldRegisterV2ItemWriter()) {
-      void flushPendingPush();
-      void reconcileNeverPushed({ flush: true });
-    }
+    if (document.visibilityState === "hidden") return;
     ensureRealtimeAlive();
+    void import("@/lib/syncv3/bootstrap").then((m) => m.wakeSyncV3Worker());
   });
-
-  if (!orphanScanTimer && shouldRegisterV2ItemWriter()) {
-    orphanScanTimer = setInterval(() => {
-      if (!shouldRegisterV2ItemWriter()) return;
-      if (document.visibilityState !== "visible") return;
-      void reconcileNeverPushed({ flush: true });
-    }, ORPHAN_SCAN_INTERVAL_MS);
-  }
 }
 
 function trackGroupChange(prev: Group[], next: Group[]) {
@@ -1800,15 +1131,7 @@ export async function initCloudSync() {
     });
     installSyncDebugApi();
 
-    // Zapis z UI (także w trakcie bootu) zawsze trafia do trwałej kolejki —
-    // wcześniej subscribe gubił commitDraft, gdy booting/applyingRemote=true.
-    registerLocalItemWriteHandler((itemId) => {
-      // Po Sync v3 active notify jest zablokowane w syncWrite — tu tylko v2.
-      if (!shouldRegisterV2ItemWriter()) return;
-      enqueueItem(itemId);
-      void persistOutboxNow();
-      if (shouldSchedulePush()) schedulePush();
-    });
+    // v2 notify/enqueue/trackStoreDirty removed — Sync v3 commitLocalMutation only.
 
     const { data } = await supabase.auth.getUser();
     await handleAuthUserChange(data.user?.id ?? null);
@@ -1820,13 +1143,9 @@ export async function initCloudSync() {
     if (!storeSubscribed) {
       storeSubscribed = true;
       useStore.subscribe((state, prev) => {
+        // Domain deletes still tracked for cleanup helpers; push via Sync v3.
         trackGroupChange(prev.groups, state.groups);
         trackTagChange(prev.tags, state.tags);
-        void isV2WriterAllowed(userId).then((allow) => {
-          if (!allow || !shouldRegisterV2ItemWriter()) return;
-          trackStoreDirty(prev, state);
-          schedulePush();
-        });
       });
     }
     bindSyncLifecycle();
@@ -1841,3 +1160,13 @@ export async function initCloudSync() {
     }
   }
 }
+
+void pushDirtyItems;
+void schedulePushRetry;
+void schedulePush;
+void pushUserTags;
+void pushTagAssignments;
+void pushGroupsFull;
+void syncItemParticipants;
+void syncMyTagIdsFromOwnedItems;
+void tagToRow;

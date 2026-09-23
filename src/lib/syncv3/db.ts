@@ -214,6 +214,15 @@ export async function putEntityRecord(db: SyncV3Db, entity: EntityRecord): Promi
   await txDone(tx);
 }
 
+/** Atomowy batch remote apply — wszystkie encje w jednej transakcji. */
+export async function putEntitiesBatch(db: SyncV3Db, entities: EntityRecord[]): Promise<void> {
+  if (!entities.length) return;
+  const tx = db.transaction("entities", "readwrite");
+  const store = tx.objectStore("entities");
+  for (const entity of entities) store.put(entity);
+  await txDone(tx);
+}
+
 export async function updateOperation(
   db: SyncV3Db,
   op: SyncOperation,
