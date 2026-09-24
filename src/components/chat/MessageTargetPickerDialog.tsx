@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Forward, MoveRight, Search } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { ChannelIcon } from "@/components/chat/ChannelIcon";
@@ -53,7 +53,10 @@ export function MessageTargetPickerDialog({
     return () => window.clearTimeout(t);
   }, [open, msg.id, mode]);
 
-  const itemTitleLookup = (itemId: string) => items[itemId]?.title;
+  const itemTitleLookup = useCallback(
+    (itemId: string) => items[itemId]?.title,
+    [items],
+  );
 
   const candidates = useMemo(() => {
     const sourceId = msg.conversationId;
@@ -74,7 +77,7 @@ export function MessageTargetPickerDialog({
         const tb = b.entry.lastMessageAt ?? b.entry.createdAt;
         return tb.localeCompare(ta);
       });
-  }, [overview, msg.conversationId, msg.authorUserId, mode, myUserId, items]);
+  }, [overview, msg.conversationId, msg.authorUserId, mode, myUserId, itemTitleLookup]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();

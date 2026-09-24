@@ -1,18 +1,11 @@
 /**
- * Most lokalnych zapisów itemów → kolejka syncu.
- * Wydzielony plik, żeby `store` nie importował `cloud`/`syncState` cyklicznie.
+ * Sync v2 notify bridge — permanently removed.
+ * Local durability is commitLocalMutation / commitDomainMutation only.
  */
 
-type LocalWriteHandler = (itemId: string) => void;
-
-let handler: LocalWriteHandler | null = null;
-
-export function registerLocalItemWriteHandler(next: LocalWriteHandler | null) {
-  handler = next;
-}
-
-/** Wołane z mutacji store (commitDraft, addItem, …) — zawsze, także w trakcie bootu. */
-export function notifyLocalItemWrite(itemId: string) {
-  if (!itemId) return;
-  handler?.(itemId);
+/** @deprecated Always no-op. Kept only so accidental imports fail loudly in DEV. */
+export function notifyLocalItemWrite(itemId: string): void {
+  if (import.meta.env.DEV && itemId) {
+    console.error("[syncv3] notifyLocalItemWrite removed — use commitLocalMutation");
+  }
 }

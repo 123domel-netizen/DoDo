@@ -38,6 +38,9 @@ export function ProjectsListView({
   );
 
   const projects = useMemo(() => {
+    // Invalidate when underlying projects / view-as change (repo identity is stable).
+    void state.projects;
+    void state.viewAsUserId;
     let list = repo.visibleProjectList({
       status: showArchived ? "all" : "active",
     });

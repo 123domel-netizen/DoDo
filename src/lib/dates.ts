@@ -6,10 +6,17 @@
  * trafią do store / formatowania — zamiast try/catch w każdym komponencie.
  */
 
-import type { GoogleRecurrenceException, Item, Reminder } from "@/types";
+import type { GoogleRecurrenceException, Item, ItemType, Reminder } from "@/types";
 
 /** Jak w factory — zadania bez terminu; nie crashuje formatowania. */
 export const DATE_PLACEHOLDER_ISO = "1970-01-01T00:00:00.000Z";
+
+export function coerceItemType(item: Pick<Item, "type" | "showInTodo" | "showInCalendar">): ItemType {
+  if (item.type === "event" || item.type === "task") return item.type;
+  // Legacy IDB: brak `type` — zgaduj po flagach widoczności.
+  if (item.showInTodo && !item.showInCalendar) return "task";
+  return "event";
+}
 
 export function isValidDate(value: Date): boolean {
   return value instanceof Date && Number.isFinite(value.getTime());
@@ -79,15 +86,35 @@ export type ItemDateSanitizeResult = {
 };
 
 /**
- * Naprawia daty wpisu przed zapisem do store.
+ * Naprawia daty i wymagane pola wpisu przed zapisem do store / upsertem.
  * - Opcjonalne pola (deadline, pinned, deletedAt, …) ze śmieciem → null / drop.
  * - start/end niereperowalne przy hasDueDate → hasDueDate=false + placeholder
  *   (wpis zostaje, nie wywala renderu kalendarza).
+ * - brak `type` (legacy IDB) → event|task — inaczej Postgres NOT NULL blokuje
+ *   całą paczkę syncu i „Wyślij” stoi w miejscu.
  */
 export function sanitizeItemDates(item: Item, nowIso = new Date().toISOString()): ItemDateSanitizeResult {
   let repaired = false;
   let demotedDueDate = false;
   let next: Item = { ...item };
+
+  const type = coerceItemType(item);
+  if (type !== item.type) {
+    next = { ...next, type };
+    repaired = true;
+  }
+
+  if (typeof item.title !== "string") {
+    next = { ...next, title: item.title == null ? "" : String(item.title) };
+    repaired = true;
+  }
+  if (typeof item.description !== "string") {
+    next = {
+      ...next,
+      description: item.description == null ? "" : String(item.description),
+    };
+    repaired = true;
+  }
 
   const start = coerceIsoOrNull(item.start);
   const end = coerceIsoOrNull(item.end);

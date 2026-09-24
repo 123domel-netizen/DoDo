@@ -435,10 +435,8 @@ export function WorkspaceHub() {
     [eligiblePeople, overview, myUserId],
   );
   const convIds = useMemo(() => activeOverview.map((c) => c.id), [activeOverview]);
-  const convIdsKey = convIds.join(",");
   /** Decyzje/notatki: wszystkie rozmowy — filtr grupy działa po etykiecie wpisu. */
   const registryConvIds = useMemo(() => overview.map((c) => c.id), [overview]);
-  const registryConvIdsKey = registryConvIds.join(",");
   const unread = totalUnread(activeOverview);
   const activeGroupName = activeGroupFilter
     ? groups.find((g) => g.id === activeGroupFilter)?.name
@@ -511,7 +509,7 @@ export function WorkspaceHub() {
     return () => {
       cancelled = true;
     };
-  }, [hubTab, registryConvIdsKey, registryEpoch]);
+  }, [hubTab, registryConvIds, registryEpoch]);
 
   useEffect(() => {
     if (hubTab !== "notes") return;
@@ -523,7 +521,7 @@ export function WorkspaceHub() {
     return () => {
       cancelled = true;
     };
-  }, [hubTab, registryConvIdsKey, registryEpoch]);
+  }, [hubTab, registryConvIds, registryEpoch]);
 
   useEffect(() => {
     if (hubTab !== "media") return;
@@ -539,7 +537,7 @@ export function WorkspaceHub() {
     return () => {
       cancelled = true;
     };
-  }, [hubTab, convIdsKey]);
+  }, [hubTab, convIds]);
 
   // Wszystkie hooki muszą być przed warunkowymi returnami (Rules of Hooks).
   const folderIdsInUse = useMemo(() => {

@@ -3,7 +3,11 @@ import { AlertTriangle, ClipboardList, Plus, Users } from "lucide-react";
 import { useProjectsPreviewRepo } from "@/hooks/useProjectsPreviewRepo";
 import { applyCrewAttendanceSave } from "@/lib/projectsPreview/applyAttendanceSave";
 import { visibleCrews } from "@/lib/projectsPreview/search";
-import type { PreviewCrew } from "@/lib/projectsPreview/types";
+import type {
+  CrewAttendance,
+  CrewEquipmentLog,
+  PreviewCrew,
+} from "@/lib/projectsPreview/types";
 import { CrewAttendanceSheet } from "./CrewAttendanceSheet";
 import { CrewEditorSheet } from "./CrewEditorSheet";
 
@@ -78,8 +82,8 @@ export function CrewsView({
     if (!preferred) {
       return {
         existing: null as null,
-        existingBatch: [] as typeof state.crewAttendance,
-        equipment: [] as typeof state.crewEquipmentLogs,
+        existingBatch: [] as CrewAttendance[],
+        equipment: [] as CrewEquipmentLog[],
         defaultProjectId: undefined as string | undefined,
       };
     }

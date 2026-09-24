@@ -6,7 +6,16 @@ import { loadAssignableContacts } from "@/lib/contacts";
 import { filterVisibleItems, isItemDeleted, itemSupportsTodoDone, tombstoneItem } from "@/lib/items";
 import { idbStorage } from "@/lib/idbStorage";
 import { applyTheme } from "@/lib/theme";
-import { notifyLocalItemWrite } from "@/lib/syncWrite";
+import {
+  persistItemViaSyncV3,
+  persistItemsViaSyncV3,
+  shouldUseSyncV3Mutations,
+} from "@/lib/syncv3/storeBridge";
+import {
+  persistGroupViaSyncV3,
+  persistTagAssignmentViaSyncV3,
+  persistTagViaSyncV3,
+} from "@/lib/syncv3/domains";
 import { createItem, defaultGroups, uid, migrateGroupColor } from "@/lib/factory";
 import { defaultGroupVisibility } from "@/lib/groups";
 import { defaultGroupIconForName } from "@/lib/groupIcons";
@@ -388,25 +397,32 @@ export const useStore = create<AppState>()(
       myTagIdsByItem: {},
 
       upsertItem: (item) => {
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3({ ...item, updatedAt: new Date().toISOString() }, "upsert");
+          }
+          return;
+        }
         set((s) => ({
           items: { ...s.items, [item.id]: { ...item, updatedAt: new Date().toISOString() } },
         }));
-        notifyLocalItemWrite(item.id);
       },
 
       patchItem: (id, patch) => {
         const baseId = baseItemId(id);
-        set((s) => {
-          const existing = s.items[baseId];
-          if (!existing || isItemDeleted(existing)) return {};
-          return {
-            items: {
-              ...s.items,
-              [baseId]: { ...existing, ...patch, updatedAt: new Date().toISOString() },
-            },
-          };
-        });
-        if (get().items[baseId]) notifyLocalItemWrite(baseId);
+        const existing = get().items[baseId];
+        if (!existing || isItemDeleted(existing)) return;
+        const next = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) void persistItemViaSyncV3(next, "upsert");
+          return;
+        }
+        set((s) => ({
+          items: {
+            ...s.items,
+            [baseId]: next,
+          },
+        }));
       },
 
       toggleTaskDone: (id) => {
@@ -422,28 +438,43 @@ export const useStore = create<AppState>()(
       addItem: (partial) => {
         const item = createItem(partial);
         const promptId = maybeQueueGroupPrompt(item);
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(item, "upsert").then(() => {
+              if (promptId) set({ groupPromptItemId: promptId });
+            });
+          }
+          return item;
+        }
         set((s) => ({
           items: { ...s.items, [item.id]: item },
           groupPromptItemId: promptId ?? s.groupPromptItemId,
         }));
-        notifyLocalItemWrite(item.id);
         return item;
       },
 
       deleteItem: (id) => {
         const baseId = baseItemId(id);
-        set((s) => {
-          const target = s.items[baseId];
-          if (!target || isSharedItem(target) || isItemDeleted(target)) return {};
-          return {
-            items: {
-              ...s.items,
-              [baseId]: tombstoneItem(target, s.authUserId),
-            },
-            editingId: s.editingId === baseId ? null : s.editingId,
-          };
-        });
-        if (get().items[baseId]) notifyLocalItemWrite(baseId);
+        const target = get().items[baseId];
+        if (!target || isSharedItem(target) || isItemDeleted(target)) return;
+        const tomb = tombstoneItem(target, get().authUserId);
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(tomb, "delete").then(() => {
+              set((s) => ({
+                editingId: s.editingId === baseId ? null : s.editingId,
+              }));
+            });
+          }
+          return;
+        }
+        set((s) => ({
+          items: {
+            ...s.items,
+            [baseId]: tomb,
+          },
+          editingId: s.editingId === baseId ? null : s.editingId,
+        }));
       },
 
       removeSharedItem: (id) =>
@@ -465,13 +496,23 @@ export const useStore = create<AppState>()(
         copy.attachments = src.attachments.map((a) => ({ ...a, id: uid() }));
         copy.reminders = src.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
         const srcTags = get().myTagIdsByItem[baseId] ?? src.tagIds ?? [];
+        if (srcTags.length) copy.tagIds = [...srcTags];
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(copy, "upsert").then(async () => {
+              if (srcTags.length) {
+                await persistTagAssignmentViaSyncV3(copy.id, [...srcTags]);
+              }
+            });
+          }
+          return copy;
+        }
         set((s) => ({
           items: { ...s.items, [copy.id]: copy },
           ...(srcTags.length
             ? { myTagIdsByItem: { ...s.myTagIdsByItem, [copy.id]: [...srcTags] } }
             : {}),
         }));
-        notifyLocalItemWrite(copy.id);
         return copy;
       },
 
@@ -497,8 +538,11 @@ export const useStore = create<AppState>()(
         copy.participants = clip.participants.map((p) => ({ ...p, id: uid() }));
         copy.attachments = clip.attachments.map((a) => ({ ...a, id: uid() }));
         copy.reminders = clip.reminders.map((r) => ({ ...r, id: uid(), firedAt: null }));
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) void persistItemViaSyncV3(copy, "upsert");
+          return copy;
+        }
         set((s) => ({ items: { ...s.items, [copy.id]: copy } }));
-        notifyLocalItemWrite(copy.id);
         return copy;
       },
 
@@ -513,48 +557,87 @@ export const useStore = create<AppState>()(
           sortOrder: maxOrder + 1,
           ...defaultGroupVisibility(),
         };
+        if (shouldUseSyncV3Mutations()) {
+          void persistGroupViaSyncV3(group, "upsert");
+          return group;
+        }
         set((s) => ({ groups: [...s.groups, group] }));
         return group;
       },
 
-      patchGroup: (id, patch) =>
+      patchGroup: (id, patch) => {
+        const existing = get().groups.find((g) => g.id === id);
+        if (!existing) return;
+        const next = { ...existing, ...patch };
+        if (shouldUseSyncV3Mutations()) {
+          void persistGroupViaSyncV3(next, "upsert");
+          return;
+        }
         set((s) => ({
-          groups: s.groups.map((g) => (g.id === id ? { ...g, ...patch } : g)),
-        })),
+          groups: s.groups.map((g) => (g.id === id ? next : g)),
+        }));
+      },
 
-      moveGroup: (id, direction) =>
-        set((s) => {
-          const target = s.groups.find((g) => g.id === id);
-          if (!target || isGroupStructureLocked(target)) return {};
+      moveGroup: (id, direction) => {
+        const s = get();
+        const target = s.groups.find((g) => g.id === id);
+        if (!target || isGroupStructureLocked(target)) return;
 
-          const ordered = sortGroupsForRail(s.groups);
-          const idx = ordered.findIndex((g) => g.id === id);
-          if (idx < 0) return {};
+        const ordered = sortGroupsForRail(s.groups);
+        const idx = ordered.findIndex((g) => g.id === id);
+        if (idx < 0) return;
 
-          const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-          if (swapIdx < 0 || swapIdx >= ordered.length) return {};
+        const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+        if (swapIdx < 0 || swapIdx >= ordered.length) return;
 
-          const next = [...ordered];
-          [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-          const sortById = new Map(next.map((g, i) => [g.id, i]));
+        const next = [...ordered];
+        [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+        const sortById = new Map(next.map((g, i) => [g.id, i]));
 
-          return {
-            groups: s.groups.map((g) =>
-              isGroupStructureLocked(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
-            ),
-          };
-        }),
+        const groups = s.groups.map((g) =>
+          isGroupStructureLocked(g) ? g : { ...g, sortOrder: sortById.get(g.id) ?? g.sortOrder },
+        );
+        if (shouldUseSyncV3Mutations()) {
+          void (async () => {
+            for (const g of groups) {
+              if (!isGroupStructureLocked(g)) await persistGroupViaSyncV3(g, "upsert");
+            }
+          })();
+          return;
+        }
+        set({ groups });
+      },
 
       deleteGroup: (id) => {
-        const touched: string[] = [];
+        const target = get().groups.find((g) => g.id === id);
+        if (target && isGroupStructureLocked(target)) return;
+        const touched: Array<{ draft: Item }> = [];
+        for (const it of Object.values(get().items)) {
+          if (it.groupId === id) {
+            touched.push({
+              draft: { ...it, groupId: null, updatedAt: new Date().toISOString() },
+            });
+          }
+        }
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void (async () => {
+              await persistItemsViaSyncV3(
+                touched.map((t) => ({ draft: t.draft, operationType: "upsert" as const })),
+              );
+              if (target) await persistGroupViaSyncV3(target, "delete");
+              set((s) => ({
+                activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
+              }));
+            })();
+          }
+          return;
+        }
         set((s) => {
-          const target = s.groups.find((g) => g.id === id);
-          if (target && isGroupStructureLocked(target)) return {};
           const items = { ...s.items };
           for (const key of Object.keys(items)) {
             if (items[key].groupId === id) {
               items[key] = { ...items[key], groupId: null };
-              touched.push(key);
             }
           }
           return {
@@ -563,7 +646,6 @@ export const useStore = create<AppState>()(
             activeGroupFilter: s.activeGroupFilter === id ? null : s.activeGroupFilter,
           };
         });
-        for (const itemId of touched) notifyLocalItemWrite(itemId);
       },
 
       setActiveGroupFilter: (id) => set({ activeGroupFilter: id }),
@@ -596,13 +678,24 @@ export const useStore = create<AppState>()(
           return;
         }
         const promptId = maybeQueueGroupPrompt(draft);
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void persistItemViaSyncV3(draft, "upsert").then(() => {
+              set((s) => ({
+                draft: null,
+                editingId: null,
+                groupPromptItemId: promptId ?? s.groupPromptItemId,
+              }));
+            });
+          }
+          return;
+        }
         set((s) => ({
           items: { ...s.items, [draft.id]: draft },
           draft: null,
           editingId: null,
           groupPromptItemId: promptId ?? s.groupPromptItemId,
         }));
-        notifyLocalItemWrite(draft.id);
       },
 
       discardDraft: () => set({ draft: null, editingId: null }),
@@ -661,17 +754,20 @@ export const useStore = create<AppState>()(
       clearOrgInviteNotice: () => set({ orgInviteNotice: null }),
       setAuthUser: (id, email) => set({ authUserId: id, authUserEmail: email }),
       dismissGroupPrompt: (itemId) => {
-        set((s) => {
-          const it = s.items[itemId];
-          if (!it) return {};
-          return {
-            items: {
-              ...s.items,
-              [itemId]: { ...it, groupPromptDismissed: true, updatedAt: new Date().toISOString() },
-            },
-          };
-        });
-        if (get().items[itemId]) notifyLocalItemWrite(itemId);
+        const it = get().items[itemId];
+        if (!it) return;
+        const next = {
+          ...it,
+          groupPromptDismissed: true,
+          updatedAt: new Date().toISOString(),
+        };
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) void persistItemViaSyncV3(next, "upsert");
+          return;
+        }
+        set((s) => ({
+          items: { ...s.items, [itemId]: next },
+        }));
       },
       clearGroupPrompt: () => set({ groupPromptItemId: null }),
 
@@ -687,69 +783,102 @@ export const useStore = create<AppState>()(
           createdAt: now,
           updatedAt: now,
         };
+        if (shouldUseSyncV3Mutations()) {
+          void persistTagViaSyncV3(tag, "upsert");
+          return tag;
+        }
         set((s) => ({ tags: { ...s.tags, [tag.id]: tag } }));
         return tag;
       },
 
-      patchTag: (id, patch) =>
-        set((s) => {
-          const existing = s.tags[id];
-          if (!existing) return {};
-          const name = patch.name !== undefined ? patch.name.trim() : existing.name;
-          if (!name) return {};
-          return {
-            tags: {
-              ...s.tags,
-              [id]: {
-                ...existing,
-                ...patch,
-                name,
-                updatedAt: new Date().toISOString(),
-              },
-            },
-          };
-        }),
+      patchTag: (id, patch) => {
+        const existing = get().tags[id];
+        if (!existing) return;
+        const name = patch.name !== undefined ? patch.name.trim() : existing.name;
+        if (!name) return;
+        const next = {
+          ...existing,
+          ...patch,
+          name,
+          updatedAt: new Date().toISOString(),
+        };
+        if (shouldUseSyncV3Mutations()) {
+          void persistTagViaSyncV3(next, "upsert");
+          return;
+        }
+        set((s) => ({
+          tags: { ...s.tags, [id]: next },
+        }));
+      },
 
       deleteTag: (id) => {
+        const tag = get().tags[id];
+        if (!tag) return;
         const before = get().items;
+        const scrubbed = scrubTagIdFromItems(before, id);
+        const changed = Object.keys(scrubbed).filter((k) => scrubbed[k] !== before[k]);
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void (async () => {
+              await persistItemsViaSyncV3(
+                changed.map((itemId) => ({
+                  draft: { ...scrubbed[itemId]!, updatedAt: new Date().toISOString() },
+                  operationType: "upsert" as const,
+                })),
+              );
+              await persistTagViaSyncV3(tag, "delete");
+              set((s) => ({
+                myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
+              }));
+            })();
+          }
+          return;
+        }
         set((s) => {
-          if (!s.tags[id]) return {};
           const tags = { ...s.tags };
           delete tags[id];
           return {
             tags,
             myTagIdsByItem: scrubTagIdFromMap(s.myTagIdsByItem, id),
-            items: scrubTagIdFromItems(s.items, id),
+            items: scrubbed,
           };
         });
-        const after = get().items;
-        for (const itemId of Object.keys(after)) {
-          if (before[itemId] !== after[itemId]) notifyLocalItemWrite(itemId);
-        }
       },
 
       setItemTagIds: (itemId, tagIds) => {
         const baseId = baseItemId(itemId);
+        const item = get().items[baseId];
+        if (get().authUserId) {
+          if (shouldUseSyncV3Mutations()) {
+            void (async () => {
+              if (item && !isSharedItem(item)) {
+                await persistItemViaSyncV3(
+                  { ...item, tagIds, updatedAt: new Date().toISOString() },
+                  "upsert",
+                );
+              }
+              await persistTagAssignmentViaSyncV3(baseId, tagIds);
+            })();
+          }
+          return;
+        }
         set((s) => {
-          const item = s.items[baseId];
+          const it = s.items[baseId];
           const myTagIdsByItem = { ...s.myTagIdsByItem, [baseId]: tagIds };
-          if (!item) return { myTagIdsByItem };
-          if (isSharedItem(item)) return { myTagIdsByItem };
+          if (!it) return { myTagIdsByItem };
+          if (isSharedItem(it)) return { myTagIdsByItem };
           return {
             myTagIdsByItem,
             items: {
               ...s.items,
               [baseId]: {
-                ...item,
+                ...it,
                 tagIds,
                 updatedAt: new Date().toISOString(),
               },
             },
           };
         });
-        if (get().items[baseId] && !isSharedItem(get().items[baseId]!)) {
-          notifyLocalItemWrite(baseId);
-        }
       },
     }),
     {

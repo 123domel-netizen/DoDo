@@ -57,7 +57,6 @@ export function HubTodayInbox() {
     [overview, hubMatchGroup, activeGroupFilter, items],
   );
   const convIds = useMemo(() => filteredOverview.map((c) => c.id), [filteredOverview]);
-  const convIdsKey = convIds.join(",");
   const todayKey = startOfDay(new Date()).toISOString();
 
   const todayTasks = useMemo(() => {
@@ -88,7 +87,7 @@ export function HubTodayInbox() {
     return () => {
       cancelled = true;
     };
-  }, [myUserId, convIdsKey, hubMatchGroup, activeGroupFilter, registryEpoch, todayKey]);
+  }, [myUserId, convIds, hubMatchGroup, activeGroupFilter, registryEpoch, todayKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,7 +101,7 @@ export function HubTodayInbox() {
     return () => {
       cancelled = true;
     };
-  }, [convIdsKey, registryEpoch, todayKey]);
+  }, [convIds, registryEpoch, todayKey]);
 
   const titleOf = (conversationId: string) => {
     const entry = overview.find((c) => c.id === conversationId);

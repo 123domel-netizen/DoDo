@@ -79,9 +79,7 @@ export function useHubRegistryLists(opts: {
   );
 
   const registryConvIds = useMemo(() => overview.map((c) => c.id), [overview]);
-  const registryConvIdsKey = registryConvIds.join(",");
   const convIds = registryConvIds;
-  const convIdsKey = registryConvIdsKey;
 
   const allUserTags = useMemo(
     () => Object.values(tags).sort((a, b) => a.name.localeCompare(b.name, "pl")),
@@ -103,7 +101,7 @@ export function useHubRegistryLists(opts: {
     return () => {
       cancelled = true;
     };
-  }, [enabled, hubTab, registryConvIdsKey, registryEpoch]);
+  }, [enabled, hubTab, registryConvIds, registryEpoch]);
 
   useEffect(() => {
     if (!enabled || hubTab !== "notes") return;
@@ -115,7 +113,7 @@ export function useHubRegistryLists(opts: {
     return () => {
       cancelled = true;
     };
-  }, [enabled, hubTab, registryConvIdsKey, registryEpoch]);
+  }, [enabled, hubTab, registryConvIds, registryEpoch]);
 
   useEffect(() => {
     if (!enabled || hubTab !== "media") return;
@@ -131,7 +129,7 @@ export function useHubRegistryLists(opts: {
     return () => {
       cancelled = true;
     };
-  }, [enabled, hubTab, convIdsKey]);
+  }, [enabled, hubTab, convIds]);
 
   const browseList = (id: RailBrowseId): ChatOverviewEntry[] => {
     if (id === "all") return allByRecent;

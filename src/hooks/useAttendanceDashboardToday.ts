@@ -69,14 +69,7 @@ export function useAttendanceDashboardWeek(): {
       previewForCompany: (date: string, companyKey: string) =>
         attendanceRecordsForCompanyDay(state, date, companyKey),
     };
-  }, [
-    state.crewAttendance,
-    state.crewEquipmentLogs,
-    state.crews,
-    state.projects,
-    weekDays,
-    today,
-  ]);
+  }, [state, weekDays, today]);
 }
 
 /** @deprecated Użyj useAttendanceDashboardWeek */

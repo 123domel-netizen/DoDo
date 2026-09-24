@@ -550,7 +550,7 @@ export function ConversationView({
     !embedded && focusFeedRaw?.conversationId === conversationId ? focusFeedRaw : null;
   // Główny feed: rooty + kompaktowe adnotacje odpowiedzi z wątków (chronologicznie).
   // Notatnik: tylko nagłówki (rooty) — szczegóły są w wątku.
-  const feed = messages ?? [];
+  const feed = useMemo(() => messages ?? [], [messages]);
   const displayedFeed = useMemo(() => {
     const raw = focus ? focus.messages : feed;
     if (isNotebook) {
@@ -1014,7 +1014,7 @@ export function ConversationView({
           break;
       }
     },
-    [profiles, handleReply, handleOpenThread, toggleSelect, isNotebook],
+    [handleReply, handleOpenThread, toggleSelect, isNotebook],
   );
 
   const handleDetachFromThread = useCallback((msg: ChatMessage) => {

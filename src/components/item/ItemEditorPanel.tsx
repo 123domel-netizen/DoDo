@@ -125,6 +125,14 @@ export function ItemEditorPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [closeEditor]);
 
+  const checklistAssignees = useMemo(
+    () =>
+      item
+        ? checklistAssigneesForItem(item, authUserId, authUserEmail)
+        : [],
+    [item, authUserId, authUserEmail],
+  );
+
   if (!item) return null;
   if (!isDraft && isItemDeleted(item)) return null;
   const it = item;
@@ -134,10 +142,6 @@ export function ItemEditorPanel() {
     : null;
   const group = !shareMode && it.groupId ? groups.find((g) => g.id === it.groupId) : undefined;
   const displayReminders = effectiveReminders(it);
-  const checklistAssignees = useMemo(
-    () => checklistAssigneesForItem(it, authUserId, authUserEmail),
-    [it, authUserId, authUserEmail],
-  );
   const itemTagIds = effectiveTagIds(it, myTagIdsByItem);
 
   const handleTagIds = (tagIds: string[]) => {

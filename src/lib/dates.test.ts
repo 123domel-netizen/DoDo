@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   coerceIsoOrNull,
+  coerceItemType,
   DATE_PLACEHOLDER_ISO,
   isValidIso,
   sanitizeItemDates,
@@ -22,6 +23,35 @@ describe("walidacja dat", () => {
   it("akceptuje poprawne ISO", () => {
     expect(isValidIso("2026-09-21T10:00:00.000Z")).toBe(true);
     expect(coerceIsoOrNull("2026-09-21T12:00:00+02:00")).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe("coerceItemType — NOT NULL type przy sync", () => {
+  it("naprawia brakujący type z legacy IDB", () => {
+    expect(
+      coerceItemType({
+        type: undefined as unknown as "event",
+        showInTodo: false,
+        showInCalendar: true,
+      }),
+    ).toBe("event");
+    expect(
+      coerceItemType({
+        type: null as unknown as "event",
+        showInTodo: true,
+        showInCalendar: false,
+      }),
+    ).toBe("task");
+  });
+
+  it("sanitizeItemDates uzupełnia type przed upsertem", () => {
+    const broken = {
+      ...createItem({ type: "event", title: "x" }),
+      type: undefined as unknown as "event",
+    };
+    const { item, repaired } = sanitizeItemDates(broken);
+    expect(repaired).toBe(true);
+    expect(item.type).toBe("event");
   });
 });
 
