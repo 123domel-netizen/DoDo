@@ -6,27 +6,36 @@ import {
   remoteTagInput,
   type ApplyRemoteResult,
 } from "@/lib/syncv3/remoteApply";
-import { useStore } from "@/state/store";
+import {
+  hydrateConsistentSnapshot,
+  mergeRemotePartialIntoZustand,
+} from "@/lib/syncv3/consistentSnapshot";
 import type { Group, Item, UserTag } from "@/types";
 
-/** Po udanym IDB commit — scal wynik remote apply do Zustand. */
+/**
+ * Po udanym IDB commit dla wąskiego (realtime) apply —
+ * merge cząstkowy, bez replace całej listy groups.
+ */
 export function applyRemoteResultToZustand(result: ApplyRemoteResult) {
   if (!result.ok) return;
-  useStore.setState((s) => {
-    const items = { ...s.items };
-    for (const [id, item] of Object.entries(result.items)) {
-      items[id] = item;
-    }
-    let groups = s.groups;
-    if (result.groups.length) {
-      const byId = new Map(groups.map((g) => [g.id, g]));
-      for (const g of result.groups) byId.set(g.id, g);
-      groups = [...byId.values()];
-    }
-    const tags = { ...s.tags, ...result.tags };
-    const myTagIdsByItem = { ...s.myTagIdsByItem, ...result.myTagIdsByItem };
-    return { items, groups, tags, myTagIdsByItem };
+  mergeRemotePartialIntoZustand({
+    items: result.items,
+    groups: result.groups,
+    tags: result.tags,
+    myTagIdsByItem: result.myTagIdsByItem,
   });
+}
+
+/**
+ * Po pełnym multi-domain pull: IDB jest kompletne → atomowa hydratacja
+ * całego snapshotu (groups+items+tags+assignments razem).
+ */
+export async function applyRemoteSnapshotAtomically(
+  userId: string,
+  result: ApplyRemoteResult,
+): Promise<void> {
+  if (!result.ok) return;
+  await hydrateConsistentSnapshot(userId);
 }
 
 export async function applyRemoteItemsToStore(

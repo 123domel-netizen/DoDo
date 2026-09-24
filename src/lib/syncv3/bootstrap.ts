@@ -15,10 +15,10 @@ import {
   migrationStateAllowsWorker,
 } from "@/lib/syncv3/engine";
 import { loadLegacyFromIdb, runSyncV3Migration } from "@/lib/syncv3/migrate";
-import { canonicalToItem } from "@/lib/syncv3/canonical";
-import { getEntity, listEntities, listReadyOperations, openSyncV3Db } from "@/lib/syncv3/db";
+import { hydrateConsistentSnapshot } from "@/lib/syncv3/consistentSnapshot";
+import { getEntity, listReadyOperations, openSyncV3Db } from "@/lib/syncv3/db";
 import { runSyncV3WorkerPass, scheduleWakeWorker } from "@/lib/syncv3/worker";
-import type { Group, Item, UserTag } from "@/types";
+import type { Item } from "@/types";
 import { parseTagAssignmentItemId } from "@/lib/syncv3/entityIds";
 
 let activeUserId: string | null = null;
@@ -146,58 +146,7 @@ export async function filterFkReadyOperations(
 }
 
 export async function hydrateZustandFromV3(userId: string): Promise<void> {
-  const db = await openSyncV3Db(userId);
-  const entities = await listEntities(db, userId);
-  const items: Record<string, Item> = {};
-  const groups: Group[] = [];
-  const tags: Record<string, UserTag> = {};
-  const myTagIdsByItem: Record<string, string[]> = {};
-
-  for (const ent of entities) {
-    if (ent.entityType === "item") {
-      items[ent.entityId] = canonicalToItem(ent.snapshot);
-    } else if (ent.entityType === "group") {
-      if (!(ent.snapshot as { deletedAt?: string | null }).deletedAt) {
-        groups.push(ent.snapshot as unknown as Group);
-      }
-    } else if (ent.entityType === "user_tag") {
-      if (!(ent.snapshot as { deletedAt?: string | null }).deletedAt) {
-        tags[ent.entityId] = ent.snapshot as unknown as UserTag;
-      }
-    } else if (ent.entityType === "tag_assignment") {
-      const snap = ent.snapshot as unknown as { itemId?: string; tagIds?: string[] };
-      myTagIdsByItem[snap.itemId ?? parseTagAssignmentItemId(ent.entityId)] =
-        snap.tagIds ?? [];
-    } else if (ent.entityType === "participant" || ent.entityType === "personal_reminder") {
-      const snap = ent.snapshot as unknown as {
-        itemId?: string;
-        description?: string;
-        checklist?: Item["checklist"];
-        attachments?: Item["attachments"];
-        personalReminders?: Item["personalReminders"];
-      };
-      const itemId = snap.itemId ?? ent.entityId.replace(/^pp:|^pr:/, "");
-      const cur = items[itemId] ?? useStore.getState().items[itemId];
-      if (cur) {
-        items[itemId] = {
-          ...cur,
-          ...(snap.description !== undefined ? { description: snap.description } : {}),
-          ...(snap.checklist !== undefined ? { checklist: snap.checklist } : {}),
-          ...(snap.attachments !== undefined ? { attachments: snap.attachments } : {}),
-          ...(snap.personalReminders !== undefined
-            ? { personalReminders: snap.personalReminders }
-            : {}),
-        };
-      }
-    }
-  }
-
-  useStore.setState({
-    items: { ...useStore.getState().items, ...items },
-    groups: groups.length ? groups : useStore.getState().groups,
-    tags: { ...useStore.getState().tags, ...tags },
-    myTagIdsByItem: { ...useStore.getState().myTagIdsByItem, ...myTagIdsByItem },
-  });
+  await hydrateConsistentSnapshot(userId);
 }
 
 export function wakeSyncV3Worker(): void {
