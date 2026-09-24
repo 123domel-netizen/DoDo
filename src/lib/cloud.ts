@@ -26,15 +26,17 @@ import {
   resetSyncState,
   syncState,
 } from "@/lib/syncState";
-import { bootstrapSyncV3, hydrateZustandFromV3, wakeSyncV3Worker } from "@/lib/syncv3/bootstrap";
+import { bootstrapSyncV3, wakeSyncV3Worker } from "@/lib/syncv3/bootstrap";
 import {
   applyRemoteGroupsToStore,
   applyRemoteItemsToStore,
   applyRemoteTagAssignmentsToStore,
   applyRemoteTagsToStore,
   applyRemoteResultToZustand,
+  applyRemoteSnapshotAtomically,
 } from "@/lib/syncv3/cloudRemoteBridge";
-import { applyRemoteEntities } from "@/lib/syncv3/remoteApply";
+import { applyRemoteEntities, remoteGroupInput, remoteItemInput } from "@/lib/syncv3/remoteApply";
+import { mergeRemotePartialIntoZustand } from "@/lib/syncv3/consistentSnapshot";
 import { installSyncDebugApi, setSyncDebugHooks } from "@/lib/syncDebug";
 
 /**
@@ -365,82 +367,6 @@ function reconcileGroups(remote: Group[]): {
   return { groups: result, remap, deleteIds };
 }
 
-function remapItemGroups(items: Record<string, Item>, remap: Map<string, string>): Record<string, Item> {
-  if (!remap.size) return items;
-  let changed = false;
-  const next: Record<string, Item> = {};
-  for (const [id, it] of Object.entries(items)) {
-    const target = it.groupId ? remap.get(it.groupId) : undefined;
-    if (target && target !== it.groupId) {
-      next[id] = { ...it, groupId: target };
-      changed = true;
-    } else {
-      next[id] = it;
-    }
-  }
-  return changed ? next : items;
-}
-
-function clearGoogleGroupRefs(
-  items: Record<string, Item>,
-  googleIds: Set<string>,
-): Record<string, Item> {
-  if (!googleIds.size) return items;
-  let changed = false;
-  const next: Record<string, Item> = {};
-  for (const [id, it] of Object.entries(items)) {
-    if (it.groupId && googleIds.has(it.groupId)) {
-      next[id] = { ...it, groupId: null };
-      changed = true;
-    } else {
-      next[id] = it;
-    }
-  }
-  return changed ? next : items;
-}
-
-async function pullGroups() {
-  if (!supabase || !userId) return;
-  const { data, error } = await supabase.from("groups").select("*");
-  if (error) {
-    console.warn("[cloud] group pull failed:", error.message);
-    groupsReady = true;
-    return;
-  }
-  const remote = (data ?? []).map(rowToGroup);
-
-  if (remote.length === 0) {
-    groupsReady = true;
-    lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
-    return;
-  }
-
-  const { groups, remap, deleteIds } = reconcileGroups(remote);
-  const googleIds = new Set(remote.filter(isGoogleGroup).map((g) => g.id));
-  const ensured = ensureShareGroup(ensureArchiveGroup(groups));
-
-  setApplyingRemote(true);
-  try {
-    const result = await applyRemoteGroupsToStore(userId, ensured);
-    if (!result.ok) return;
-    // Remap google refs lokalnie po IDB apply (items juĹĽ w store)
-    if (remap.size || googleIds.size) {
-      useStore.setState((s) => ({
-        items: clearGoogleGroupRefs(remapItemGroups(s.items, remap), googleIds),
-      }));
-    }
-    lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
-  } finally {
-    setApplyingRemote(false);
-  }
-
-  groupsReady = true;
-
-  if (deleteIds.length) {
-    await supabase.from("groups").delete().in("id", deleteIds);
-  }
-}
-
 async function pullSharedItems(): Promise<Record<string, Item>> {
   if (!supabase || !userId) return {};
   const email = userEmail?.toLowerCase() ?? "";
@@ -567,11 +493,29 @@ export async function patchParticipantViaRpc(input: {
 
 async function pullAllViaSyncV3() {
   if (!supabase || !userId) return;
+
+  // Pobierz groups + items PRZED publikacją — potem jedna txn IDB i jeden snapshot.
+  const groupsRes = await supabase.from("groups").select("*");
+  if (groupsRes.error) {
+    console.warn("[cloud] group pull failed:", groupsRes.error.message);
+    // Nie czyść lokalnych groups; nadal spróbuj items, ale publikuj atomowo z IDB.
+  }
+
   const { rows, error } = await fetchAllItemRows();
   if (error) {
     console.warn("[cloud] item pull failed:", error);
     return;
   }
+
+  const remoteGroups = (groupsRes.data ?? []).map(rowToGroup);
+  const { groups: reconciled } = groupsRes.error
+    ? { groups: [] as Group[] }
+    : reconcileGroups(remoteGroups);
+  const ensuredGroups =
+    !groupsRes.error && remoteGroups.length
+      ? ensureShareGroup(ensureArchiveGroup(reconciled))
+      : [];
+
   const participantByItem = await pullOwnerParticipantRows();
   const items: Item[] = [];
   for (const row of rows) {
@@ -587,12 +531,25 @@ async function pullAllViaSyncV3() {
 
   setApplyingRemote(true);
   try {
-    const result = await applyRemoteItemsToStore(userId, items);
+    const remotes = [
+      ...ensuredGroups.map((g) => remoteGroupInput(g)),
+      ...items.map(remoteItemInput),
+    ];
+    const result = await applyRemoteEntities({
+      userId,
+      remotes,
+      // Nie publikuj cząstkowo — po commit IDB pełny snapshot.
+      applyToUi: undefined,
+    });
     if (!result.ok) {
       console.warn("[cloud] remote apply failed:", result.error);
       return;
     }
-    await hydrateZustandFromV3(userId);
+    await applyRemoteSnapshotAtomically(userId, result);
+    if (!groupsRes.error) {
+      groupsReady = true;
+      lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
+    }
     syncState.lastPullAt = new Date().toISOString();
   } finally {
     setApplyingRemote(false);
@@ -687,9 +644,7 @@ function setupRealtime() {
               ],
               applyToUi: (r) => {
                 if (!r.ok) return;
-                useStore.setState((s) => ({
-                  groups: s.groups.filter((g) => g.id !== id),
-                }));
+                mergeRemotePartialIntoZustand({ removedGroupIds: [id] });
               },
             });
           } else {
@@ -765,7 +720,7 @@ async function cloudMergeRefresh(): Promise<boolean> {
   if (!cloudEnabled || !supabase || !userId) return false;
   if (syncState.booting || syncState.applyingRemote) return false;
   try {
-    await pullGroups();
+    // Jedna ścieżka: groups+items atomowo (bez pośredniego czyszczenia groups).
     await pullAll(false);
     return true;
   } catch (err) {
@@ -797,7 +752,6 @@ export async function forceCloudRefresh(): Promise<{ ok: boolean; message: strin
   try {
     await pullUserTags();
     await pullTagAssignments();
-    await pullGroups();
     await pullAll(true);
     const orgs = await bootstrapOrgs();
     useStore.getState().setOrgBootstrap(orgs);
@@ -883,7 +837,7 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     await bootstrapSyncV3(nextUserId);
     await pullUserTags();
     await pullTagAssignments();
-    await pullGroups();
+    // groups+items w jednej atomowej ścieżce (pullAllViaSyncV3)
     await pullAll(false);
 
     teardownRealtime();
