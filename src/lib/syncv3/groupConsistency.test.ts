@@ -155,7 +155,7 @@ describe("Sync v3 — group consistency", () => {
         snapshot: { ...baseGroup(GROUP_A, "SAND") },
       });
       await hydrateConsistentSnapshot(userId, db);
-      expect(useStore.getState().groups).toHaveLength(1);
+      expect(useStore.getState().groups.some((g) => g.id === GROUP_A)).toBe(true);
 
       // Opóźniony apply tylko itemów — merge partial nie czyści groups
       await applyRemoteEntities({
@@ -217,12 +217,14 @@ describe("Sync v3 — group consistency", () => {
     expect(useStore.getState().groups.map((g) => g.id)).toEqual([GROUP_A]);
   });
 
-  it("6. true empty complete snapshot from IDB may publish empty groups", async () => {
+  it("6. true empty complete snapshot from IDB publishes only virtual SHARE", async () => {
     await withDb(async ({ userId, db }) => {
       useStore.setState({ groups: [baseGroup(GROUP_A, "stale-ui")] });
       await hydrateConsistentSnapshot(userId, db);
-      // IDB puste groups → atomowy snapshot bez starych groups (źródło: IDB)
-      expect(useStore.getState().groups).toEqual([]);
+      // IDB puste groups → brak user groups; SHARE tylko wirtualny w UI
+      const groups = useStore.getState().groups;
+      expect(groups.every((g) => g.id !== GROUP_A)).toBe(true);
+      expect(groups.filter((g) => g.name === "SHARE")).toHaveLength(1);
     });
   });
 
@@ -287,7 +289,8 @@ describe("Sync v3 — group consistency", () => {
       groups: [{ ...baseGroup(GROUP_A, "A-renamed") }],
     });
     const ids = useStore.getState().groups.map((g) => g.id).sort();
-    expect(ids).toEqual([GROUP_A, GROUP_B].sort());
+    expect(ids).toContain(GROUP_A);
+    expect(ids).toContain(GROUP_B);
     expect(useStore.getState().groups.find((g) => g.id === GROUP_A)?.name).toBe("A-renamed");
   });
 
@@ -572,7 +575,7 @@ describe("Sync v3 — group consistency", () => {
         snapshot: { ...baseGroup(GROUP_A, "Firma A") },
       });
       await hydrateConsistentSnapshot(userId, db);
-      expect(useStore.getState().groups).toHaveLength(1);
+      expect(useStore.getState().groups.some((g) => g.id === GROUP_A)).toBe(true);
 
       // Tylko item remote — partial merge
       await applyRemoteEntities({

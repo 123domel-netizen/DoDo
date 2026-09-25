@@ -5,6 +5,7 @@ import {
   SHARE_GROUP_NAME,
   SHARE_GROUP_COLOR,
   SHARE_GROUP_SORT_ORDER,
+  SHARE_GROUP_STABLE_ID,
   isShareGroup,
   isSharedItem,
 } from "@/lib/share";
@@ -58,18 +59,32 @@ export function findShareGroup(groups: Group[]): Group | undefined {
   return groups.find(isShareGroup);
 }
 
+/**
+ * Jedna wirtualna grupa SHARE w projekcji UI.
+ * Deduplikuje istniejące SHARE do stabilnego id — nigdy nie dodaje kolejnego UUID.
+ */
 export function ensureShareGroup(groups: Group[]): Group[] {
-  if (findShareGroup(groups)) return groups;
-  return [
-    ...groups,
-    {
-      id: uid(),
-      name: SHARE_GROUP_NAME,
-      color: SHARE_GROUP_COLOR,
-      sortOrder: SHARE_GROUP_SORT_ORDER,
-      system: "share",
-    },
-  ];
+  const nonShare = groups.filter((g) => !isShareGroup(g));
+  const existing = findShareGroup(groups);
+  const share: Group = {
+    id: SHARE_GROUP_STABLE_ID,
+    name: SHARE_GROUP_NAME,
+    color: existing?.color ?? SHARE_GROUP_COLOR,
+    sortOrder: SHARE_GROUP_SORT_ORDER,
+    system: "share",
+    showInSidebar: existing?.showInSidebar,
+    showInTasks: existing?.showInTasks,
+    showInEvents: existing?.showInEvents,
+    showInDashboard: existing?.showInDashboard,
+    showInAll: existing?.showInAll,
+    hideFromAll: existing?.hideFromAll,
+  };
+  return [...nonShare, share];
+}
+
+/** True, gdy lista zawiera >1 encji SHARE (objaw floodu). */
+export function countShareGroups(groups: Group[]): number {
+  return groups.filter(isShareGroup).length;
 }
 
 export function ensureArchiveGroup(groups: Group[]): Group[] {

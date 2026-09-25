@@ -223,6 +223,16 @@ export async function putEntitiesBatch(db: SyncV3Db, entities: EntityRecord[]): 
   await txDone(tx);
 }
 
+/** Usuń encje po id (np. flood wirtualnych SHARE) — jedna transakcja. */
+export async function deleteEntitiesBatch(db: SyncV3Db, entityIds: string[]): Promise<number> {
+  if (!entityIds.length) return 0;
+  const tx = db.transaction("entities", "readwrite");
+  const store = tx.objectStore("entities");
+  for (const id of entityIds) store.delete(id);
+  await txDone(tx);
+  return entityIds.length;
+}
+
 export async function updateOperation(
   db: SyncV3Db,
   op: SyncOperation,
