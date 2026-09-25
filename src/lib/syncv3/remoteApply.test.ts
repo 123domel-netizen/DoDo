@@ -114,6 +114,53 @@ describe("applyRemoteEntities — IDB-first", () => {
     });
   });
 
+  it("item must not clobber group when Postgres UUIDs collide", async () => {
+    await withDb(async ({ userId, db }) => {
+      const sharedId = GROUP;
+      // Ghost item occupies the same UUID as a real group (cross-table collision).
+      await applyRemoteEntities({
+        userId,
+        db,
+        remotes: [
+          remoteItemInput({
+            id: sharedId,
+            type: "event",
+            title: "",
+            start: "2026-09-23T10:00:00.000Z",
+            end: "2026-09-23T11:00:00.000Z",
+            updatedAt: "2026-09-24T09:28:22.395Z",
+          } as never),
+        ],
+      });
+      expect((await getEntity(db, sharedId))?.entityType).toBe("item");
+
+      // Full pull order: groups then items — group must win and stay.
+      await applyRemoteEntities({
+        userId,
+        db,
+        remotes: [
+          remoteGroupInput({
+            id: sharedId,
+            name: "IB PROJEKT",
+            color: "#C08F52",
+            sortOrder: 0,
+          }),
+          remoteItemInput({
+            id: sharedId,
+            type: "event",
+            title: "",
+            start: "2026-09-23T10:00:00.000Z",
+            end: "2026-09-23T11:00:00.000Z",
+            updatedAt: "2026-09-25T12:00:00.000Z",
+          } as never),
+        ],
+      });
+      const ent = await getEntity(db, sharedId);
+      expect(ent?.entityType).toBe("group");
+      expect((ent?.snapshot as { name?: string }).name).toBe("IB PROJEKT");
+    });
+  });
+
   it("IDB failure does not call applyToUi", async () => {
     await withDb(async ({ userId, db }) => {
       const ui = vi.fn();

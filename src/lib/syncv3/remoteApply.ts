@@ -53,7 +53,8 @@ export async function applyRemoteEntities(opts: {
 }): Promise<ApplyRemoteResult> {
   const db = opts.db ?? (await openSyncV3Db(opts.userId));
   const protectedPendingIds: string[] = [];
-  const toWrite: EntityRecord[] = [];
+  /** Jedna encja na entityId — unikaj nadpisania group przez item w tym samym batchu. */
+  const toWriteById = new Map<string, EntityRecord>();
   const appliedEntityIds: string[] = [];
 
   for (const remote of opts.remotes) {
@@ -69,19 +70,33 @@ export async function applyRemoteEntities(opts: {
     }
 
     const local = await getEntity(db, remote.entityId);
-    if (
-      local &&
+    const planned = toWriteById.get(remote.entityId);
+    const effective = planned ?? local;
+
+    // Postgres: ten sam UUID w items i groups. Sync v3 IDB — wspólny klucz.
+    // Item nigdy nie nadpisuje group/tag (w IDB ani w tym samym pull-batchu).
+    if (effective && effective.entityType !== remote.entityType) {
+      if (remote.entityType === "item") {
+        continue;
+      }
+      if (effective.entityType !== "item") {
+        continue;
+      }
+      // effective=item, remote=group|tag|… → zamień kolizję
+    } else if (
+      effective &&
       !remote.deleted &&
-      local.entityType === remote.entityType &&
-      new Date(local.updatedAt).getTime() > new Date(remote.updatedAt).getTime()
+      effective.entityType === remote.entityType &&
+      new Date(effective.updatedAt).getTime() > new Date(remote.updatedAt).getTime()
     ) {
       continue;
     }
 
+    const baseRevision = planned?.localRevision ?? local?.localRevision ?? 1;
     let snapshot: CanonicalItem;
     if (remote.entityType === "item") {
       snapshot = normalizeToCanonical(remote.snapshot as Partial<Item>, {
-        localRevision: local?.localRevision ?? 1,
+        localRevision: baseRevision,
         ownerUserId: opts.userId,
       });
       snapshot.id = remote.entityId;
@@ -94,21 +109,25 @@ export async function applyRemoteEntities(opts: {
         ...remote.snapshot,
         id: remote.entityId,
         updatedAt: remote.updatedAt,
-        localRevision: local?.localRevision ?? 1,
+        localRevision: baseRevision,
         ...(remote.deleted ? { deletedAt: remote.updatedAt } : {}),
       });
     }
 
-    toWrite.push({
+    toWriteById.set(remote.entityId, {
       entityId: remote.entityId,
       entityType: remote.entityType,
       userId: opts.userId,
       snapshot,
-      localRevision: snapshot.localRevision ?? local?.localRevision ?? 1,
+      localRevision: snapshot.localRevision ?? baseRevision,
       updatedAt: remote.updatedAt,
     });
-    appliedEntityIds.push(remote.entityId);
+    if (!appliedEntityIds.includes(remote.entityId)) {
+      appliedEntityIds.push(remote.entityId);
+    }
   }
+
+  const toWrite = [...toWriteById.values()];
 
   try {
     if (toWrite.length) {

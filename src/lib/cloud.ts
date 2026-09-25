@@ -520,6 +520,11 @@ async function pullAllViaSyncV3() {
   const items: Item[] = [];
   for (const row of rows) {
     let item = rowToItem(row, "owner");
+    // Ten sam UUID w items+groups (Postgres) nie może wejść do Sync v3 IDB jako item,
+    // gdy w tym pullu aplikujemy group o tym id — inaczej item nadpisuje group.
+    if (groupsToApply?.some((g) => g.id === item.id)) {
+      continue;
+    }
     const dbRows = participantByItem[item.id];
     if (dbRows?.length) {
       item = { ...item, participants: mergeParticipantsWithDb(item.participants, dbRows) };
@@ -527,7 +532,10 @@ async function pullAllViaSyncV3() {
     items.push(item);
   }
   const shared = await pullSharedItems();
-  items.push(...Object.values(shared));
+  for (const item of Object.values(shared)) {
+    if (groupsToApply?.some((g) => g.id === item.id)) continue;
+    items.push(item);
+  }
 
   setApplyingRemote(true);
   try {
