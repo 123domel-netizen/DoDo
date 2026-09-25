@@ -1,6 +1,13 @@
 import { canonicalToItem } from "@/lib/syncv3/canonical";
-import { listEntities, openSyncV3Db, type SyncV3Db } from "@/lib/syncv3/db";
+import {
+  deleteEntitiesBatch,
+  listEntities,
+  openSyncV3Db,
+  type SyncV3Db,
+} from "@/lib/syncv3/db";
 import { parseTagAssignmentItemId } from "@/lib/syncv3/entityIds";
+import { ensureShareGroup } from "@/lib/groups";
+import { isShareGroup } from "@/lib/share";
 import { useStore } from "@/state/store";
 import type { Group, Item, UserTag } from "@/types";
 
@@ -13,8 +20,29 @@ export interface ConsistentDomainSnapshot {
 }
 
 /**
+ * SHARE jest wirtualny — nie trzymamy go jako trwałej encji Sync v3.
+ * Usuwa wszystkie entityType=group o nazwie/system SHARE z IDB.
+ */
+export async function pruneVirtualShareGroupsFromIdb(
+  userId: string,
+  db?: SyncV3Db,
+): Promise<number> {
+  const database = db ?? (await openSyncV3Db(userId));
+  const entities = await listEntities(database, userId);
+  const shareIds = entities
+    .filter(
+      (e) =>
+        e.entityType === "group" &&
+        isShareGroup(e.snapshot as unknown as { name: string; system?: string }),
+    )
+    .map((e) => e.entityId);
+  return deleteEntitiesBatch(database, shareIds);
+}
+
+/**
  * Odczyt jednej spójnej projekcji z Sync v3 IDB.
  * Nie publikuje — tylko buduje snapshot.
+ * SHARE z IDB jest pomijany (wirtualny); ARCH/user groups zostają.
  */
 export async function buildConsistentSnapshotFromIdb(
   userId: string,
@@ -31,9 +59,10 @@ export async function buildConsistentSnapshotFromIdb(
     if (ent.entityType === "item") {
       items[ent.entityId] = canonicalToItem(ent.snapshot);
     } else if (ent.entityType === "group") {
-      if (!(ent.snapshot as { deletedAt?: string | null }).deletedAt) {
-        groups.push(ent.snapshot as unknown as Group);
-      }
+      const g = ent.snapshot as unknown as Group;
+      if ((ent.snapshot as { deletedAt?: string | null }).deletedAt) continue;
+      if (isShareGroup(g)) continue;
+      groups.push(g);
     } else if (ent.entityType === "user_tag") {
       if (!(ent.snapshot as { deletedAt?: string | null }).deletedAt) {
         tags[ent.entityId] = ent.snapshot as unknown as UserTag;
@@ -66,7 +95,14 @@ export async function buildConsistentSnapshotFromIdb(
     }
   }
 
-  return { items, groups, tags, myTagIdsByItem };
+  return {
+    items,
+    // SHARE tylko w projekcji UI — nie zapisujemy go do IDB.
+    // ARCH pochodzi z remote/IDB (nie mintujemy tu nowego id).
+    groups: ensureShareGroup(groups),
+    tags,
+    myTagIdsByItem,
+  };
 }
 
 /**
@@ -76,7 +112,7 @@ export async function buildConsistentSnapshotFromIdb(
 export function publishConsistentSnapshot(snapshot: ConsistentDomainSnapshot): void {
   useStore.setState({
     items: snapshot.items,
-    groups: snapshot.groups,
+    groups: ensureShareGroup(snapshot.groups.filter((g) => !isShareGroup(g))),
     tags: snapshot.tags,
     myTagIdsByItem: snapshot.myTagIdsByItem,
   });
@@ -110,14 +146,22 @@ export function mergeRemotePartialIntoZustand(partial: {
   useStore.setState((s) => {
     const items = partial.items ? { ...s.items, ...partial.items } : s.items;
     let groups = s.groups;
+    const groupsTouched =
+      Boolean(partial.removedGroupIds?.length) || Boolean(partial.groups?.length);
     if (partial.removedGroupIds?.length) {
       const rm = new Set(partial.removedGroupIds);
       groups = groups.filter((g) => !rm.has(g.id));
     }
     if (partial.groups?.length) {
       const byId = new Map(groups.map((g) => [g.id, g]));
-      for (const g of partial.groups) byId.set(g.id, g);
+      for (const g of partial.groups) {
+        if (isShareGroup(g)) continue;
+        byId.set(g.id, g);
+      }
       groups = [...byId.values()];
+    }
+    if (groupsTouched) {
+      groups = ensureShareGroup(groups.filter((g) => !isShareGroup(g)));
     }
     const tags = partial.tags ? { ...s.tags, ...partial.tags } : s.tags;
     const myTagIdsByItem = partial.myTagIdsByItem

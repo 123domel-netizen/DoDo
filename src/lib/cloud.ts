@@ -2,7 +2,6 @@
 import { withNormalizedAllDay } from "@/lib/allDay";
 import {
   ensureArchiveGroup,
-  ensureShareGroup,
   isArchiveGroup,
   isGoogleGroup,
   resolveGroupVisibility,
@@ -511,10 +510,11 @@ async function pullAllViaSyncV3() {
   const { groups: reconciled } = groupsRes.error
     ? { groups: [] as Group[] }
     : reconcileGroups(remoteGroups);
-  const ensuredGroups =
-    !groupsRes.error && remoteGroups.length
-      ? ensureShareGroup(ensureArchiveGroup(reconciled))
-      : [];
+  // SHARE jest wirtualny — NIGDY nie mintuj nowego SHARE do IDB przy pullu.
+  // Wcześniej: reconcile usuwał SHARE z wyniku → ensureShareGroup() tworzył nowy UUID
+  // przy każdym pullu → flood tysięcy encji SHARE i zniknięcie raila user groups.
+  const groupsToApply =
+    !groupsRes.error && remoteGroups.length ? ensureArchiveGroup(reconciled) : null;
 
   const participantByItem = await pullOwnerParticipantRows();
   const items: Item[] = [];
@@ -531,8 +531,14 @@ async function pullAllViaSyncV3() {
 
   setApplyingRemote(true);
   try {
+    if (groupsToApply) {
+      const { pruneVirtualShareGroupsFromIdb } = await import(
+        "@/lib/syncv3/consistentSnapshot"
+      );
+      await pruneVirtualShareGroupsFromIdb(userId);
+    }
     const remotes = [
-      ...ensuredGroups.map((g) => remoteGroupInput(g)),
+      ...(groupsToApply ?? []).map((g) => remoteGroupInput(g)),
       ...items.map(remoteItemInput),
     ];
     const result = await applyRemoteEntities({

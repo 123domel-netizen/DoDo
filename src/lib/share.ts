@@ -6,6 +6,11 @@ export const SHARE_GROUP_NAME = "SHARE";
 export const SHARE_GROUP_COLOR = "#8b8d94";
 /** Nad ARCH (9999), pod grupami użytkownika. */
 export const SHARE_GROUP_SORT_ORDER = 9500;
+/**
+ * Stałe UUID wirtualnej grupy SHARE — nigdy nie mintuj nowego id przy ensure.
+ * SHARE nie jest źródłem prawdy w Supabase; lokalny flood duplikatów psuje rail.
+ */
+export const SHARE_GROUP_STABLE_ID = "a0000000-0000-4000-8000-000000000001";
 
 export function isShareGroup(group: { name: string; system?: string }): boolean {
   return group.system === "share" || group.name === SHARE_GROUP_NAME;

@@ -15,7 +15,10 @@ import {
   migrationStateAllowsWorker,
 } from "@/lib/syncv3/engine";
 import { loadLegacyFromIdb, runSyncV3Migration } from "@/lib/syncv3/migrate";
-import { hydrateConsistentSnapshot } from "@/lib/syncv3/consistentSnapshot";
+import {
+  hydrateConsistentSnapshot,
+  pruneVirtualShareGroupsFromIdb,
+} from "@/lib/syncv3/consistentSnapshot";
 import { getEntity, listReadyOperations, openSyncV3Db } from "@/lib/syncv3/db";
 import { runSyncV3WorkerPass, scheduleWakeWorker } from "@/lib/syncv3/worker";
 import type { Item } from "@/types";
@@ -146,6 +149,7 @@ export async function filterFkReadyOperations(
 }
 
 export async function hydrateZustandFromV3(userId: string): Promise<void> {
+  await pruneVirtualShareGroupsFromIdb(userId);
   await hydrateConsistentSnapshot(userId);
 }
 
