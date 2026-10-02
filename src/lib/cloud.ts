@@ -540,10 +540,16 @@ async function pullAllViaSyncV3() {
   setApplyingRemote(true);
   try {
     if (groupsToApply) {
-      const { pruneVirtualShareGroupsFromIdb } = await import(
-        "@/lib/syncv3/consistentSnapshot"
-      );
+      const {
+        pruneVirtualShareGroupsFromIdb,
+        pruneGroupsNotInRemoteSet,
+      } = await import("@/lib/syncv3/consistentSnapshot");
       await pruneVirtualShareGroupsFromIdb(userId);
+      // Usuń wyciekłe grupy innych userów (realtime bez filtra) — zostaw tylko remote.
+      await pruneGroupsNotInRemoteSet(
+        userId,
+        new Set(groupsToApply.map((g) => g.id)),
+      );
     }
     const remotes = [
       ...(groupsToApply ?? []).map((g) => remoteGroupInput(g)),
@@ -615,6 +621,9 @@ function setupRealtime() {
         try {
           if (payload.eventType === "DELETE") {
             const id = (payload.old as { id: string }).id;
+            // Tylko własne / już lokalne SHARE — nie kasuj po cudzym evencie.
+            const local = useStore.getState().items[id];
+            if (!local) return;
             await applyRemoteEntities({
               userId: uid,
               remotes: [
@@ -631,45 +640,78 @@ function setupRealtime() {
           } else {
             const row = payload.new as Record<string, unknown>;
             const ownerId = row.user_id as string;
-            const role = ownerId === uid ? "owner" : "participant";
-            await applyRemoteItemsToStore(uid, [rowToItem(row, role)]);
+            if (ownerId === uid) {
+              await applyRemoteItemsToStore(uid, [rowToItem(row, "owner")]);
+              return;
+            }
+            // Cudzy item: tylko gdy jesteśmy uczestnikiem (SHARE), nie bierz prywatnych.
+            const local = useStore.getState().items[row.id as string];
+            if (local?.shareRole === "participant") {
+              await applyRemoteItemsToStore(uid, [rowToItem(row, "participant")]);
+              return;
+            }
+            const email = userEmail?.toLowerCase() ?? "";
+            let q = supabase!
+              .from("item_participants")
+              .select("id")
+              .eq("item_id", row.id as string)
+              .neq("status", "rejected")
+              .limit(1);
+            q = email
+              ? q.or(`participant_user_id.eq.${uid},participant_email.eq.${email}`)
+              : q.eq("participant_user_id", uid);
+            const { data: part } = await q.maybeSingle();
+            if (!part) return;
+            await applyRemoteItemsToStore(uid, [rowToItem(row, "participant")]);
           }
         } finally {
           setApplyingRemote(false);
         }
       })();
     })
-    .on("postgres_changes", { event: "*", schema: "public", table: "groups" }, (payload) => {
-      void (async () => {
-        setApplyingRemote(true);
-        try {
-          if (payload.eventType === "DELETE") {
-            const id = (payload.old as { id: string }).id;
-            await applyRemoteEntities({
-              userId: uid,
-              remotes: [
-                {
-                  entityType: "group",
-                  entityId: id,
-                  snapshot: { id },
-                  updatedAt: new Date().toISOString(),
-                  deleted: true,
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "groups",
+        filter: `user_id=eq.${uid}`,
+      },
+      (payload) => {
+        void (async () => {
+          setApplyingRemote(true);
+          try {
+            if (payload.eventType === "DELETE") {
+              const id = (payload.old as { id: string }).id;
+              await applyRemoteEntities({
+                userId: uid,
+                remotes: [
+                  {
+                    entityType: "group",
+                    entityId: id,
+                    snapshot: { id },
+                    updatedAt: new Date().toISOString(),
+                    deleted: true,
+                  },
+                ],
+                applyToUi: (r) => {
+                  if (!r.ok) return;
+                  mergeRemotePartialIntoZustand({ removedGroupIds: [id] });
                 },
-              ],
-              applyToUi: (r) => {
-                if (!r.ok) return;
-                mergeRemotePartialIntoZustand({ removedGroupIds: [id] });
-              },
-            });
-          } else {
-            await applyRemoteGroupsToStore(uid, [rowToGroup(payload.new as Record<string, unknown>)]);
+              });
+            } else {
+              const row = payload.new as Record<string, unknown>;
+              // Defense in depth — nigdy nie aplikuj cudzej grupy.
+              if ((row.user_id as string) !== uid) return;
+              await applyRemoteGroupsToStore(uid, [rowToGroup(row)]);
+            }
+            lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
+          } finally {
+            setApplyingRemote(false);
           }
-          lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
-        } finally {
-          setApplyingRemote(false);
-        }
-      })();
-    })
+        })();
+      },
+    )
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
         realtimeSubscribed = true;

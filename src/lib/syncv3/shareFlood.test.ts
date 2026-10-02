@@ -5,6 +5,7 @@ import { SHARE_GROUP_STABLE_ID, isShareGroup } from "@/lib/share";
 import {
   buildConsistentSnapshotFromIdb,
   hydrateConsistentSnapshot,
+  pruneGroupsNotInRemoteSet,
   pruneVirtualShareGroupsFromIdb,
 } from "@/lib/syncv3/consistentSnapshot";
 import { deleteSyncV3Db, listEntities, openSyncV3Db, putEntitiesBatch } from "@/lib/syncv3/db";
@@ -149,6 +150,32 @@ describe("SHARE flood / group rail recovery", () => {
       const left = await listEntities(db, USER);
       expect(left.filter((e) => e.entityType === "group")).toHaveLength(1);
       expect(left[0]?.entityId).toBe(GROUP_IB);
+    });
+  });
+
+  it("pruneGroupsNotInRemoteSet drops leaked foreign groups (e.g. other user defaults)", async () => {
+    await withUserDb(async (db) => {
+      const now = new Date().toISOString();
+      const foreignRodzinne = "f558dab4-6174-460d-a871-a56aaa0658da";
+      const foreignFirma = "fd9de2a4-cbf1-4d98-a69e-b85bd46d5230";
+      await putEntitiesBatch(db, [
+        groupEntity(GROUP_IB, "IB PROJEKT", "#C08F52", undefined, now),
+        groupEntity(GROUP_SAND, "SAND", "#7A6CB8", undefined, now),
+        groupEntity(foreignRodzinne, "Rodzinne", "#4F9E7A", undefined, now),
+        groupEntity(foreignFirma, "Firma A", "#4A8FC4", undefined, now),
+      ]);
+
+      const removed = await pruneGroupsNotInRemoteSet(
+        USER,
+        new Set([GROUP_IB, GROUP_SAND]),
+        db,
+      );
+      expect(removed).toBe(2);
+      const left = (await listEntities(db, USER))
+        .filter((e) => e.entityType === "group")
+        .map((e) => e.entityId)
+        .sort();
+      expect(left).toEqual([GROUP_IB, GROUP_SAND].sort());
     });
   });
 
