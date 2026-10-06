@@ -1,6 +1,7 @@
 import { canonicalToItem } from "@/lib/syncv3/canonical";
 import {
   deleteEntitiesBatch,
+  getActiveOperationsForEntity,
   listEntities,
   openSyncV3Db,
   type SyncV3Db,
@@ -37,6 +38,34 @@ export async function pruneVirtualShareGroupsFromIdb(
     )
     .map((e) => e.entityId);
   return deleteEntitiesBatch(database, shareIds);
+}
+
+/**
+ * Po udanym pullu własnych groups: usuń z IDB obce / wyciekłe grupy
+ * (np. realtime bez filtra user_id), zostaw pending lokalne create.
+ */
+export async function pruneGroupsNotInRemoteSet(
+  userId: string,
+  keepIds: ReadonlySet<string>,
+  db?: SyncV3Db,
+): Promise<number> {
+  const database = db ?? (await openSyncV3Db(userId));
+  const entities = await listEntities(database, userId);
+  const candidates = entities.filter(
+    (e) => e.entityType === "group" && !keepIds.has(e.entityId),
+  );
+  const toDelete: string[] = [];
+  for (const ent of candidates) {
+    const active = await getActiveOperationsForEntity(
+      database,
+      userId,
+      "group",
+      ent.entityId,
+    );
+    if (active.length) continue;
+    toDelete.push(ent.entityId);
+  }
+  return deleteEntitiesBatch(database, toDelete);
 }
 
 /**
