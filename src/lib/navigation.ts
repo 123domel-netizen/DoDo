@@ -144,7 +144,8 @@ export function goBackOr(fallback: () => void) {
   fallback();
 }
 
-/** Marker wpisu historii dla warstw UI (sheet/modal) bez zmiany URL. */
+/** Marker wpisu historii dla warstw UI (sheet/modal) bez zmiany URL.
+ *  `useHistoryBackLayer` dokłada unikalne `layerId` — patrz `historyBackLayer.ts`. */
 export const APP_LAYER_STATE = { dodo: true as const, layer: true as const };
 
 /** Czy bieżący history.state należy do aplikacji (trasa lub warstwa). */
