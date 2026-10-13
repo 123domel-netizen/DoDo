@@ -446,23 +446,20 @@ export function ChannelManageDialog({ open, onClose, entry }: ChannelManageDialo
             type="button"
             disabled={busy}
             onClick={() => {
+              const archive = !entry.myArchivedAt;
               if (
+                archive &&
                 !confirm(
-                  entry.myArchivedAt
-                    ? "Przywrócić kanał z archiwum dla wszystkich członków?"
-                    : "Zarchiwizować kanał dla wszystkich? Trafi do Archiwum u każdego członka i nikt nie będzie mógł pisać.",
+                  "Zarchiwizować kanał dla wszystkich? Trafi do Archiwum u każdego członka i nikt nie będzie mógł pisać.",
                 )
               ) {
                 return;
               }
               void run(async () => {
-                const { error: err } = await archiveConversation(
-                  entry.id,
-                  !entry.myArchivedAt,
-                );
+                const { error: err } = await archiveConversation(entry.id, archive);
                 if (err) return { error: err };
                 onClose();
-                if (!entry.myArchivedAt) {
+                if (archive) {
                   useChatStore.getState().setActiveConversation(null);
                   useChatStore.getState().setPanelMode("todo");
                 }

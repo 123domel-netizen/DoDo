@@ -979,11 +979,17 @@ export async function archiveConversation(conversationId: string, archived: bool
   ) {
     return { error: "Notatnika nie można archiwizować." };
   }
+  const prevArchivedAt = entry?.myArchivedAt ?? null;
   useChatStore.getState().patchOverviewEntry(conversationId, {
     myArchivedAt: archived ? new Date().toISOString() : null,
   });
   const { error } = await api.setConversationArchived(conversationId, archived);
-  if (error) console.warn("[chat] archive failed:", error);
+  if (error) {
+    console.warn("[chat] archive failed:", error);
+    useChatStore.getState().patchOverviewEntry(conversationId, {
+      myArchivedAt: prevArchivedAt,
+    });
+  }
   scheduleOverviewRefresh(400);
   return { error };
 }

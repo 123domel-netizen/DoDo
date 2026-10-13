@@ -1481,7 +1481,25 @@ export async function setConversationArchived(
     p_conversation_id: conversationId,
     p_archived: archived,
   });
-  return error ? { error: error.message } : {};
+  if (error) return { error: error.message };
+  // Legacy: kanał mógł mieć tylko cm.archived_at; RPC (przed 0073) czyściło
+  // wyłącznie channel_archived_at — wtedy restore „nic nie robiło” po refreshu.
+  if (!archived) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      const { error: clearErr } = await supabase
+        .from("conversation_members")
+        .update({ archived_at: null })
+        .eq("conversation_id", conversationId)
+        .eq("user_id", user.id);
+      if (clearErr) {
+        console.warn("[chat] clear own archived_at failed:", clearErr.message);
+      }
+    }
+  }
+  return {};
 }
 
 /** null = wyłącz wyciszenie; "infinity" = na zawsze; inaczej ISO końca. */
