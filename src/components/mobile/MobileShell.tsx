@@ -155,6 +155,8 @@ export function MobileShell() {
   const goCalendar = () => {
     setSchedulesMode(null);
     setTab("calendar");
+    // Każde wejście w Wydarzenia → aktualna data (typ widoku Lista/Dzień/… zostaje).
+    setSettings({ anchorDate: startOfDay(new Date()).toISOString() });
     if (activeConversationId) {
       setActiveConversation(null);
       setRouteHash(null);

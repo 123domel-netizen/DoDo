@@ -150,7 +150,13 @@ export function CalendarNav() {
         <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-md border border-line bg-surface-raised p-0.5">
           <button
             type="button"
-            onClick={() => leaveSchedulesTo({ mainAreaMode: "calendar" })}
+            onClick={() =>
+              leaveSchedulesTo({
+                mainAreaMode: "calendar",
+                // Każde kliknięcie Kalendarz → aktualna data (Dzień/Tydzień/11 dni/Miesiąc bez zmian).
+                anchorDate: startOfDay(new Date()).toISOString(),
+              })
+            }
             className={chipClass(isCalendar)}
           >
             Kalendarz
