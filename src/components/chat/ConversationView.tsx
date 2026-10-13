@@ -1603,23 +1603,23 @@ export function ConversationView({
                     type="button"
                     onClick={() => {
                       const next = !entry.myArchivedAt;
-                      if (entry.kind === "channel") {
-                        if (
-                          !confirm(
-                            next
-                              ? "Zarchiwizować kanał dla wszystkich? Trafi do Archiwum u każdego członka i nikt nie będzie mógł pisać."
-                              : "Przywrócić kanał z archiwum dla wszystkich członków?",
-                          )
-                        ) {
-                          return;
-                        }
+                      // Potwierdzenie tylko przy archiwizacji (destrukcyjne). Przywracanie
+                      // bez confirm — window.confirm bywa zablokowane w WebView/preview.
+                      if (
+                        next &&
+                        entry.kind === "channel" &&
+                        !confirm(
+                          "Zarchiwizować kanał dla wszystkich? Trafi do Archiwum u każdego członka i nikt nie będzie mógł pisać.",
+                        )
+                      ) {
+                        return;
                       }
+                      setMenuOpen(false);
                       void archiveConversation(conversationId, next).then(({ error }) => {
                         if (error) {
                           alert(error);
                           return;
                         }
-                        setMenuOpen(false);
                         if (next) {
                           useChatStore.getState().setActiveConversation(null);
                           useChatStore.getState().setPanelMode("todo");
