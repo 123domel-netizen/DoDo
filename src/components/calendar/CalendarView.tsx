@@ -20,7 +20,6 @@ import { MonthView } from "./MonthView";
 import { MobileMonthView } from "./MobileMonthView";
 import { MobileWeekView } from "./MobileWeekView";
 import { MobileDayView } from "./MobileDayView";
-import { MainDashboardView } from "@/components/dashboard/MainDashboardView";
 import type { CalendarViewKind, Group } from "@/types";
 
 function calendarAnchor(iso: string): Date {
@@ -194,7 +193,6 @@ export function CalendarView({
   const schedulesAvailable = useSchedulesAvailable();
   const mainAreaMode = useEffectiveMainAreaMode();
   const showBoards = !isMobile && mainAreaMode === "boards";
-  const showMainDashboard = !isMobile && settings.mainAreaMode === "dashboard";
   const showProjects =
     !isMobile &&
     (settings.mainAreaMode === "projects" ||
@@ -225,8 +223,6 @@ export function CalendarView({
             onClose={() => setSettings({ mainAreaMode: "calendar" })}
           />
         </Suspense>
-      ) : showMainDashboard ? (
-        <MainDashboardView />
       ) : view === "month" ? (
         mobileCalendar ? (
           <MobileMonthView

@@ -130,6 +130,16 @@ describe("addTopic — szybkie dodawanie", () => {
     expect(topicsOf()).toHaveLength(0);
   });
 
+  it("opcjonalny kod jest na liście od razu i zapisywany po create", async () => {
+    api.createTopic.mockResolvedValue({ conversationId: "conv-code" });
+    api.updateTopic.mockResolvedValue({});
+    const id = state().addTopic("b1", "Temat z kodem", "  N01  ");
+    expect(topicsOf()[0]).toMatchObject({ id, title: "Temat z kodem", code: "N01", sendState: "pending" });
+    await flush();
+    expect(api.updateTopic).toHaveBeenCalledWith(id, { code: "N01" });
+    expect(topicsOf()[0]).toMatchObject({ code: "N01", conversationId: "conv-code" });
+  });
+
   it("kilka tematów pod rząd zapisuje po kolei, w kolejności wpisywania", async () => {
     const order: string[] = [];
     api.createTopic.mockImplementation(async (input: { title: string }) => {
