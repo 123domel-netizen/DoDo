@@ -8,49 +8,49 @@
 begin;
 
 insert into auth.users (id, email) values
-  ('00000000-0000-0000-0000-0000000000p1', 'ping-u1@example.invalid'),
-  ('00000000-0000-0000-0000-0000000000p2', 'ping-u2@example.invalid'),
-  ('00000000-0000-0000-0000-0000000000p3', 'ping-u3@example.invalid'),
-  ('00000000-0000-0000-0000-0000000000p4', 'ping-u4@example.invalid')
+  ('00000000-0000-0000-0000-0000000000e1', 'ping-u1@example.invalid'),
+  ('00000000-0000-0000-0000-0000000000e2', 'ping-u2@example.invalid'),
+  ('00000000-0000-0000-0000-0000000000e3', 'ping-u3@example.invalid'),
+  ('00000000-0000-0000-0000-0000000000e4', 'ping-u4@example.invalid')
 on conflict (id) do nothing;
 
 insert into public.orgs (id, name) values
-  ('00000000-0000-0000-0000-0000000000q1', 'Ping test org');
+  ('00000000-0000-0000-0000-0000000000f1', 'Ping test org');
 
 insert into public.org_members (org_id, user_id, role) values
-  ('00000000-0000-0000-0000-0000000000q1', '00000000-0000-0000-0000-0000000000p1', 'admin'),
-  ('00000000-0000-0000-0000-0000000000q1', '00000000-0000-0000-0000-0000000000p2', 'member'),
-  ('00000000-0000-0000-0000-0000000000q1', '00000000-0000-0000-0000-0000000000p3', 'member');
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000e1', 'admin'),
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000e2', 'member'),
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000e3', 'member');
 
--- DM between p1 and p2
+-- DM between e1 and e2
 insert into public.conversations (id, kind, dm_key, created_by)
 values (
-  '00000000-0000-0000-0000-0000000000r1',
+  '00000000-0000-0000-0000-0000000000a1',
   'dm',
-  '00000000-0000-0000-0000-0000000000p1:00000000-0000-0000-0000-0000000000p2',
-  '00000000-0000-0000-0000-0000000000p1'
+  '00000000-0000-0000-0000-0000000000e1:00000000-0000-0000-0000-0000000000e2',
+  '00000000-0000-0000-0000-0000000000e1'
 );
 
 insert into public.conversation_members (conversation_id, user_id, role) values
-  ('00000000-0000-0000-0000-0000000000r1', '00000000-0000-0000-0000-0000000000p1', 'owner'),
-  ('00000000-0000-0000-0000-0000000000r1', '00000000-0000-0000-0000-0000000000p2', 'member');
+  ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000e1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000e2', 'member');
 
--- Group channel with p1, p2, p3
+-- Group channel with e1, e2, e3
 insert into public.conversations (id, kind, name, is_public, created_by)
 values (
-  '00000000-0000-0000-0000-0000000000r2',
+  '00000000-0000-0000-0000-0000000000a2',
   'channel',
   'ping-channel',
   false,
-  '00000000-0000-0000-0000-0000000000p1'
+  '00000000-0000-0000-0000-0000000000e1'
 );
 
 insert into public.conversation_members (conversation_id, user_id, role) values
-  ('00000000-0000-0000-0000-0000000000r2', '00000000-0000-0000-0000-0000000000p1', 'owner'),
-  ('00000000-0000-0000-0000-0000000000r2', '00000000-0000-0000-0000-0000000000p2', 'member'),
-  ('00000000-0000-0000-0000-0000000000r2', '00000000-0000-0000-0000-0000000000p3', 'member');
+  ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000e1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000e2', 'member'),
+  ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000e3', 'member');
 
--- Board with p1 (owner) + p2; p3 is org member but NOT board member
+-- Board with e1 (owner) + e2; e3 is org member but NOT board member
 create or replace function public._ping_test_act_as(p_uid uuid)
 returns void language plpgsql as $$
 begin
@@ -61,19 +61,19 @@ end $$;
 grant execute on function public._ping_test_act_as(uuid) to authenticated;
 
 set local role authenticated;
-select public._ping_test_act_as('00000000-0000-0000-0000-0000000000p1');
+select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e1');
 
 do $$
 begin
   perform public.board_create(
-    '00000000-0000-0000-0000-0000000000s1',
-    '00000000-0000-0000-0000-0000000000q1',
+    '00000000-0000-0000-0000-0000000000b1',
+    '00000000-0000-0000-0000-0000000000f1',
     'Ping board',
-    array['00000000-0000-0000-0000-0000000000p2']::uuid[]
+    array['00000000-0000-0000-0000-0000000000e2']::uuid[]
   );
   perform public.board_create_topic(
-    '00000000-0000-0000-0000-0000000000t1',
-    '00000000-0000-0000-0000-0000000000s1',
+    '00000000-0000-0000-0000-0000000000c1',
+    '00000000-0000-0000-0000-0000000000b1',
     'Ping topic'
   );
 end $$;
@@ -86,8 +86,8 @@ declare
   n int;
 begin
   select count(*) into n from public.send_ping(
-    '00000000-0000-0000-0000-0000000000r1',
-    array['00000000-0000-0000-0000-0000000000p2']::uuid[]
+    '00000000-0000-0000-0000-0000000000a1',
+    array['00000000-0000-0000-0000-0000000000e2']::uuid[]
   );
   if n <> 1 then raise exception 'FAIL: expected 1 ping row'; end if;
   raise notice 'OK: DM ping';
@@ -100,8 +100,8 @@ do $$
 begin
   begin
     perform public.send_ping(
-      '00000000-0000-0000-0000-0000000000r1',
-      array['00000000-0000-0000-0000-0000000000p1']::uuid[]
+      '00000000-0000-0000-0000-0000000000a1',
+      array['00000000-0000-0000-0000-0000000000e1']::uuid[]
     );
     raise exception 'FAIL: self ping accepted';
   exception when others then
@@ -110,8 +110,8 @@ begin
 
   begin
     perform public.send_ping(
-      '00000000-0000-0000-0000-0000000000r1',
-      array['00000000-0000-0000-0000-0000000000p3']::uuid[]
+      '00000000-0000-0000-0000-0000000000a1',
+      array['00000000-0000-0000-0000-0000000000e3']::uuid[]
     );
     raise exception 'FAIL: non-member ping accepted';
   exception when others then
@@ -120,7 +120,7 @@ begin
 
   begin
     perform public.send_ping(
-      '00000000-0000-0000-0000-0000000000r1',
+      '00000000-0000-0000-0000-0000000000a1',
       '{}'::uuid[]
     );
     raise exception 'FAIL: empty targets accepted';
@@ -137,8 +137,8 @@ do $$
 begin
   begin
     perform public.send_ping(
-      '00000000-0000-0000-0000-0000000000r1',
-      array['00000000-0000-0000-0000-0000000000p2']::uuid[]
+      '00000000-0000-0000-0000-0000000000a1',
+      array['00000000-0000-0000-0000-0000000000e2']::uuid[]
     );
     raise exception 'FAIL: rate limit not enforced';
   exception when others then
@@ -155,9 +155,9 @@ begin
   begin
     insert into public.chat_pings (conversation_id, sender_user_id, target_user_id)
     values (
-      '00000000-0000-0000-0000-0000000000r2',
-      '00000000-0000-0000-0000-0000000000p1',
-      '00000000-0000-0000-0000-0000000000p3'
+      '00000000-0000-0000-0000-0000000000a2',
+      '00000000-0000-0000-0000-0000000000e1',
+      '00000000-0000-0000-0000-0000000000e3'
     );
     raise exception 'FAIL: direct insert allowed';
   exception when others then
@@ -178,18 +178,18 @@ declare
 begin
   select id into ping_id
   from public.chat_pings
-  where conversation_id = '00000000-0000-0000-0000-0000000000r1'
+  where conversation_id = '00000000-0000-0000-0000-0000000000a1'
   limit 1;
 
-  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000p2');
+  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e2');
   select count(*) into n from public.chat_pings where id = ping_id;
   if n <> 1 then raise exception 'FAIL: target cannot read own ping'; end if;
 
-  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000p3');
+  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e3');
   select count(*) into n from public.chat_pings where id = ping_id;
   if n <> 0 then raise exception 'FAIL: third party saw ping'; end if;
 
-  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000p1');
+  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e1');
   raise notice 'OK: RLS select parties only';
 end $$;
 
@@ -200,19 +200,19 @@ end $$;
 reset role;
 update public.chat_pings
 set created_at = now() - interval '2 minutes'
-where sender_user_id = '00000000-0000-0000-0000-0000000000p1';
+where sender_user_id = '00000000-0000-0000-0000-0000000000e1';
 set local role authenticated;
-select public._ping_test_act_as('00000000-0000-0000-0000-0000000000p1');
+select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e1');
 
 do $$
 declare
   n int;
 begin
   select count(*) into n from public.send_ping(
-    '00000000-0000-0000-0000-0000000000r2',
+    '00000000-0000-0000-0000-0000000000a2',
     array[
-      '00000000-0000-0000-0000-0000000000p2',
-      '00000000-0000-0000-0000-0000000000p3'
+      '00000000-0000-0000-0000-0000000000e2',
+      '00000000-0000-0000-0000-0000000000e3'
     ]::uuid[]
   );
   if n <> 2 then raise exception 'FAIL: expected 2 channel ping rows, got %', n; end if;
@@ -225,9 +225,9 @@ end $$;
 reset role;
 update public.chat_pings
 set created_at = now() - interval '2 minutes'
-where sender_user_id = '00000000-0000-0000-0000-0000000000p1';
+where sender_user_id = '00000000-0000-0000-0000-0000000000e1';
 set local role authenticated;
-select public._ping_test_act_as('00000000-0000-0000-0000-0000000000p1');
+select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e1');
 
 do $$
 declare
@@ -236,13 +236,13 @@ declare
 begin
   select c.id into v_conv
   from public.conversations c
-  where c.board_topic_id = '00000000-0000-0000-0000-0000000000t1'
+  where c.board_topic_id = '00000000-0000-0000-0000-0000000000c1'
     and c.kind = 'board_topic';
 
   begin
     perform public.send_ping(
       v_conv,
-      array['00000000-0000-0000-0000-0000000000p3']::uuid[]
+      array['00000000-0000-0000-0000-0000000000e3']::uuid[]
     );
     raise exception 'FAIL: non-board member accepted on topic';
   exception when others then
@@ -251,7 +251,7 @@ begin
 
   select count(*) into n from public.send_ping(
     v_conv,
-    array['00000000-0000-0000-0000-0000000000p2']::uuid[]
+    array['00000000-0000-0000-0000-0000000000e2']::uuid[]
   );
   if n <> 1 then raise exception 'FAIL: board topic ping failed'; end if;
   raise notice 'OK: board topic ping';
