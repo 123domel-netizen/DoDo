@@ -117,7 +117,7 @@ begin
   from public.get_board_fields('00000000-0000-0000-0000-0000000000c9') f,
        lateral jsonb_array_elements(f.options) o
   where f.id = v_single
-  order by (o->>'position')::int
+  order by (o->>'sort_order')::int
   limit 1;
 
   perform public.board_set_topic_field_value(

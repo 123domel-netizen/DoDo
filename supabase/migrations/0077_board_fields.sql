@@ -10,7 +10,7 @@ create table if not exists public.board_fields (
   name        text not null,
   kind        text not null,
   visibility  text not null default 'all',
-  position    int not null default 0,
+  sort_order    int not null default 0,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
   constraint board_fields_name_len check (char_length(btrim(name)) between 1 and 80),
@@ -21,20 +21,20 @@ create table if not exists public.board_fields (
   )
 );
 
-create index if not exists board_fields_board_position_idx
-  on public.board_fields (board_id, position, created_at);
+create index if not exists board_fields_board_sort_order_idx
+  on public.board_fields (board_id, sort_order, created_at);
 
 create table if not exists public.board_field_options (
   id         uuid primary key default gen_random_uuid(),
   field_id   uuid not null references public.board_fields (id) on delete cascade,
   label      text not null,
-  position   int not null default 0,
+  sort_order   int not null default 0,
   created_at timestamptz not null default now(),
   constraint board_field_options_label_len check (char_length(btrim(label)) between 1 and 80)
 );
 
-create index if not exists board_field_options_field_position_idx
-  on public.board_field_options (field_id, position, created_at);
+create index if not exists board_field_options_field_sort_order_idx
+  on public.board_field_options (field_id, sort_order, created_at);
 
 create table if not exists public.board_field_viewers (
   field_id uuid not null references public.board_fields (id) on delete cascade,
@@ -145,7 +145,7 @@ returns table (
   name text,
   kind text,
   visibility text,
-  position int,
+  sort_order int,
   created_at timestamptz,
   updated_at timestamptz,
   options jsonb,
@@ -162,15 +162,15 @@ as $$
     f.name,
     f.kind,
     f.visibility,
-    f.position,
+    f.sort_order,
     f.created_at,
     f.updated_at,
     (
       select coalesce(jsonb_agg(jsonb_build_object(
         'id', o.id,
         'label', o.label,
-        'position', o.position
-      ) order by o.position, o.created_at, o.id), '[]'::jsonb)
+        'sort_order', o.sort_order
+      ) order by o.sort_order, o.created_at, o.id), '[]'::jsonb)
       from public.board_field_options o
       where o.field_id = f.id
     ) as options,
@@ -186,7 +186,7 @@ as $$
   from public.board_fields f
   where f.board_id = p_board_id
     and public.can_see_board_field(f.id)
-  order by f.position, f.created_at, f.id;
+  order by f.sort_order, f.created_at, f.id;
 $$;
 
 revoke all on function public.get_board_fields(uuid) from public;
@@ -202,7 +202,7 @@ create or replace function public.board_upsert_field(
   p_name text,
   p_kind text,
   p_visibility text,
-  p_position int,
+  p_sort_order int,
   p_options jsonb,
   p_viewer_ids uuid[]
 )
@@ -285,22 +285,22 @@ begin
     v_id := gen_random_uuid();
   end if;
 
-  if p_position is null then
+  if p_sort_order is null then
     if p_id is null then
-      select coalesce(max(position), 0) + 1 into v_pos
+      select coalesce(max(sort_order), 0) + 1 into v_pos
       from public.board_fields where board_id = p_board_id;
     else
-      select position into v_pos from public.board_fields where id = v_id;
+      select sort_order into v_pos from public.board_fields where id = v_id;
     end if;
   else
-    v_pos := p_position;
+    v_pos := p_sort_order;
   end if;
 
-  insert into public.board_fields (id, board_id, name, kind, visibility, position)
+  insert into public.board_fields (id, board_id, name, kind, visibility, sort_order)
   values (v_id, p_board_id, v_name, v_kind, v_vis, v_pos)
   on conflict (id) do update set
     name = excluded.name,
-    position = excluded.position,
+    sort_order = excluded.sort_order,
     updated_at = now();
 
   -- Options (single/multi)
@@ -328,11 +328,11 @@ begin
           raise exception 'option not found';
         end if;
         update public.board_field_options
-        set label = opt_label, position = opt_pos
+        set label = opt_label, sort_order = opt_pos
         where id = opt_id;
       else
         opt_id := gen_random_uuid();
-        insert into public.board_field_options (id, field_id, label, position)
+        insert into public.board_field_options (id, field_id, label, sort_order)
         values (opt_id, v_id, opt_label, opt_pos);
       end if;
       keep_ids := array_append(keep_ids, opt_id);

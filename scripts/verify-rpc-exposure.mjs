@@ -198,7 +198,7 @@ const BOARD_RPCS_ANON_CLOSED = [
       p_name: "x",
       p_kind: "text",
       p_visibility: "all",
-      p_position: null,
+      p_sort_order: null,
       p_options: [],
       p_viewer_ids: [],
     },

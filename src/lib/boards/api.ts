@@ -140,12 +140,12 @@ export function rowToField(row: Row): BoardField {
     name: (row.name as string) ?? "",
     kind: asFieldKind(row.kind),
     visibility: asFieldVisibility(row.visibility),
-    position: Number(row.position ?? 0),
+    position: Number(row.sort_order ?? row.position ?? 0),
     options: optionsRaw.map(
       (o): BoardFieldOption => ({
         id: o.id as string,
         label: (o.label as string) ?? "",
-        position: Number(o.position ?? 0),
+        position: Number(o.sort_order ?? o.position ?? 0),
       }),
     ),
     viewerIds: viewerIds.filter((id) => typeof id === "string"),
@@ -378,7 +378,7 @@ export async function upsertBoardField(input: {
     p_name: input.name,
     p_kind: input.kind,
     p_visibility: input.visibility,
-    p_position: input.position ?? null,
+    p_sort_order: input.position ?? null,
     p_options: input.options.map((o) =>
       o.id ? { id: o.id, label: o.label } : { label: o.label },
     ),

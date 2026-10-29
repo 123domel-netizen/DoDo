@@ -9,10 +9,10 @@ describe("rowToField / field_values", () => {
       name: "Status",
       kind: "single",
       visibility: "all",
-      position: 1,
+      sort_order: 1,
       options: [
-        { id: "o1", label: "Nowe", position: 1 },
-        { id: "o2", label: "W toku", position: 2 },
+        { id: "o1", label: "Nowe", sort_order: 1 },
+        { id: "o2", label: "W toku", sort_order: 2 },
       ],
       viewer_ids: ["u2"],
     });
