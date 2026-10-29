@@ -94,7 +94,7 @@ export function rowToTopic(row: Row): BoardTopic {
     title: (row.title as string) ?? "",
     description: (row.description as string) ?? "",
     code: typeof codeRaw === "string" && codeRaw.length > 0 ? codeRaw : null,
-    position: Number(row.position ?? 0),
+    position: Number(row.sort_order ?? row.position ?? 0),
     createdBy: (row.created_by as string | null) ?? null,
     pinnedAt: (row.pinned_at as string | null) ?? null,
     snoozedUntil: (row.snoozed_until as string | null) ?? null,

@@ -1,37 +1,38 @@
--- Tablice: ręczny kod tematu, kolejność (position), filtr martwych powiązań.
+﻿-- Tablice: reczny kod tematu, kolejnosc (sort_order), filtr martwych powiazan.
 --
---  * `code` — opcjonalny identyfikator (np. N01), unikalny per tablica (case-insensitive).
---  * `position` — kolejność ręczna w obrębie tablicy (DnD).
---  * `get_board_topics.items` pomija zadania/wydarzenia z `deleted_at`.
---  * Trigger na soft-delete `items` czyści `board_topic_items`.
---  * RPC `board_reorder_topics` ustawia pozycje 1..n.
+--  * code — opcjonalny identyfikator (np. N01), unikalny per tablica (case-insensitive).
+--  * sort_order — kolejnosc reczna w obrebie tablicy (DnD). Kolumna NIE nazywa sie
+--    "position" (slowo zastrzezone w SQL).
+--  * get_board_topics.items pomija zadania/wydarzenia z deleted_at.
+--  * Trigger na soft-delete items czysci board_topic_items.
+--  * RPC board_reorder_topics ustawia sort_order 1..n.
 
 -- ---------------------------------------------------------------------------
 -- Kolumny
 -- ---------------------------------------------------------------------------
 alter table public.board_topics
   add column if not exists code text,
-  add column if not exists position int;
+  add column if not exists sort_order int;
 
--- Backfill pozycji (istniejące tematy: created_at, id).
+-- Backfill kolejnosci (istniejace tematy: created_at, id).
 with ranked as (
   select id,
          row_number() over (partition by board_id order by created_at, id) as rn
   from public.board_topics
 )
 update public.board_topics t
-set position = ranked.rn
+set sort_order = ranked.rn
 from ranked
 where t.id = ranked.id
-  and (t.position is null or t.position <> ranked.rn);
+  and (t.sort_order is null or t.sort_order <> ranked.rn);
 
 alter table public.board_topics
-  alter column position set not null;
+  alter column sort_order set not null;
 
 alter table public.board_topics
-  alter column position set default 0;
+  alter column sort_order set default 0;
 
--- Normalizacja kodu: pusty → null; max 16 po trim.
+-- Normalizacja kodu: pusty -> null; max 16 po trim.
 create or replace function public.board_topics_normalize_code()
 returns trigger
 language plpgsql
@@ -64,11 +65,11 @@ create unique index board_topics_board_code_uidx
   on public.board_topics (board_id, lower(code))
   where code is not null;
 
-create index if not exists board_topics_board_position_idx
-  on public.board_topics (board_id, position);
+create index if not exists board_topics_board_sort_order_idx
+  on public.board_topics (board_id, sort_order);
 
 -- ---------------------------------------------------------------------------
--- Guard: code/position wolno zmieniać (tożsamość nadal immutable)
+-- Guard: code/sort_order wolno zmieniac (tozsamosc nadal immutable)
 -- ---------------------------------------------------------------------------
 create or replace function public.board_topics_guard()
 returns trigger
@@ -90,11 +91,11 @@ begin
 end;
 $$;
 
-grant update (title, description, pinned_at, snoozed_until, closed_at, code, position)
+grant update (title, description, pinned_at, snoozed_until, closed_at, code, sort_order)
   on public.board_topics to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Soft-delete item → czyść powiązania z tematami
+-- Soft-delete item -> czysc powiazania z tematami
 -- ---------------------------------------------------------------------------
 create or replace function public.board_topic_items_cleanup_on_item_delete()
 returns trigger
@@ -121,7 +122,7 @@ revoke all on function public.board_topic_items_cleanup_on_item_delete() from an
 revoke all on function public.board_topic_items_cleanup_on_item_delete() from authenticated;
 
 -- ---------------------------------------------------------------------------
--- board_create_topic: position = max+1
+-- board_create_topic: sort_order = max+1
 -- ---------------------------------------------------------------------------
 create or replace function public.board_create_topic(
   p_id uuid,
@@ -169,11 +170,11 @@ begin
     raise exception 'invalid topic title';
   end if;
 
-  select coalesce(max(position), 0) + 1 into v_pos
+  select coalesce(max(sort_order), 0) + 1 into v_pos
   from public.board_topics
   where board_id = p_board_id;
 
-  insert into public.board_topics (id, board_id, title, created_by, position)
+  insert into public.board_topics (id, board_id, title, created_by, sort_order)
   values (p_id, p_board_id, v_title, caller, v_pos);
 
   insert into public.conversations (kind, board_topic_id, created_by)
@@ -195,7 +196,7 @@ revoke all on function public.board_create_topic(uuid, uuid, text) from anon;
 grant execute on function public.board_create_topic(uuid, uuid, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- board_reorder_topics: pełna permutacja tematów tablicy → position 1..n
+-- board_reorder_topics: pelna permutacja tematow tablicy -> sort_order 1..n
 -- ---------------------------------------------------------------------------
 create or replace function public.board_reorder_topics(
   p_board_id uuid,
@@ -248,7 +249,7 @@ begin
   end if;
 
   update public.board_topics t
-  set position = o.ord
+  set sort_order = o.ord
   from unnest(p_topic_ids) with ordinality as o(id, ord)
   where t.id = o.id
     and t.board_id = p_board_id;
@@ -260,7 +261,7 @@ revoke all on function public.board_reorder_topics(uuid, uuid[]) from anon;
 grant execute on function public.board_reorder_topics(uuid, uuid[]) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- get_board_topics: + code, position; items tylko żywe
+-- get_board_topics: + code, sort_order; items tylko zywe
 -- ---------------------------------------------------------------------------
 drop function if exists public.get_board_topics(uuid);
 
@@ -278,7 +279,7 @@ returns table (
   created_at timestamptz,
   updated_at timestamptz,
   code text,
-  position int,
+  sort_order int,
   conversation_id uuid,
   last_activity_at timestamptz,
   comment_count bigint,
@@ -292,7 +293,7 @@ as $$
     t.id, t.board_id, t.title, t.description, t.created_by,
     t.pinned_at, t.snoozed_until, t.closed_at, t.closed_by,
     t.created_at, t.updated_at,
-    t.code, t.position,
+    t.code, t.sort_order,
     c.id as conversation_id,
     greatest(t.created_at, coalesce(c.last_message_at, t.created_at)) as last_activity_at,
     coalesce((

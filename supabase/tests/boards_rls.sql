@@ -273,13 +273,13 @@ begin
     if sqlstate not in ('23505') then raise; end if;
   end;
 
-  -- pozycje po create: d1=1, d2=2
-  select position into v_pos_d1 from public.board_topics
+  -- kolejnosc po create: d1=1, d2=2
+  select sort_order into v_pos_d1 from public.board_topics
   where id = '00000000-0000-0000-0000-0000000000d1';
-  select position into v_pos_d2 from public.board_topics
+  select sort_order into v_pos_d2 from public.board_topics
   where id = '00000000-0000-0000-0000-0000000000d2';
   if v_pos_d1 <> 1 or v_pos_d2 <> 2 then
-    raise exception 'FAIL: expected positions 1,2 got %, %', v_pos_d1, v_pos_d2;
+    raise exception 'FAIL: expected sort_order 1,2 got %, %', v_pos_d1, v_pos_d2;
   end if;
 
   perform public.board_reorder_topics(
@@ -289,11 +289,11 @@ begin
       '00000000-0000-0000-0000-0000000000d1'
     ]::uuid[]
   );
-  if (select position from public.board_topics
+  if (select sort_order from public.board_topics
       where id = '00000000-0000-0000-0000-0000000000d2') <> 1
-     or (select position from public.board_topics
+     or (select sort_order from public.board_topics
          where id = '00000000-0000-0000-0000-0000000000d1') <> 2 then
-    raise exception 'FAIL: reorder did not swap positions';
+    raise exception 'FAIL: reorder did not swap sort_order';
   end if;
 
   begin
