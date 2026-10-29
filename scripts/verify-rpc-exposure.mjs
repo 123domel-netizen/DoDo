@@ -165,6 +165,29 @@ for (const { fn, body } of AUTHENTICATED_ONLY) {
   console.log(`  ${String(status).padEnd(4)} ${fn}  ${detail.slice(0, 60)}`);
 }
 
+// RPC modułu Tablice (0074): tylko dla `authenticated`; anon ma dostać 404/401/403.
+// Losowe UUID, więc nawet przy luce wywołanie nie ma skutków ubocznych.
+const BOARD_RPCS_ANON_CLOSED = [
+  { fn: "get_my_boards", body: { p_org_id: crypto.randomUUID() } },
+  { fn: "get_board_topics", body: { p_board_id: crypto.randomUUID() } },
+  {
+    fn: "board_create",
+    body: { p_id: crypto.randomUUID(), p_org_id: crypto.randomUUID(), p_name: "x" },
+  },
+  {
+    fn: "board_create_topic",
+    body: { p_id: crypto.randomUUID(), p_board_id: crypto.randomUUID(), p_title: "x" },
+  },
+];
+
+console.log("\nRPC Tablic (anon musi być odrzucony):");
+for (const { fn, body } of BOARD_RPCS_ANON_CLOSED) {
+  const { status, detail } = await callRpc(fn, body);
+  const ok = isProtected(status);
+  if (!ok) exposed += 1;
+  console.log(`  ${ok ? "OK  " : "EKSPOZYCJA"}  ${String(status).padEnd(4)} ${fn}${ok ? "" : `  ${detail}`}`);
+}
+
 // ---------------------------------------------------------------------------
 // Kontrola regresji: utwardzenie nie mogło odciąć ról zaufanych od helperów RLS.
 // 0066 nadaje EXECUTE rolom `authenticated` i `service_role` w tej samej pętli,
