@@ -1,4 +1,4 @@
-﻿-- Tablice: reczny kod tematu, kolejnosc (sort_order), filtr martwych powiazan.
+-- Tablice: reczny kod tematu, kolejnosc (sort_order), filtr martwych powiazan.
 --
 --  * code — opcjonalny identyfikator (np. N01), unikalny per tablica (case-insensitive).
 --  * sort_order — kolejnosc reczna w obrebie tablicy (DnD). Kolumna NIE nazywa sie
