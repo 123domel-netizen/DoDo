@@ -349,15 +349,15 @@ function TopicDetailBody({
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="shrink-0 border-b border-line/80 px-3 py-2">
         <div className="mb-1 flex items-center gap-1.5">
+          <div className="min-w-0 flex-1 truncate text-[11px] text-ink-faint">{board.name}</div>
           <button
             type="button"
             onClick={close}
-            className="rounded-md p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+            className="shrink-0 rounded-md p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
             aria-label="Wróć do listy tematów"
           >
-            {mobile ? <ArrowLeft size={18} /> : <X size={16} />}
+            {mobile ? <ArrowLeft size={20} /> : <X size={20} />}
           </button>
-          <div className="min-w-0 flex-1 truncate text-[11px] text-ink-faint">{board.name}</div>
         </div>
 
         <div className="flex items-start gap-1">
