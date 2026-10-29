@@ -34,6 +34,11 @@ export function mapBoardError(message: string | undefined | null): string {
     return "Wszyscy uczestnicy muszą należeć do tej organizacji.";
   }
   if (m.includes("too many board members")) return "Za dużo uczestników tablicy (max 50).";
+  if (m.includes("invalid topic code")) return "Niepoprawny kod tematu.";
+  if (m.includes("invalid topic order")) return "Nie udało się zmienić kolejności tematów.";
+  if (m.includes("duplicate key") || m.includes("board_topics_board_code")) {
+    return "Ten kod jest już użyty na tej tablicy.";
+  }
   if (m.includes("invalid")) return "Niepoprawna nazwa lub tytuł.";
   if (m.includes("failed to fetch") || m.includes("network")) {
     return "Brak połączenia z internetem.";
@@ -82,11 +87,14 @@ function rowToComment(raw: unknown): TopicComment | null {
 
 export function rowToTopic(row: Row): BoardTopic {
   const items = (row.items as Row[] | null) ?? [];
+  const codeRaw = row.code;
   return {
     id: row.id as string,
     boardId: row.board_id as string,
     title: (row.title as string) ?? "",
     description: (row.description as string) ?? "",
+    code: typeof codeRaw === "string" && codeRaw.length > 0 ? codeRaw : null,
+    position: Number(row.position ?? 0),
     createdBy: (row.created_by as string | null) ?? null,
     pinnedAt: (row.pinned_at as string | null) ?? null,
     snoozedUntil: (row.snoozed_until as string | null) ?? null,
@@ -203,9 +211,22 @@ export async function createTopic(input: {
 export interface TopicPatch {
   title?: string;
   description?: string;
+  code?: string | null;
   pinned_at?: string | null;
   snoozed_until?: string | null;
   closed_at?: string | null;
+}
+
+export async function reorderTopics(
+  boardId: string,
+  topicIds: string[],
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("board_reorder_topics", {
+    p_board_id: boardId,
+    p_topic_ids: topicIds,
+  });
+  return error ? { error: mapBoardError(error.message) } : {};
 }
 
 export async function updateTopic(

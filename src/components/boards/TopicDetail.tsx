@@ -17,7 +17,12 @@ import { ConversationView } from "@/components/chat/ConversationView";
 import { SnoozeMenu } from "@/components/boards/SnoozeMenu";
 import { useTopicActions } from "@/components/boards/topicActions";
 import { topicConversationEntry } from "@/lib/boards/entry";
-import { isSnoozed } from "@/lib/boards/sections";
+import {
+  deletedTopicItemIds,
+  isSnoozed,
+  normalizeTopicCode,
+  visibleTopicItems,
+} from "@/lib/boards/sections";
 import {
   navigateToBoards,
   openTopicConversation,
@@ -26,6 +31,7 @@ import {
 } from "@/lib/boards/runtime";
 import { useBoardsStore } from "@/lib/boards/store";
 import {
+  TOPIC_CODE_MAX,
   TOPIC_DESCRIPTION_MAX,
   TOPIC_TITLE_MAX,
   type Board,
@@ -49,6 +55,59 @@ function findTopic(
 const actionBtn =
   "flex items-center gap-1 rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-ink transition hover:border-line-strong disabled:opacity-50";
 
+function EditableCode({ topic }: { topic: BoardTopic }) {
+  const actions = useTopicActions(topic);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(topic.code ?? "");
+
+  useEffect(() => {
+    if (!editing) setValue(topic.code ?? "");
+  }, [topic.code, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const clean = normalizeTopicCode(value);
+    if (clean !== topic.code) void actions.setCode(clean);
+    else setValue(topic.code ?? "");
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className={`shrink-0 rounded-md px-1 py-0.5 font-mono text-sm tabular-nums transition hover:bg-surface-raised ${
+          topic.code ? "text-ink-light" : "text-ink-faint"
+        }`}
+        title="Kliknij, aby nadać kod (np. N01)"
+      >
+        {topic.code ?? "Kod"}
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      value={value}
+      maxLength={TOPIC_CODE_MAX}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          setValue(topic.code ?? "");
+          setEditing(false);
+        }
+      }}
+      placeholder="N01"
+      aria-label="Kod tematu"
+      className="w-16 shrink-0 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 font-mono text-sm tabular-nums text-ink outline-none"
+    />
+  );
+}
+
 function EditableTitle({ topic }: { topic: BoardTopic }) {
   const actions = useTopicActions(topic);
   const [editing, setEditing] = useState(false);
@@ -70,7 +129,7 @@ function EditableTitle({ topic }: { topic: BoardTopic }) {
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="w-full rounded-md px-1 py-0.5 text-left text-base font-semibold text-ink transition hover:bg-surface-raised"
+        className="min-w-0 flex-1 rounded-md px-1 py-0.5 text-left text-base font-semibold text-ink transition hover:bg-surface-raised"
         title="Kliknij, aby zmienić tytuł"
       >
         {topic.title}
@@ -94,7 +153,7 @@ function EditableTitle({ topic }: { topic: BoardTopic }) {
         }
       }}
       aria-label="Tytuł tematu"
-      className="w-full rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 text-base font-semibold text-ink outline-none"
+      className="min-w-0 flex-1 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 text-base font-semibold text-ink outline-none"
     />
   );
 }
@@ -151,11 +210,21 @@ function LinkedItems({ topic }: { topic: BoardTopic }) {
   const setEditing = useStore((s) => s.setEditing);
   const unlinkItem = useBoardsStore((s) => s.unlinkItem);
   const setNotice = useBoardsStore((s) => s.setNotice);
-  if (topic.items.length === 0) return null;
+  const visible = visibleTopicItems(topic.items, items);
+
+  // Soft-delete w kalendarzu zostawia tombstone — odpinamy link (trigger i tak posprząta).
+  useEffect(() => {
+    const dead = deletedTopicItemIds(topic.items, items);
+    for (const itemId of dead) {
+      void unlinkItem(topic.id, itemId);
+    }
+  }, [topic.id, topic.items, items, unlinkItem]);
+
+  if (visible.length === 0) return null;
   return (
     <ul className="space-y-1">
-      {topic.items.map((link) => {
-        const item = items[link.itemId];
+      {visible.map((link) => {
+        const item = items[link.itemId]!;
         const Icon = link.itemType === "event" ? CalendarClock : CheckSquare;
         return (
           <li
@@ -163,19 +232,13 @@ function LinkedItems({ topic }: { topic: BoardTopic }) {
             className="flex items-center gap-2 rounded-md border border-line bg-surface-raised/60 px-2 py-1 text-xs"
           >
             <Icon size={13} className="shrink-0 text-ink-faint" />
-            {item ? (
-              <button
-                type="button"
-                onClick={() => setEditing(link.itemId)}
-                className="min-w-0 flex-1 truncate text-left text-ink transition hover:text-accent"
-              >
-                {item.title || "(bez tytułu)"}
-              </button>
-            ) : (
-              <span className="min-w-0 flex-1 truncate text-ink-faint">
-                Element niedostępny (usunięty lub nie Twój)
-              </span>
-            )}
+            <button
+              type="button"
+              onClick={() => setEditing(link.itemId)}
+              className="min-w-0 flex-1 truncate text-left text-ink transition hover:text-accent"
+            >
+              {item.title || "(bez tytułu)"}
+            </button>
             <button
               type="button"
               onClick={() =>
@@ -295,7 +358,10 @@ function TopicDetailBody({
           <div className="min-w-0 flex-1 truncate text-[11px] text-ink-faint">{board.name}</div>
         </div>
 
-        <EditableTitle topic={topic} />
+        <div className="flex items-start gap-1">
+          <EditableCode topic={topic} />
+          <EditableTitle topic={topic} />
+        </div>
         <div className="mb-1 px-1 text-[11px] text-ink-faint">
           {author ? `${author} · ` : ""}
           {fmt(topic.createdAt, "d MMM yyyy, HH:mm")}
@@ -364,11 +430,9 @@ function TopicDetailBody({
           </div>
         )}
 
-        {topic.items.length > 0 && (
-          <div className="mt-2">
-            <LinkedItems topic={topic} />
-          </div>
-        )}
+        <div className="mt-2">
+          <LinkedItems topic={topic} />
+        </div>
       </div>
 
       {closed && (

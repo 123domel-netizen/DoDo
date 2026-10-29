@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   deleteTopic: vi.fn(),
   linkTopicItem: vi.fn(),
   unlinkTopicItem: vi.fn(),
+  reorderTopics: vi.fn(),
 }));
 
 vi.mock("@/lib/boards/api", () => api);
@@ -47,6 +48,8 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     boardId: "b1",
     title: `Temat ${id}`,
     description: "",
+    code: null,
+    position: 1,
     createdBy: "u1",
     pinnedAt: null,
     snoozedUntil: null,
@@ -101,6 +104,7 @@ beforeEach(() => {
   api.updateTopic.mockResolvedValue({});
   api.linkTopicItem.mockResolvedValue({});
   api.unlinkTopicItem.mockResolvedValue({});
+  api.reorderTopics.mockResolvedValue({});
 });
 
 describe("addTopic — szybkie dodawanie", () => {
@@ -136,7 +140,9 @@ describe("addTopic — szybkie dodawanie", () => {
     state().addTopic("b1", "Pierwszy");
     state().addTopic("b1", "Drugi");
     state().addTopic("b1", "Trzeci");
-    await new Promise((r) => setTimeout(r, 30));
+    for (let i = 0; i < 20 && topicsOf().some((t) => t.sendState); i += 1) {
+      await flush();
+    }
     expect(order).toEqual(["Pierwszy", "Drugi", "Trzeci"]);
     expect(topicsOf().every((t) => !t.sendState)).toBe(true);
   });
@@ -255,6 +261,40 @@ describe("updateTopic — optymistyczne akcje", () => {
     const res = await state().updateTopic("t1", { title: "   " });
     expect(res.error).toBeTruthy();
     expect(api.updateTopic).not.toHaveBeenCalled();
+  });
+
+  it("zapisuje kod tematu (trim) i czyści pusty", async () => {
+    await state().updateTopic("t1", { code: "  N01  " });
+    expect(api.updateTopic).toHaveBeenCalledWith("t1", { code: "N01" });
+    expect(topicsOf()[0]!.code).toBe("N01");
+    await state().updateTopic("t1", { code: "  " });
+    expect(topicsOf()[0]!.code).toBeNull();
+  });
+});
+
+describe("reorderTopics", () => {
+  beforeEach(async () => {
+    api.fetchTopics.mockResolvedValue({
+      topics: [topic("t1", { position: 1 }), topic("t2", { position: 2 })],
+    });
+    await state().loadTopics("b1");
+  });
+
+  it("optymistycznie przestawia position i woła RPC", async () => {
+    const res = await state().reorderTopics("b1", ["t2", "t1"]);
+    expect(res.error).toBeUndefined();
+    expect(api.reorderTopics).toHaveBeenCalledWith("b1", ["t2", "t1"]);
+    expect(topicsOf().map((t) => ({ id: t.id, position: t.position }))).toEqual([
+      { id: "t2", position: 1 },
+      { id: "t1", position: 2 },
+    ]);
+  });
+
+  it("błąd serwera cofa kolejność", async () => {
+    api.reorderTopics.mockResolvedValue({ error: "Nie udało się zmienić kolejności tematów." });
+    const res = await state().reorderTopics("b1", ["t2", "t1"]);
+    expect(res.error).toBeTruthy();
+    expect(topicsOf().map((t) => t.id)).toEqual(["t1", "t2"]);
   });
 });
 

@@ -233,6 +233,125 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- 2b. Kod tematu, kolejność, martwe powiązania (0075)
+-- ---------------------------------------------------------------------------
+select public._boards_test_act_as('00000000-0000-0000-0000-0000000000a1');
+do $$
+declare
+  v_pos_d1 int;
+  v_pos_d2 int;
+  v_items jsonb;
+begin
+  -- kod ręczny
+  update public.board_topics
+  set code = 'N01'
+  where id = '00000000-0000-0000-0000-0000000000d1';
+  if (select code from public.get_board_topics('00000000-0000-0000-0000-0000000000c1')
+      where id = '00000000-0000-0000-0000-0000000000d1') is distinct from 'N01' then
+    raise exception 'FAIL: topic code not returned by get_board_topics';
+  end if;
+
+  update public.board_topics
+  set code = '  '
+  where id = '00000000-0000-0000-0000-0000000000d1';
+  if (select code from public.board_topics
+      where id = '00000000-0000-0000-0000-0000000000d1') is not null then
+    raise exception 'FAIL: blank code should become null';
+  end if;
+
+  update public.board_topics set code = 'N01'
+  where id = '00000000-0000-0000-0000-0000000000d1';
+  begin
+    update public.board_topics set code = 'n01'
+    where id = '00000000-0000-0000-0000-0000000000d2';
+    raise exception 'FAIL: duplicate code (case-insensitive) accepted';
+  exception when unique_violation then
+    null;
+  when others then
+    if sqlerrm like 'FAIL:%' then raise; end if;
+    -- unique_violation lub ekwiwalent z indeksu
+    if sqlstate not in ('23505') then raise; end if;
+  end;
+
+  -- pozycje po create: d1=1, d2=2
+  select position into v_pos_d1 from public.board_topics
+  where id = '00000000-0000-0000-0000-0000000000d1';
+  select position into v_pos_d2 from public.board_topics
+  where id = '00000000-0000-0000-0000-0000000000d2';
+  if v_pos_d1 <> 1 or v_pos_d2 <> 2 then
+    raise exception 'FAIL: expected positions 1,2 got %, %', v_pos_d1, v_pos_d2;
+  end if;
+
+  perform public.board_reorder_topics(
+    '00000000-0000-0000-0000-0000000000c1',
+    array[
+      '00000000-0000-0000-0000-0000000000d2',
+      '00000000-0000-0000-0000-0000000000d1'
+    ]::uuid[]
+  );
+  if (select position from public.board_topics
+      where id = '00000000-0000-0000-0000-0000000000d2') <> 1
+     or (select position from public.board_topics
+         where id = '00000000-0000-0000-0000-0000000000d1') <> 2 then
+    raise exception 'FAIL: reorder did not swap positions';
+  end if;
+
+  begin
+    perform public.board_reorder_topics(
+      '00000000-0000-0000-0000-0000000000c1',
+      array['00000000-0000-0000-0000-0000000000d1']::uuid[]
+    );
+    raise exception 'FAIL: incomplete reorder accepted';
+  exception when others then
+    if sqlerrm not like '%invalid topic order%' then raise; end if;
+  end;
+
+  -- powiązanie → soft-delete → brak w get_board_topics + wyczyszczony wiersz
+  insert into public.items (
+    id, user_id, type, title, start_at, end_at
+  ) values (
+    '00000000-0000-0000-0000-0000000000f1',
+    '00000000-0000-0000-0000-0000000000a1',
+    'task', 'Zadanie z tematu',
+    now(), now() + interval '1 hour'
+  );
+  insert into public.board_topic_items (topic_id, item_id, item_type, created_by)
+  values (
+    '00000000-0000-0000-0000-0000000000d1',
+    '00000000-0000-0000-0000-0000000000f1',
+    'task',
+    '00000000-0000-0000-0000-0000000000a1'
+  );
+
+  select items into v_items
+  from public.get_board_topics('00000000-0000-0000-0000-0000000000c1')
+  where id = '00000000-0000-0000-0000-0000000000d1';
+  if jsonb_array_length(v_items) <> 1 then
+    raise exception 'FAIL: expected 1 linked item before delete';
+  end if;
+
+  update public.items
+  set deleted_at = now(), deleted_by = '00000000-0000-0000-0000-0000000000a1'
+  where id = '00000000-0000-0000-0000-0000000000f1';
+
+  if exists (
+    select 1 from public.board_topic_items
+    where item_id = '00000000-0000-0000-0000-0000000000f1'
+  ) then
+    raise exception 'FAIL: soft-delete should clean board_topic_items';
+  end if;
+
+  select items into v_items
+  from public.get_board_topics('00000000-0000-0000-0000-0000000000c1')
+  where id = '00000000-0000-0000-0000-0000000000d1';
+  if jsonb_array_length(coalesce(v_items, '[]'::jsonb)) <> 0 then
+    raise exception 'FAIL: deleted item still in get_board_topics';
+  end if;
+
+  raise notice 'OK: kod, reorder, cleanup usuniętych powiązań';
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- 3. Wykluczenie z Czatu: overview i search_all
 -- ---------------------------------------------------------------------------
 do $$

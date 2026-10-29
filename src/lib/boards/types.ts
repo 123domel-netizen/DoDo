@@ -6,6 +6,7 @@
 export const BOARD_NAME_MAX = 120;
 export const TOPIC_TITLE_MAX = 200;
 export const TOPIC_DESCRIPTION_MAX = 4000;
+export const TOPIC_CODE_MAX = 16;
 
 export type BoardRole = "owner" | "member";
 
@@ -51,6 +52,10 @@ export interface BoardTopic {
   boardId: string;
   title: string;
   description: string;
+  /** Ręczny identyfikator (np. N01); null gdy brak. */
+  code: string | null;
+  /** Kolejność w tablicy (1..n); DnD w sekcjach przypięte/aktywne. */
+  position: number;
   createdBy: string | null;
   pinnedAt: string | null;
   /** Temat wraca do aktywnych, gdy ta data minie. */
