@@ -15,7 +15,8 @@ import {
   visibleTopicItems,
 } from "@/lib/boards/sections";
 import { useBoardsStore } from "@/lib/boards/store";
-import type { Board, BoardTopic, TopicSection } from "@/lib/boards/types";
+import type { Board, BoardField, BoardTopic, TopicSection } from "@/lib/boards/types";
+import { formatFieldCell } from "@/lib/boards/topicView";
 import { fmt } from "@/lib/format";
 import { useTopicActions } from "@/components/boards/topicActions";
 import { useStore } from "@/state/store";
@@ -34,6 +35,7 @@ export function TopicRow({
   now,
   active,
   onOpen,
+  columnFields = [],
   draggable: canDrag = false,
   onDragStart,
   onDragOver,
@@ -48,6 +50,7 @@ export function TopicRow({
   now: Date;
   active: boolean;
   onOpen: (topic: BoardTopic) => void;
+  columnFields?: BoardField[];
   draggable?: boolean;
   onDragStart?: (topicId: string) => void;
   onDragOver?: (topicId: string) => void;
@@ -150,12 +153,42 @@ export function TopicRow({
             >
               {topic.title}
             </span>
+            {columnFields.length > 0 && (
+              <span className="hidden min-w-0 max-w-[45%] shrink items-center gap-2 sm:flex">
+                {columnFields.map((f) => {
+                  const cell = formatFieldCell(topic, f);
+                  return (
+                    <span
+                      key={f.id}
+                      className="min-w-0 max-w-[7rem] truncate text-[11px] text-ink-faint"
+                      title={`${f.name}: ${cell}`}
+                    >
+                      <span className="text-ink-faint/70">{f.name}: </span>
+                      {cell}
+                    </span>
+                  );
+                })}
+              </span>
+            )}
             {!local && (
               <span className="shrink-0 text-[10px] text-ink-faint">
                 {formatTopicTime(topic.lastActivityAt, now)}
               </span>
             )}
           </span>
+          {columnFields.length > 0 && (
+            <span className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 sm:hidden">
+              {columnFields.map((f) => {
+                const cell = formatFieldCell(topic, f);
+                return (
+                  <span key={f.id} className="text-[10px] text-ink-faint" title={`${f.name}: ${cell}`}>
+                    <span className="opacity-70">{f.name}: </span>
+                    {cell}
+                  </span>
+                );
+              })}
+            </span>
+          )}
           {topic.sendState === "pending" ? (
             <span className="block truncate text-[11px] text-ink-faint">Zapisywanie…</span>
           ) : topic.sendState === "failed" ? (
