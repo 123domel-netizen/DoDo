@@ -46,6 +46,7 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     unreadCount: 0,
     lastComment: null,
     items: [],
+    fieldValues: {},
     ...over,
   };
 }

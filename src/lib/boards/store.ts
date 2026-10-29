@@ -14,8 +14,12 @@ import {
 } from "@/lib/boards/sections";
 import type {
   Board,
+  BoardField,
+  BoardFieldKind,
+  BoardFieldVisibility,
   BoardTopic,
   LinkedItemType,
+  TopicFieldValue,
 } from "@/lib/boards/types";
 
 /**
@@ -39,6 +43,9 @@ export interface BoardsState {
   topicsStatus: Record<string, LoadStatus>;
   topicsError: Record<string, string>;
 
+  fieldsByBoard: Record<string, BoardField[]>;
+  fieldsStatus: Record<string, LoadStatus>;
+
   activeBoardId: string | null;
   activeTopicId: string | null;
 
@@ -51,6 +58,7 @@ export interface BoardsState {
   reset: () => void;
   loadBoards: () => Promise<void>;
   loadTopics: (boardId: string) => Promise<void>;
+  loadFields: (boardId: string) => Promise<void>;
   selectBoard: (boardId: string | null) => void;
   selectTopic: (topicId: string | null) => void;
   setNotice: (notice: string | null) => void;
@@ -78,6 +86,23 @@ export interface BoardsState {
   }) => Promise<{ error?: string }>;
   unlinkItem: (topicId: string, itemId: string) => Promise<{ error?: string }>;
 
+  upsertField: (input: {
+    id?: string | null;
+    boardId: string;
+    name: string;
+    kind: BoardFieldKind;
+    visibility: BoardFieldVisibility;
+    options: { id?: string; label: string }[];
+    viewerIds: string[];
+  }) => Promise<{ id?: string; error?: string }>;
+  deleteField: (boardId: string, fieldId: string) => Promise<{ error?: string }>;
+  setTopicFieldValue: (input: {
+    topicId: string;
+    fieldId: string;
+    textValue?: string | null;
+    optionIds?: string[];
+  }) => Promise<{ error?: string }>;
+
   /** Komentarz z czatu (realtime) → podgląd, aktywność, unread (optymistycznie). */
   noteIncomingComment: (
     message: ChatMessage,
@@ -95,6 +120,8 @@ const INITIAL = {
   topicsByBoard: {} as Record<string, BoardTopic[]>,
   topicsStatus: {} as Record<string, LoadStatus>,
   topicsError: {} as Record<string, string>,
+  fieldsByBoard: {} as Record<string, BoardField[]>,
+  fieldsStatus: {} as Record<string, LoadStatus>,
   activeBoardId: null as string | null,
   activeTopicId: null as string | null,
   locallyReadAt: {} as Record<string, number>,
@@ -320,6 +347,23 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       }));
     },
 
+    loadFields: async (boardId) => {
+      const { generation } = get();
+      if (!get().fieldsStatus[boardId]) {
+        set((s) => ({ fieldsStatus: { ...s.fieldsStatus, [boardId]: "loading" } }));
+      }
+      const res = await api.fetchBoardFields(boardId);
+      if (get().generation !== generation) return;
+      if (res.error) {
+        set((s) => ({ fieldsStatus: { ...s.fieldsStatus, [boardId]: "error" } }));
+        return;
+      }
+      set((s) => ({
+        fieldsByBoard: { ...s.fieldsByBoard, [boardId]: res.fields },
+        fieldsStatus: { ...s.fieldsStatus, [boardId]: "ready" },
+      }));
+    },
+
     selectBoard: (boardId) =>
       set((s) => (s.activeBoardId === boardId ? {} : { activeBoardId: boardId, activeTopicId: null })),
 
@@ -418,6 +462,7 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         unreadCount: 0,
         lastComment: null,
         items: [],
+        fieldValues: {},
         sendState: "pending",
       };
       set((s) => ({
@@ -602,6 +647,54 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       get().scheduleReload(ref.boardId);
     },
 
+    upsertField: async (input) => {
+      const res = await api.upsertBoardField(input);
+      if (!res.error) {
+        await get().loadFields(input.boardId);
+        get().scheduleReload(input.boardId);
+      }
+      return res;
+    },
+
+    deleteField: async (boardId, fieldId) => {
+      const res = await api.deleteBoardField(fieldId);
+      if (!res.error) {
+        await get().loadFields(boardId);
+        get().scheduleReload(boardId);
+      }
+      return res;
+    },
+
+    setTopicFieldValue: async ({ topicId, fieldId, textValue, optionIds }) => {
+      const before = findTopic(topicId);
+      if (!before || before.sendState) return { error: "Temat nie jest jeszcze zapisany." };
+      const nextValue: TopicFieldValue = {
+        text: textValue?.trim() ? textValue.trim() : null,
+        optionIds: optionIds ?? [],
+      };
+      const empty =
+        (nextValue.text == null || nextValue.text === "") && nextValue.optionIds.length === 0;
+      const prevValues = before.fieldValues;
+      replaceTopic(topicId, (t) => {
+        const fieldValues = { ...t.fieldValues };
+        if (empty) delete fieldValues[fieldId];
+        else fieldValues[fieldId] = nextValue;
+        return { ...t, fieldValues };
+      });
+      const res = await api.setTopicFieldValue({
+        topicId,
+        fieldId,
+        textValue: empty ? null : nextValue.text,
+        optionIds: empty ? [] : nextValue.optionIds,
+      });
+      if (res.error) {
+        replaceTopic(topicId, (t) => ({ ...t, fieldValues: prevValues }));
+        return res;
+      }
+      get().scheduleReload(before.boardId);
+      return {};
+    },
+
     scheduleReload: (boardId) => {
       if (boardId) reloadBoardIds.add(boardId);
       else reloadAllBoards = true;
@@ -612,12 +705,15 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         const all = reloadAllBoards;
         reloadBoardIds.clear();
         reloadAllBoards = false;
-        const s = get();
-        void s.loadBoards();
-        const targets = all
+        void get().loadBoards();
+        const topicTargets = all
           ? Object.keys(get().topicsByBoard)
           : ids.filter((id) => id in get().topicsByBoard);
-        for (const id of targets) void get().loadTopics(id);
+        const fieldTargets = all
+          ? Object.keys(get().fieldsByBoard)
+          : ids.filter((id) => id in get().fieldsByBoard || id in get().topicsByBoard);
+        for (const id of topicTargets) void get().loadTopics(id);
+        for (const id of fieldTargets) void get().loadFields(id);
       }, 700);
     },
   };

@@ -16,6 +16,7 @@ import {
 import { ConversationView } from "@/components/chat/ConversationView";
 import { PingButton } from "@/components/chat/PingButton";
 import { SnoozeMenu } from "@/components/boards/SnoozeMenu";
+import { TopicFields } from "@/components/boards/TopicFields";
 import { useTopicActions } from "@/components/boards/topicActions";
 import { topicConversationEntry } from "@/lib/boards/entry";
 import {
@@ -373,6 +374,7 @@ function TopicDetailBody({
           {closed ? " · zamknięty" : ""}
         </div>
         <EditableDescription topic={topic} />
+        <TopicFields topic={topic} />
 
         {!pending && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">

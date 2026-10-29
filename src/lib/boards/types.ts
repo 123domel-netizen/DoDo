@@ -7,6 +7,38 @@ export const BOARD_NAME_MAX = 120;
 export const TOPIC_TITLE_MAX = 200;
 export const TOPIC_DESCRIPTION_MAX = 4000;
 export const TOPIC_CODE_MAX = 16;
+export const BOARD_FIELD_NAME_MAX = 80;
+export const BOARD_FIELD_OPTION_MAX = 80;
+export const BOARD_FIELD_TEXT_MAX = 200;
+export const BOARD_FIELDS_MAX = 20;
+export const BOARD_FIELD_OPTIONS_MAX = 20;
+
+/** Typ wartości pola tablicy. UI „ukryte” = text + visibility restricted. */
+export type BoardFieldKind = "single" | "multi" | "text";
+export type BoardFieldVisibility = "all" | "restricted";
+
+export interface BoardFieldOption {
+  id: string;
+  label: string;
+  position: number;
+}
+
+export interface BoardField {
+  id: string;
+  boardId: string;
+  name: string;
+  kind: BoardFieldKind;
+  visibility: BoardFieldVisibility;
+  position: number;
+  options: BoardFieldOption[];
+  /** Tylko dla właściciela (RPC); u innych puste. */
+  viewerIds: string[];
+}
+
+export interface TopicFieldValue {
+  text: string | null;
+  optionIds: string[];
+}
 
 export type BoardRole = "owner" | "member";
 
@@ -71,6 +103,8 @@ export interface BoardTopic {
   unreadCount: number;
   lastComment: TopicComment | null;
   items: TopicItemLink[];
+  /** Wartości pól widocznych dla bieżącego użytkownika (fieldId → value). */
+  fieldValues: Record<string, TopicFieldValue>;
   /** Tylko lokalnie: temat jeszcze niezapisany na serwerze / zapis nieudany. */
   sendState?: TopicSendState;
   sendError?: string;

@@ -189,6 +189,31 @@ const BOARD_RPCS_ANON_CLOSED = [
       p_target_ids: [crypto.randomUUID()],
     },
   },
+  { fn: "get_board_fields", body: { p_board_id: crypto.randomUUID() } },
+  {
+    fn: "board_upsert_field",
+    body: {
+      p_id: null,
+      p_board_id: crypto.randomUUID(),
+      p_name: "x",
+      p_kind: "text",
+      p_visibility: "all",
+      p_sort_order: null,
+      p_options: [],
+      p_viewer_ids: [],
+    },
+  },
+  { fn: "board_delete_field", body: { p_field_id: crypto.randomUUID() } },
+  {
+    fn: "board_set_topic_field_value",
+    body: {
+      p_topic_id: crypto.randomUUID(),
+      p_field_id: crypto.randomUUID(),
+      p_text_value: null,
+      p_option_ids: [],
+    },
+  },
+  { fn: "can_see_board_field", body: { p_field_id: crypto.randomUUID() } },
 ];
 
 console.log("\nRPC Tablic (anon musi być odrzucony):");

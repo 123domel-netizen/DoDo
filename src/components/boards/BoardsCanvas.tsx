@@ -192,9 +192,13 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   }, [boardsStatus, boards, activeBoardId]);
 
   const boardId = board?.id ?? null;
+  const loadFields = useBoardsStore((s) => s.loadFields);
   useEffect(() => {
-    if (boardId) void loadTopics(boardId);
-  }, [boardId, loadTopics]);
+    if (boardId) {
+      void loadTopics(boardId);
+      void loadFields(boardId);
+    }
+  }, [boardId, loadTopics, loadFields]);
 
   const openTopic = (topic: BoardTopic) => {
     navigateToBoards({ boardId: topic.boardId, topicId: topic.id }, mobile ? "push" : "replace");

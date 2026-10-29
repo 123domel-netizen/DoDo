@@ -16,6 +16,10 @@ const api = vi.hoisted(() => ({
   linkTopicItem: vi.fn(),
   unlinkTopicItem: vi.fn(),
   reorderTopics: vi.fn(),
+  fetchBoardFields: vi.fn(),
+  upsertBoardField: vi.fn(),
+  deleteBoardField: vi.fn(),
+  setTopicFieldValue: vi.fn(),
 }));
 
 vi.mock("@/lib/boards/api", () => api);
@@ -63,6 +67,7 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     unreadCount: 0,
     lastComment: null,
     items: [],
+    fieldValues: {},
     ...over,
   };
 }
@@ -101,6 +106,7 @@ beforeEach(() => {
   useBoardsStore.getState().setScope("o1", "u1");
   api.fetchBoards.mockResolvedValue({ boards: [] });
   api.fetchTopics.mockResolvedValue({ topics: [] });
+  api.fetchBoardFields.mockResolvedValue({ fields: [] });
   api.updateTopic.mockResolvedValue({});
   api.linkTopicItem.mockResolvedValue({});
   api.unlinkTopicItem.mockResolvedValue({});

@@ -125,6 +125,13 @@ jobs:
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/chat_ping_rls.sql
 
+      # Pola tablicy (0077): owner CRUD, member values, restricted leak.
+      - name: Assert board fields RLS
+        run: |
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/board_fields_rls.sql
+
       - name: supabase stop
         if: always()
         run: supabase stop --no-backup
