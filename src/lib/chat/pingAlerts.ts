@@ -1,7 +1,8 @@
 import { create } from "zustand";
 
 export const PING_ALERT_MAX_AGE_MS = 2 * 60 * 1000;
-export const PING_ALERT_DISPLAY_MS = 15_000;
+/** Alert zostaje do Zamknij/Otwórz albo max 5 min (nie znika po 15 s). */
+export const PING_ALERT_DISPLAY_MS = 5 * 60_000;
 
 export type PingAlert = {
   pingId: string;

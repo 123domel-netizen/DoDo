@@ -19,7 +19,7 @@ import { navigateTo } from "@/lib/navigation";
 import { useStore } from "@/state/store";
 
 /**
- * Globalny czerwony alert PINGa (max 15 s): Zamknij / Otwórz rozmowę.
+ * Globalny czerwony alert PINGa (do odkliknięcia lub max 5 min).
  */
 export function PingAlert() {
   const queue = usePingAlerts((s) => s.queue);
