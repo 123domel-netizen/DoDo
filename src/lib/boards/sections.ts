@@ -61,12 +61,46 @@ export function byPositionAsc(a: BoardTopic, b: BoardTopic): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-/** Podzia? i sortowanie: przypi?te/aktywne wg position; od?o?one/zamkni?te jak wcze?niej. */
-export function groupTopics(topics: BoardTopic[], now: Date): GroupedTopics {
+/** Tryb listy: r?czny (DnD / position) albo wg kodu tematu. */
+export type TopicListSort = "manual" | "code";
+
+/**
+ * Litera przed cyfr? (A, B, N01 ? potem 001, 2, 03, 299).
+ * W grupie ? porównanie naturalne (`numeric: true`). Bez kodu na ko?cu.
+ */
+export function byCodeAsc(a: BoardTopic, b: BoardTopic): number {
+  const ca = (a.code ?? "").trim();
+  const cb = (b.code ?? "").trim();
+  if (!ca && !cb) return byPositionAsc(a, b);
+  if (!ca) return 1;
+  if (!cb) return -1;
+
+  const kind = (code: string): 0 | 1 | 2 => {
+    const ch = code[0]!;
+    if (/\p{L}/u.test(ch)) return 0;
+    if (/\d/u.test(ch)) return 1;
+    return 2;
+  };
+  const ka = kind(ca);
+  const kb = kind(cb);
+  if (ka !== kb) return ka - kb;
+
+  const cmp = ca.localeCompare(cb, "pl", { numeric: true, sensitivity: "base" });
+  if (cmp !== 0) return cmp;
+  return byPositionAsc(a, b);
+}
+
+/** Podzia? i sortowanie: przypi?te/aktywne wg trybu; od?o?one/zamkni?te jak wcze?niej. */
+export function groupTopics(
+  topics: BoardTopic[],
+  now: Date,
+  sort: TopicListSort = "manual",
+): GroupedTopics {
   const out: GroupedTopics = { pinned: [], active: [], snoozed: [], closed: [] };
   for (const t of topics) out[topicSection(t, now)].push(t);
-  out.pinned.sort(byPositionAsc);
-  out.active.sort(byPositionAsc);
+  const listSort = sort === "code" ? byCodeAsc : byPositionAsc;
+  out.pinned.sort(listSort);
+  out.active.sort(listSort);
   out.snoozed.sort((a, b) => {
     const d = ms(a.snoozedUntil) - ms(b.snoozedUntil);
     return d !== 0 ? d : byActivityDesc(a, b);

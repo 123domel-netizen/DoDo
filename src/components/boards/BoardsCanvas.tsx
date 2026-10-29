@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, NotebookPen, X } from "lucide-react";
+import {
+  ArrowDownAZ,
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
+  NotebookPen,
+  X,
+} from "lucide-react";
 import { useBoardsNow } from "@/hooks/useBoards";
-import { fullOrderAfterSectionReorder, groupTopics } from "@/lib/boards/sections";
+import {
+  fullOrderAfterSectionReorder,
+  groupTopics,
+  type TopicListSort,
+} from "@/lib/boards/sections";
 import { navigateToBoards } from "@/lib/boards/runtime";
 import { useBoardsStore } from "@/lib/boards/store";
 import type { BoardTopic, TopicSection } from "@/lib/boards/types";
@@ -10,6 +21,24 @@ import { TopicRow } from "@/components/boards/TopicRow";
 import { CreateBoardDialog } from "@/components/boards/BoardFormDialog";
 
 const EMPTY_TOPICS: BoardTopic[] = [];
+const TOPIC_SORT_KEY = "dodo.boards.topicListSort";
+
+function readTopicListSort(): TopicListSort {
+  try {
+    const v = localStorage.getItem(TOPIC_SORT_KEY);
+    return v === "code" ? "code" : "manual";
+  } catch {
+    return "manual";
+  }
+}
+
+function writeTopicListSort(sort: TopicListSort) {
+  try {
+    localStorage.setItem(TOPIC_SORT_KEY, sort);
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Krótkie komunikaty (np. błąd zapisu, „temat otwarty ponownie”) — znikają same. */
 export function BoardsNotice() {
@@ -47,6 +76,7 @@ function Section({
   collapsible,
   open,
   onToggle,
+  headerExtra,
   children,
 }: {
   title: string;
@@ -54,28 +84,65 @@ function Section({
   collapsible?: boolean;
   open: boolean;
   onToggle?: () => void;
+  headerExtra?: ReactNode;
   children: ReactNode;
 }) {
   if (count === 0) return null;
   return (
     <section className="mb-1.5">
       {collapsible ? (
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="mb-0.5 flex w-full items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint transition hover:text-ink-light"
-        >
-          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          {title} <span className="font-normal">({count})</span>
-        </button>
+        <div className="mb-0.5 flex items-center gap-1 px-2 py-0.5">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="flex min-w-0 flex-1 items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint transition hover:text-ink-light"
+          >
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {title} <span className="font-normal">({count})</span>
+          </button>
+          {headerExtra}
+        </div>
       ) : (
-        <h3 className="mb-0.5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-          {title}
-        </h3>
+        <div className="mb-0.5 flex items-center gap-1 px-2 py-0.5">
+          <h3 className="min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            {title}
+          </h3>
+          {headerExtra}
+        </div>
       )}
       {open && <ul className="space-y-px">{children}</ul>}
     </section>
+  );
+}
+
+function TopicSortToggle({
+  sort,
+  onChange,
+}: {
+  sort: TopicListSort;
+  onChange: (next: TopicListSort) => void;
+}) {
+  const isCode = sort === "code";
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(isCode ? "manual" : "code")}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint transition hover:bg-surface-raised hover:text-ink-light"
+      aria-label={
+        isCode
+          ? "Sortowanie wg kodu — kliknij, aby wrócić do kolejności ręcznej"
+          : "Kolejność ręczna — kliknij, aby sortować wg kodu"
+      }
+      title={
+        isCode
+          ? "Wg kodu (A…, potem 001, 2…). Kliknij: ręczne + przeciąganie"
+          : "Ręczne (przeciąganie). Kliknij: sortuj wg kodu"
+      }
+    >
+      {isCode ? <ArrowDownAZ size={12} /> : <GripVertical size={12} />}
+      <span>{isCode ? "Kod" : "Ręczne"}</span>
+    </button>
   );
 }
 
@@ -106,13 +173,15 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [listSort, setListSort] = useState<TopicListSort>(() => readTopicListSort());
   const [dragSection, setDragSection] = useState<"pinned" | "active" | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
 
   const board = boards.find((b) => b.id === activeBoardId) ?? null;
   const now = useBoardsNow(topics);
-  const grouped = useMemo(() => groupTopics(topics, now), [topics, now]);
+  const grouped = useMemo(() => groupTopics(topics, now, listSort), [topics, now, listSort]);
+  const canDrag = listSort === "manual";
 
   // Brak wybranej tablicy (np. start, usunięta) → pierwsza z listy.
   useEffect(() => {
@@ -136,6 +205,15 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     setDragId(null);
     setOverId(null);
   }, []);
+
+  const changeListSort = useCallback(
+    (next: TopicListSort) => {
+      setListSort(next);
+      writeTopicListSort(next);
+      clearDrag();
+    },
+    [clearDrag],
+  );
 
   const commitReorder = useCallback(
     async (section: "pinned" | "active", fromId: string, toId: string) => {
@@ -202,7 +280,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   }
 
   const renderRows = (list: BoardTopic[], section: TopicSection) => {
-    const sortable = section === "pinned" || section === "active";
+    const sortable = canDrag && (section === "pinned" || section === "active");
     return list.map((t) => (
       <TopicRow
         key={t.id}
@@ -234,6 +312,8 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     ));
   };
 
+  const sortToggle = <TopicSortToggle sort={listSort} onChange={changeListSort} />;
+
   const loadingTopics = !topicsStatus || (topicsStatus === "loading" && topics.length === 0);
 
   return (
@@ -263,10 +343,15 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
           </div>
         ) : (
           <>
-            <Section title="Przypięte" count={grouped.pinned.length} open>
+            <Section
+              title="Przypięte"
+              count={grouped.pinned.length}
+              open
+              headerExtra={grouped.active.length === 0 ? sortToggle : undefined}
+            >
               {renderRows(grouped.pinned, "pinned")}
             </Section>
-            <Section title="Tematy" count={grouped.active.length} open>
+            <Section title="Tematy" count={grouped.active.length} open headerExtra={sortToggle}>
               {renderRows(grouped.active, "active")}
             </Section>
             <Section
