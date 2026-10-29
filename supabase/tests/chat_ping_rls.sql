@@ -181,15 +181,15 @@ begin
   where conversation_id = '00000000-0000-0000-0000-0000000000a1'
   limit 1;
 
-  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e2');
+  perform public._ping_test_act_as('00000000-0000-0000-0000-0000000000e2');
   select count(*) into n from public.chat_pings where id = ping_id;
   if n <> 1 then raise exception 'FAIL: target cannot read own ping'; end if;
 
-  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e3');
+  perform public._ping_test_act_as('00000000-0000-0000-0000-0000000000e3');
   select count(*) into n from public.chat_pings where id = ping_id;
   if n <> 0 then raise exception 'FAIL: third party saw ping'; end if;
 
-  select public._ping_test_act_as('00000000-0000-0000-0000-0000000000e1');
+  perform public._ping_test_act_as('00000000-0000-0000-0000-0000000000e1');
   raise notice 'OK: RLS select parties only';
 end $$;
 
