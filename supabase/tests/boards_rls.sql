@@ -37,6 +37,10 @@ insert into public.org_members (org_id, user_id, role) values
   ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000a3', 'member'),
   ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000a4', 'admin');
 
+-- Trigger pushu (0017) woła pg_net z adresem funkcji; w bazie testowej to placeholder,
+-- więc INSERT do messages by się wywrócił. Wyłączenie jest cofane przez ROLLBACK.
+alter table public.messages disable trigger messages_notify_push;
+
 create or replace function public._boards_test_act_as(p_uid uuid)
 returns void language plpgsql as $$
 begin
