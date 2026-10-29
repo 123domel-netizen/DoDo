@@ -7,7 +7,11 @@ import {
   clearBoardConversationRefs,
 } from "@/lib/chat/boardBridge";
 import type { ChatMessage } from "@/lib/chat/types";
-import { normalizeBoardName, normalizeTopicTitle } from "@/lib/boards/sections";
+import {
+  normalizeBoardName,
+  normalizeTopicCode,
+  normalizeTopicTitle,
+} from "@/lib/boards/sections";
 import type {
   Board,
   BoardTopic,
@@ -64,6 +68,7 @@ export interface BoardsState {
   retryTopic: (topicId: string) => void;
   discardLocalTopic: (topicId: string) => void;
   updateTopic: (topicId: string, patch: TopicPatch) => Promise<{ error?: string }>;
+  reorderTopics: (boardId: string, orderedIds: string[]) => Promise<{ error?: string }>;
   deleteTopic: (topicId: string) => Promise<{ error?: string }>;
   markTopicRead: (topicId: string) => void;
   linkItem: (input: {
@@ -140,6 +145,7 @@ export function applyTopicPatchLocal(topic: BoardTopic, patch: TopicPatch): Boar
   const next: BoardTopic = { ...topic };
   if (patch.title !== undefined) next.title = patch.title;
   if (patch.description !== undefined) next.description = patch.description;
+  if (patch.code !== undefined) next.code = patch.code;
   if (patch.pinned_at !== undefined) next.pinnedAt = patch.pinned_at;
   if (patch.snoozed_until !== undefined) next.snoozedUntil = patch.snoozed_until;
   if (patch.closed_at !== undefined) next.closedAt = patch.closed_at;
@@ -372,11 +378,15 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       const title = normalizeTopicTitle(rawTitle);
       if (!userId || !title) return null;
       const now = new Date().toISOString();
+      const existing = get().topicsByBoard[boardId] ?? [];
+      const maxPos = existing.reduce((m, t) => Math.max(m, t.position), 0);
       const topic: BoardTopic = {
         id: uid(),
         boardId,
         title,
         description: "",
+        code: null,
+        position: maxPos + 1,
         createdBy: userId,
         pinnedAt: null,
         snoozedUntil: null,
@@ -395,7 +405,8 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       set((s) => ({
         topicsByBoard: {
           ...s.topicsByBoard,
-          [boardId]: [topic, ...(s.topicsByBoard[boardId] ?? [])],
+          // Nowe tematy na końcu listy (position); groupTopics sortuje po position.
+          [boardId]: [...(s.topicsByBoard[boardId] ?? []), topic],
         },
       }));
       enqueueAdd(topic.id);
@@ -429,6 +440,9 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         if (!clean) return { error: "Tytuł nie może być pusty." };
         patch = { ...patch, title: clean };
       }
+      if (patch.code !== undefined) {
+        patch = { ...patch, code: patch.code === null ? null : normalizeTopicCode(patch.code) };
+      }
       holdTopic(topicId);
       replaceTopic(topicId, (t) => applyTopicPatchLocal(t, patch));
       const res = await api.updateTopic(topicId, patch);
@@ -438,6 +452,36 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         return res;
       }
       get().scheduleReload(before.boardId);
+      return {};
+    },
+
+    reorderTopics: async (boardId, orderedIds) => {
+      const before = get().topicsByBoard[boardId] ?? [];
+      if (before.length === 0) return {};
+      if (orderedIds.length !== before.length) {
+        return { error: "Nie udało się zmienić kolejności tematów." };
+      }
+      const byId = new Map(before.map((t) => [t.id, t]));
+      if (orderedIds.some((id) => !byId.has(id))) {
+        return { error: "Nie udało się zmienić kolejności tematów." };
+      }
+      const next = orderedIds.map((id, i) => {
+        const t = byId.get(id)!;
+        return t.position === i + 1 ? t : { ...t, position: i + 1 };
+      });
+      for (const t of next) holdTopic(t.id);
+      set((s) => ({
+        topicsByBoard: { ...s.topicsByBoard, [boardId]: next },
+      }));
+      const res = await api.reorderTopics(boardId, orderedIds);
+      for (const t of next) releaseTopic(t.id);
+      if (res.error) {
+        set((s) => ({
+          topicsByBoard: { ...s.topicsByBoard, [boardId]: before },
+        }));
+        return res;
+      }
+      get().scheduleReload(boardId);
       return {};
     },
 

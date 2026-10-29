@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, NotebookPen, X } from "lucide-react";
 import { useBoardsNow } from "@/hooks/useBoards";
-import { groupTopics } from "@/lib/boards/sections";
+import { fullOrderAfterSectionReorder, groupTopics } from "@/lib/boards/sections";
 import { navigateToBoards } from "@/lib/boards/runtime";
 import { useBoardsStore } from "@/lib/boards/store";
 import type { BoardTopic, TopicSection } from "@/lib/boards/types";
@@ -58,23 +58,23 @@ function Section({
 }) {
   if (count === 0) return null;
   return (
-    <section className="mb-3">
+    <section className="mb-1.5">
       {collapsible ? (
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={open}
-          className="mb-1 flex w-full items-center gap-1 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-faint transition hover:text-ink-light"
+          className="mb-0.5 flex w-full items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint transition hover:text-ink-light"
         >
-          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           {title} <span className="font-normal">({count})</span>
         </button>
       ) : (
-        <h3 className="mb-1 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+        <h3 className="mb-0.5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
           {title}
         </h3>
       )}
-      {open && <ul className="space-y-0.5">{children}</ul>}
+      {open && <ul className="space-y-px">{children}</ul>}
     </section>
   );
 }
@@ -100,10 +100,15 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   );
   const loadBoards = useBoardsStore((s) => s.loadBoards);
   const loadTopics = useBoardsStore((s) => s.loadTopics);
+  const reorderTopics = useBoardsStore((s) => s.reorderTopics);
+  const setNotice = useBoardsStore((s) => s.setNotice);
 
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [dragSection, setDragSection] = useState<"pinned" | "active" | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
   const board = boards.find((b) => b.id === activeBoardId) ?? null;
   const now = useBoardsNow(topics);
@@ -125,6 +130,36 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   const openTopic = (topic: BoardTopic) => {
     navigateToBoards({ boardId: topic.boardId, topicId: topic.id }, mobile ? "push" : "replace");
   };
+
+  const clearDrag = useCallback(() => {
+    setDragSection(null);
+    setDragId(null);
+    setOverId(null);
+  }, []);
+
+  const commitReorder = useCallback(
+    async (section: "pinned" | "active", fromId: string, toId: string) => {
+      if (!board || fromId === toId) {
+        clearDrag();
+        return;
+      }
+      const list = grouped[section].map((t) => t.id);
+      const from = list.indexOf(fromId);
+      const to = list.indexOf(toId);
+      if (from < 0 || to < 0) {
+        clearDrag();
+        return;
+      }
+      const next = [...list];
+      next.splice(from, 1);
+      next.splice(to, 0, fromId);
+      const full = fullOrderAfterSectionReorder(topics, now, section, next);
+      clearDrag();
+      const res = await reorderTopics(board.id, full);
+      if (res.error) setNotice(res.error);
+    },
+    [board, grouped, topics, now, reorderTopics, setNotice, clearDrag],
+  );
 
   if (boardsStatus === "idle" || (boardsStatus === "loading" && boards.length === 0)) {
     return <div className="flex flex-1 items-center justify-center text-xs text-ink-faint">Ładowanie tablic…</div>;
@@ -166,8 +201,9 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     );
   }
 
-  const renderRows = (list: BoardTopic[], section: TopicSection) =>
-    list.map((t) => (
+  const renderRows = (list: BoardTopic[], section: TopicSection) => {
+    const sortable = section === "pinned" || section === "active";
+    return list.map((t) => (
       <TopicRow
         key={t.id}
         topic={t}
@@ -176,18 +212,37 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
         now={now}
         active={t.id === activeTopicId}
         onOpen={openTopic}
+        draggable={sortable}
+        dragging={dragId === t.id}
+        dropTarget={sortable && dragSection === section && overId === t.id && dragId !== t.id}
+        onDragStart={
+          sortable
+            ? (id) => {
+                setDragSection(section);
+                setDragId(id);
+              }
+            : undefined
+        }
+        onDragOver={sortable && dragSection === section ? (id) => setOverId(id) : undefined}
+        onDrop={
+          sortable && dragSection === section && dragId
+            ? (id) => void commitReorder(section, dragId, id)
+            : undefined
+        }
+        onDragEnd={clearDrag}
       />
     ));
+  };
 
   const loadingTopics = !topicsStatus || (topicsStatus === "loading" && topics.length === 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 px-3 pb-2 pt-3">
+      <div className="shrink-0 px-3 pb-1.5 pt-2">
         <QuickAddTopic key={board.id} boardId={board.id} autoFocus={!mobile} />
       </div>
       <BoardsNotice />
-      <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar px-2 pb-4">
+      <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar px-1.5 pb-3">
         {topicsStatus === "error" && topics.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
             <div className="text-sm text-ink">Nie udało się wczytać tematów.</div>

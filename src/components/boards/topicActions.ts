@@ -24,6 +24,7 @@ export function useTopicActions(topic: BoardTopic) {
     close: () => apply({ closed_at: new Date().toISOString() }),
     reopen: () => apply({ closed_at: null }),
     rename: (title: string) => apply({ title }),
+    setCode: (code: string | null) => apply({ code }),
     setDescription: (description: string) => apply({ description }),
   };
 }

@@ -2,20 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   commentPreviewText,
   defaultBoardName,
+  deletedTopicItemIds,
   effectiveUnread,
   formatTopicTime,
+  fullOrderAfterSectionReorder,
   groupTopics,
   isSnoozed,
   nextSnoozeWake,
   normalizeBoardName,
+  normalizeTopicCode,
   normalizeTopicTitle,
   shouldReopenOnComment,
   snoozeUntilForDate,
   snoozeUntilForPreset,
   topicSection,
   totalUnread,
+  visibleTopicItems,
 } from "@/lib/boards/sections";
 import type { Board, BoardTopic } from "@/lib/boards/types";
+import type { Item } from "@/types";
 
 const NOW = new Date(2026, 9, 29, 12, 0, 0); // czwartek 29.10.2026, 12:00 lokalnie
 
@@ -25,6 +30,8 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     boardId: "b1",
     title: `Temat ${id}`,
     description: "",
+    code: null,
+    position: 1,
     createdBy: "u1",
     pinnedAt: null,
     snoozedUntil: null,
@@ -72,16 +79,43 @@ describe("topicSection", () => {
 });
 
 describe("groupTopics", () => {
-  it("sortuje aktywne wg ostatniej aktywności malejąco, stabilnie przy remisie", () => {
+  it("sortuje aktywne i przypięte wg position rosnąco", () => {
     const grouped = groupTopics(
       [
-        topic("a", { lastActivityAt: "2026-10-02T10:00:00Z" }),
-        topic("c", { lastActivityAt: "2026-10-05T10:00:00Z" }),
-        topic("b", { lastActivityAt: "2026-10-02T10:00:00Z" }),
+        topic("a", { position: 3 }),
+        topic("c", { position: 1 }),
+        topic("b", { position: 2 }),
+        topic("p2", { position: 20, pinnedAt: "2026-10-02T00:00:00Z" }),
+        topic("p1", { position: 10, pinnedAt: "2026-10-02T00:00:00Z" }),
       ],
       NOW,
     );
-    expect(grouped.active.map((t) => t.id)).toEqual(["c", "a", "b"]);
+    expect(grouped.active.map((t) => t.id)).toEqual(["c", "b", "a"]);
+    expect(grouped.pinned.map((t) => t.id)).toEqual(["p1", "p2"]);
+  });
+
+  it("fullOrderAfterSectionReorder składa pełną permutację tablicy", () => {
+    const topics = [
+      topic("p1", { position: 1, pinnedAt: "2026-10-02T00:00:00Z" }),
+      topic("p2", { position: 2, pinnedAt: "2026-10-02T00:00:00Z" }),
+      topic("a1", { position: 3 }),
+      topic("a2", { position: 4 }),
+      topic("s1", { position: 5, snoozedUntil: "2026-12-01T07:00:00Z" }),
+    ];
+    expect(fullOrderAfterSectionReorder(topics, NOW, "active", ["a2", "a1"])).toEqual([
+      "p1",
+      "p2",
+      "a2",
+      "a1",
+      "s1",
+    ]);
+    expect(fullOrderAfterSectionReorder(topics, NOW, "pinned", ["p2", "p1"])).toEqual([
+      "p2",
+      "p1",
+      "a1",
+      "a2",
+      "s1",
+    ]);
   });
 
   it("odłożone wg daty powrotu rosnąco, zamknięte wg daty zamknięcia malejąco", () => {
@@ -228,5 +262,27 @@ describe("formatTopicTime", () => {
     expect(formatTopicTime(new Date(2026, 8, 3, 9, 5).toISOString(), NOW)).toMatch(/^3 wrz/);
     expect(formatTopicTime(new Date(2025, 8, 3, 9, 5).toISOString(), NOW)).toMatch(/2025$/);
     expect(formatTopicTime("nie-data", NOW)).toBe("");
+  });
+});
+
+describe("kod tematu i widoczne powiązania", () => {
+  it("normalizeTopicCode: trim, max 16, pusty → null", () => {
+    expect(normalizeTopicCode("  N01  ")).toBe("N01");
+    expect(normalizeTopicCode("   ")).toBeNull();
+    expect(normalizeTopicCode("x".repeat(20))?.length).toBe(16);
+  });
+
+  it("visibleTopicItems pomija brakujące i soft-delete; deletedTopicItemIds tylko tombstone", () => {
+    const links = [
+      { itemId: "alive", itemType: "task" as const },
+      { itemId: "gone", itemType: "event" as const },
+      { itemId: "tomb", itemType: "task" as const },
+    ];
+    const items = {
+      alive: { id: "alive", deletedAt: null } as Item,
+      tomb: { id: "tomb", deletedAt: "2026-10-29T12:00:00Z" } as Item,
+    };
+    expect(visibleTopicItems(links, items).map((l) => l.itemId)).toEqual(["alive"]);
+    expect(deletedTopicItemIds(links, items)).toEqual(["tomb"]);
   });
 });
