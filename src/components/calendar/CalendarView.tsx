@@ -2,6 +2,8 @@ import { useMemo, useCallback, lazy, Suspense, type ComponentType } from "react"
 import { addDays, addMonths, startOfDay } from "date-fns";
 import { useStore } from "@/state/store";
 import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
+import { useEffectiveMainAreaMode } from "@/hooks/useBoards";
+import { BoardsCanvas } from "@/components/boards/BoardsCanvas";
 import { getViewDays } from "@/lib/time";
 import { isValidDate } from "@/lib/dates";
 import { itemMatchesGroupFilter, groupIdForNewItem } from "@/lib/groups";
@@ -190,6 +192,8 @@ export function CalendarView({
 
   const mobileCalendar = isMobile && viewOverride !== undefined;
   const schedulesAvailable = useSchedulesAvailable();
+  const mainAreaMode = useEffectiveMainAreaMode();
+  const showBoards = !isMobile && mainAreaMode === "boards";
   const showMainDashboard = !isMobile && settings.mainAreaMode === "dashboard";
   const showProjects =
     !isMobile &&
@@ -203,7 +207,9 @@ export function CalendarView({
       {...(mobileCalendar ? swipeHandlers : {})}
     >
       {!isMobile && <CalendarNav />}
-      {showProjects ? (
+      {showBoards ? (
+        <BoardsCanvas />
+      ) : showProjects ? (
         <Suspense
           fallback={
             <div className="flex flex-1 items-center justify-center text-xs text-ink-faint">

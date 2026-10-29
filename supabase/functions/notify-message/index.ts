@@ -100,11 +100,47 @@ Deno.serve(async (req) => {
 
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, kind, name, item_id, archived_at, channel_archived_at")
+    .select("id, kind, name, item_id, board_topic_id, archived_at, channel_archived_at")
     .eq("id", msg.conversation_id)
     .maybeSingle();
   if (!conv || conv.archived_at || conv.channel_archived_at) {
     return json({ ok: true, sent: 0 });
+  }
+
+  // Komentarz tematu Tablicy: odbiorcy = aktualni członkowie tablicy, którzy nadal
+  // należą do organizacji (wiersz conversation_members sam nie daje dostępu).
+  let board: { boardId: string; topicId: string; title: string } | null = null;
+  let boardAllowed: Set<string> | null = null;
+  if (conv.kind === "board_topic") {
+    const { data: topic } = await admin
+      .from("board_topics")
+      .select("id, title, board_id, boards(name, org_id, archived_at)")
+      .eq("id", conv.board_topic_id)
+      .maybeSingle();
+    const boardRow = Array.isArray(topic?.boards) ? topic?.boards[0] : topic?.boards;
+    if (!topic || !boardRow || boardRow.archived_at) {
+      return json({ ok: true, sent: 0, skipped: "board unavailable" });
+    }
+    const { data: bm } = await admin
+      .from("board_members")
+      .select("user_id")
+      .eq("board_id", topic.board_id);
+    const boardUserIds = (bm ?? []).map((r) => r.user_id as string);
+    const { data: om } = await admin
+      .from("org_members")
+      .select("user_id")
+      .eq("org_id", boardRow.org_id)
+      .in("user_id", boardUserIds.length ? boardUserIds : [msg.author_user_id]);
+    const orgUserIds = new Set((om ?? []).map((r) => r.user_id as string));
+    boardAllowed = new Set(boardUserIds.filter((id) => orgUserIds.has(id)));
+    board = {
+      boardId: topic.board_id as string,
+      topicId: topic.id as string,
+      title: `Tablica: ${truncate((boardRow.name as string) || "tablica", 40)} · ${truncate(
+        (topic.title as string) || "temat",
+        60,
+      )}`,
+    };
   }
 
   // Odbiorcy: aktywni członkowie − autor − notify:none − wyciszeni (muted_until)
@@ -118,6 +154,7 @@ Deno.serve(async (req) => {
     .neq("notify", "none");
   const now = Date.now();
   const recipients = (members ?? []).filter((m) => {
+    if (boardAllowed && !boardAllowed.has(m.user_id as string)) return false;
     const mutedUntil = m.muted_until as string | null;
     if (mutedUntil) {
       if (mutedUntil === "infinity") return false;
@@ -156,7 +193,9 @@ Deno.serve(async (req) => {
   const authorName = nameById.get(msg.author_user_id as string) || "Ktoś";
 
   let baseTitle: string;
-  if (conv.kind === "channel") {
+  if (board) {
+    baseTitle = board.title;
+  } else if (conv.kind === "channel") {
     baseTitle = `#${conv.name ?? "kanał"}`;
   } else if (conv.kind === "item") {
     const { data: item } = await admin
@@ -193,8 +232,10 @@ Deno.serve(async (req) => {
     return JSON.stringify({
       title,
       body,
-      url: `/#/czat/${conv.id}`,
-      tag: `chat-${conv.id}`,
+      url: board
+        ? `/#/tablice/${board.boardId}/${board.topicId}`
+        : `/#/czat/${conv.id}`,
+      tag: board ? `board-${board.topicId}` : `chat-${conv.id}`,
     });
   };
 

@@ -3,12 +3,20 @@ import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { addDecision, addNote, createItemLink, deleteDecision, deleteNote, upsertRegistryLabels } from "@/lib/chat/api";
 import { sendChatMessage } from "@/lib/chat/init";
+import { emitBoardChatEvent, getBoardConversationRef } from "@/lib/chat/boardBridge";
 import { draftFromMessage, draftFromSelectedMessages, type ConvertTarget } from "@/lib/chat/convertDraft";
 import type { MessageSelectMode } from "@/lib/chat/selectionChecklist";
 import { participantsFromConversationMembers } from "@/lib/chat/conversationParticipants";
 import { overviewTitle } from "@/lib/chat/feed";
 import { groupIdForNewItem } from "@/lib/groups";
-import type { ChatDecision, ChatMessage, ChatNote, MessageKind, MessagePayload } from "@/lib/chat/types";
+import type {
+  ChatDecision,
+  ChatMessage,
+  ChatNote,
+  ChatOverviewEntry,
+  MessageKind,
+  MessagePayload,
+} from "@/lib/chat/types";
 
 /**
  * CHAT2-LINK / CHAT6: wymienność obiektów — wiadomość / notatka / decyzja
@@ -54,6 +62,18 @@ async function finalizeConversion(p: PendingConversion, item: Item) {
     useChatStore
       .getState()
       .linkToMessage(p.messageId, { itemId: item.id, kind: "created_from" });
+  }
+
+  // Rozmowa należy do tematu Tablicy → powiąż utworzony element z tematem.
+  const boardRef = getBoardConversationRef(p.conversationId);
+  if (boardRef) {
+    emitBoardChatEvent({
+      type: "item-created",
+      conversationId: p.conversationId,
+      itemId: item.id,
+      itemType: p.target === "event" ? "event" : "task",
+      ref: boardRef,
+    });
   }
 
   const label =
@@ -335,10 +355,14 @@ export function beginConvertMessagesToItem(
  * Menu „+” → wydarzenie: draft z uczestnikami = członkowie rozmowy (invited).
  * Po zapisie: chmurka systemowa w tej rozmowie.
  */
-export function beginEventFromConversation(conversationId: string) {
+export function beginEventFromConversation(
+  conversationId: string,
+  entryOverride?: ChatOverviewEntry,
+) {
   const chat = useChatStore.getState();
   const store = useStore.getState();
-  const entry = chat.overview.find((c) => c.id === conversationId);
+  // Rozmowy tematów Tablic nie są w overview — widok przekazuje własny wpis.
+  const entry = entryOverride ?? chat.overview.find((c) => c.id === conversationId);
   if (!entry) return;
 
   const participants = participantsFromConversationMembers(

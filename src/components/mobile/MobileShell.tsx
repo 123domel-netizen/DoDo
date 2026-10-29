@@ -2,6 +2,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -13,6 +14,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageCircle,
+  NotebookPen,
   Plus,
   Settings2,
   X,
@@ -54,14 +56,25 @@ import { useChatStore } from "@/lib/chat/store";
 import { setAttendanceLaunchIntent } from "@/lib/projectsPreview/attendanceLaunch";
 import { findSelfNotesEntry, totalUnread } from "@/lib/chat/feed";
 import { openSelfNotes } from "@/lib/chat/init";
-import { pushRouteHash, setMobileConversationReturn, setRouteHash } from "@/lib/navigation";
+import {
+  onRouteChange,
+  pushRouteHash,
+  setMobileConversationReturn,
+  setRouteHash,
+} from "@/lib/navigation";
 import { useHistoryBackLayer } from "@/hooks/useHistoryBackLayer";
+import { useBoardsAvailable, useBoardsUnreadTotal } from "@/hooks/useBoards";
+import { leaveBoardsRoute, navigateToBoards } from "@/lib/boards/runtime";
+import { useBoardsStore } from "@/lib/boards/store";
+import { BoardChips } from "@/components/boards/BoardChips";
+import { BoardsCanvas } from "@/components/boards/BoardsCanvas";
+import { TopicDetail } from "@/components/boards/TopicDetail";
 
 const ChatPanel = lazy(() =>
   import("@/components/chat/ChatPanel").then((m) => ({ default: m.ChatPanel })),
 );
 
-type Tab = "dashboard" | "calendar" | "tasks" | "chat";
+type Tab = "dashboard" | "calendar" | "tasks" | "chat" | "boards";
 
 const MOBILE_VIEWS: { key: MobileCalendarMode; label: string }[] = [
   { key: "today", label: "Lista" },
@@ -115,6 +128,41 @@ export function MobileShell() {
     Boolean(notebookId) &&
     activeConversationId === notebookId;
 
+  // Tablice: stos tablice → tematy → temat (pełny ekran). Wstecz = history.back().
+  const boardsAvailable = useBoardsAvailable();
+  const boardsUnread = useBoardsUnreadTotal();
+  const activeBoardId = useBoardsStore((s) => s.activeBoardId);
+  const activeTopicId = useBoardsStore((s) => s.activeTopicId);
+  const boardsOpen = tab === "boards" && boardsAvailable;
+
+  // Deep-link (#/tablice/...) i wybór tematu przełączają na zakładkę Tablice.
+  useEffect(() => {
+    if (!boardsAvailable) return;
+    return onRouteChange((route) => {
+      if (route.view !== "board") return;
+      setSchedulesMode(null);
+      setTab("boards");
+    });
+  }, [boardsAvailable]);
+
+  useEffect(() => {
+    if (boardsAvailable && activeTopicId && settings.mainAreaMode === "boards") {
+      setSchedulesMode(null);
+      setTab("boards");
+    }
+  }, [boardsAvailable, activeTopicId, settings.mainAreaMode]);
+
+  // Moduł zniknął (wylogowanie / zmiana organizacji) albo wyszliśmy z zakładki.
+  const prevTabRef = useRef<Tab>(tab);
+  useEffect(() => {
+    if (tab === "boards" && !boardsAvailable) setTab("dashboard");
+    if (prevTabRef.current === "boards" && tab !== "boards") {
+      leaveBoardsRoute();
+      useBoardsStore.getState().selectTopic(null);
+    }
+    prevTabRef.current = tab;
+  }, [tab, boardsAvailable]);
+
   // Deep-link (push / chip „→ rozmowa") otwiera rozmowę → przełącz na zakładkę czatu.
   useEffect(() => {
     if (activeConversationId) {
@@ -130,6 +178,14 @@ export function MobileShell() {
       setActiveConversation(null);
       setRouteHash({ view: "chat" });
     }
+  };
+
+  const goBoards = () => {
+    setSchedulesMode(null);
+    setTab("boards");
+    if (activeConversationId) setActiveConversation(null);
+    setSettings({ mainAreaMode: "boards" });
+    navigateToBoards({ boardId: activeBoardId ?? undefined });
   };
 
   const goDashboard = () => {
@@ -289,7 +345,7 @@ export function MobileShell() {
       </header>
 
       {/* Chipsy filtra grup (nie dotyczą czatu / Harmonogramów) — nad belką kalendarza */}
-      {tab !== "chat" && !schedulesOpen && (
+      {tab !== "chat" && tab !== "boards" && !schedulesOpen && (
         <GroupFilterBar
           userGroups={userGroups}
           share={share}
@@ -344,6 +400,13 @@ export function MobileShell() {
               schedulesMode === "attendance" ? "attendance" : "board"
             }
           />
+        ) : boardsOpen ? (
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="shrink-0 border-b border-line">
+              <BoardChips compact />
+            </div>
+            <BoardsCanvas mobile />
+          </div>
         ) : tab === "chat" ? (
           <Suspense
             fallback={
@@ -423,6 +486,21 @@ export function MobileShell() {
           }
           label="Zadania"
         />
+        {boardsAvailable && (
+          <BottomTab
+            active={tab === "boards" && !schedulesOpen}
+            onSelect={goBoards}
+            icon={
+              <NotebookPen
+                size={22}
+                strokeWidth={tab === "boards" && !schedulesOpen ? 2.25 : 1.75}
+              />
+            }
+            label="Tablice"
+            badge={boardsUnread}
+            emphasize={boardsUnread > 0}
+          />
+        )}
         {cloudEnabled && (
           <BottomTab
             active={tab === "chat" && !schedulesOpen && !notebookOpen}
@@ -445,6 +523,16 @@ export function MobileShell() {
           />
         )}
       </nav>
+
+      {/* Temat Tablicy — pełny ekran (nad dolnym menu), edytor wpisu jest jeszcze wyżej */}
+      {boardsOpen && activeTopicId && (
+        <div
+          className="fixed inset-0 z-40 bg-surface"
+          style={{ paddingTop: "env(safe-area-inset-top)" }}
+        >
+          <TopicDetail key={activeTopicId} topicId={activeTopicId} mobile />
+        </div>
+      )}
 
       {/* Edytor pełnoekranowy */}
       {editingId && (

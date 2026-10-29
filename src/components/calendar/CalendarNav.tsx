@@ -3,6 +3,14 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
+import {
+  useBoardsAvailable,
+  useBoardsUnreadTotal,
+  useEffectiveMainAreaMode,
+} from "@/hooks/useBoards";
+import { BoardChips } from "@/components/boards/BoardChips";
+import { leaveBoardsRoute, navigateToBoards } from "@/lib/boards/runtime";
+import { useBoardsStore } from "@/lib/boards/store";
 import type { CalendarViewKind, MainAreaMode } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
@@ -51,14 +59,25 @@ export function CalendarNav() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
   const schedulesAvailable = useSchedulesAvailable();
+  const boardsAvailable = useBoardsAvailable();
+  const mainAreaMode = useEffectiveMainAreaMode();
+  const boardsUnread = useBoardsUnreadTotal();
   const anchor = navAnchor(settings.anchorDate);
-  const isDashboard = settings.mainAreaMode === "dashboard";
-  const isAttendance = settings.mainAreaMode === "attendance";
-  const isCalendar = settings.mainAreaMode === "calendar";
-  const isSchedules = isSchedulesMode(settings.mainAreaMode);
+  const isDashboard = mainAreaMode === "dashboard";
+  const isAttendance = mainAreaMode === "attendance";
+  const isCalendar = mainAreaMode === "calendar";
+  const isBoards = mainAreaMode === "boards";
+  const isSchedules = isSchedulesMode(mainAreaMode);
   const showCalendarChrome = isCalendar;
 
+  const enterBoards = () => {
+    if (isSchedules) restoreHubLayoutAfterSchedules();
+    setSettings({ mainAreaMode: "boards" });
+    navigateToBoards({ boardId: useBoardsStore.getState().activeBoardId ?? undefined });
+  };
+
   const enterSchedules = (mode: "projects" | "attendance") => {
+    leaveBoardsRoute();
     if (!isSchedules) {
       const s = useChatStore.getState();
       hubLayoutBeforeSchedules = {
@@ -72,6 +91,7 @@ export function CalendarNav() {
   };
 
   const leaveSchedulesTo = (patch: Parameters<typeof setSettings>[0]) => {
+    leaveBoardsRoute();
     setSettings(patch);
     if (isSchedules) restoreHubLayoutAfterSchedules();
   };
@@ -147,6 +167,10 @@ export function CalendarNav() {
           </div>
         )}
 
+        {isBoards && (
+          <div className="min-w-0 flex-1 truncate text-xs font-medium text-ink">Tablice</div>
+        )}
+
         <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-md border border-line bg-surface-raised p-0.5">
           <button
             type="button"
@@ -190,8 +214,35 @@ export function CalendarNav() {
               </button>
             </>
           ) : null}
+          {boardsAvailable ? (
+            <button
+              type="button"
+              onClick={enterBoards}
+              className={`${chipClass(isBoards)} flex items-center gap-1`}
+              aria-label="Tablice"
+              title="Tablice"
+            >
+              Tablice
+              {boardsUnread > 0 && (
+                <span
+                  className={`flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none ${
+                    isBoards ? "bg-white/25 text-white" : "bg-accent text-white"
+                  }`}
+                >
+                  {boardsUnread > 99 ? "99+" : boardsUnread}
+                </span>
+              )}
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {/* Rząd 2 (Tablice): nazwy tablic w miejscu przełącznika widoków kalendarza. */}
+      {isBoards ? (
+        <div className="px-2 pb-1.5">
+          <BoardChips />
+        </div>
+      ) : null}
 
       {/* Rząd 2: widoki kalendarza — tylko w trybie Kalendarz, nie wypycha menu trybów. */}
       {isCalendar ? (

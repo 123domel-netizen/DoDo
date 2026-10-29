@@ -101,7 +101,7 @@ import {
   typingLabel,
   type TypingHandle,
 } from "@/lib/chat/typing";
-import type { ChatMessage, ChatProfile } from "@/lib/chat/types";
+import type { ChatMessage, ChatOverviewEntry, ChatProfile } from "@/lib/chat/types";
 import { goBackOr, pushRouteHash, setRouteHash } from "@/lib/navigation";
 import { useHistoryBackLayer } from "@/hooks/useHistoryBackLayer";
 import { MessageBubble } from "@/components/chat/MessageBubble";
@@ -141,6 +141,11 @@ interface ConversationViewProps {
    * Decyzje/Notatki/Wątki w nagłówku (są w środkowej kolumnie).
    */
   pane?: boolean;
+  /**
+   * Wpis przekazany z zewnątrz dla rozmów spoza overview (komentarze tematów
+   * Tablic nie występują na liście Czatu, więc nie ma ich w `overview`).
+   */
+  entryOverride?: ChatOverviewEntry;
 }
 
 function quoteSnippet(msg: ChatMessage): string {
@@ -464,6 +469,7 @@ export function ConversationView({
   onBack,
   embedded = false,
   pane = false,
+  entryOverride,
 }: ConversationViewProps) {
   const myUserId = useChatStore((s) => s.userId);
   const activeOrgId = useStore((s) => s.activeOrgId);
@@ -544,7 +550,7 @@ export function ConversationView({
     }
   });
 
-  const entry = overview.find((c) => c.id === conversationId);
+  const entry = entryOverride ?? overview.find((c) => c.id === conversationId);
   const isNotebook = Boolean(entry && isSelfNotesConversation(entry, myUserId));
   const focus =
     !embedded && focusFeedRaw?.conversationId === conversationId ? focusFeedRaw : null;
@@ -1782,7 +1788,7 @@ export function ConversationView({
           onSendChecklist={(title, items) =>
             void sendChecklistMessage(conversationId, title, items)
           }
-          onCreateEvent={() => beginEventFromConversation(conversationId)}
+          onCreateEvent={() => beginEventFromConversation(conversationId, entry)}
           onSendGif={(url) => {
             returnToLatest(conversationId);
             void sendGifMessage(conversationId, url);
