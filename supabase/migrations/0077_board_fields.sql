@@ -219,6 +219,7 @@ declare
   v_vis text := coalesce(p_visibility, 'all');
   v_pos int;
   v_count int;
+  v_is_new boolean := false;
   opt jsonb;
   opt_id uuid;
   opt_label text;
@@ -276,6 +277,7 @@ begin
         raise exception 'too many board fields';
       end if;
       v_id := p_id;
+      v_is_new := true;
     end if;
   else
     select count(*) into v_count from public.board_fields where board_id = p_board_id;
@@ -283,10 +285,11 @@ begin
       raise exception 'too many board fields';
     end if;
     v_id := gen_random_uuid();
+    v_is_new := true;
   end if;
 
   if p_sort_order is null then
-    if p_id is null then
+    if v_is_new then
       select coalesce(max(sort_order), 0) + 1 into v_pos
       from public.board_fields where board_id = p_board_id;
     else
