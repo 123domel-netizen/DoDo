@@ -7,38 +7,28 @@ import {
   NotebookPen,
   X,
 } from "lucide-react";
+import { BoardTopicViewMenu } from "@/components/boards/BoardTopicViewMenu";
 import { useBoardsNow } from "@/hooks/useBoards";
-import {
-  fullOrderAfterSectionReorder,
-  groupTopics,
-  type TopicListSort,
-} from "@/lib/boards/sections";
+import { fullOrderAfterSectionReorder, groupTopics } from "@/lib/boards/sections";
 import { navigateToBoards } from "@/lib/boards/runtime";
 import { useBoardsStore } from "@/lib/boards/store";
-import type { BoardTopic, TopicSection } from "@/lib/boards/types";
+import type { BoardField, BoardTopic, TopicSection } from "@/lib/boards/types";
+import {
+  activeFilterChips,
+  applyViewSort,
+  EMPTY_VIEW_PREFS,
+  filterTopicsByFields,
+  readViewPrefs,
+  sanitizeViewPrefs,
+  writeViewPrefs,
+  type BoardTopicViewPrefs,
+} from "@/lib/boards/topicView";
 import { QuickAddTopic } from "@/components/boards/QuickAddTopic";
 import { TopicRow } from "@/components/boards/TopicRow";
 import { CreateBoardDialog } from "@/components/boards/BoardFormDialog";
 
 const EMPTY_TOPICS: BoardTopic[] = [];
-const TOPIC_SORT_KEY = "dodo.boards.topicListSort";
-
-function readTopicListSort(): TopicListSort {
-  try {
-    const v = localStorage.getItem(TOPIC_SORT_KEY);
-    return v === "code" ? "code" : "manual";
-  } catch {
-    return "manual";
-  }
-}
-
-function writeTopicListSort(sort: TopicListSort) {
-  try {
-    localStorage.setItem(TOPIC_SORT_KEY, sort);
-  } catch {
-    /* ignore */
-  }
-}
+const EMPTY_FIELDS: BoardField[] = [];
 
 /** Krótkie komunikaty (np. błąd zapisu, „temat otwarty ponownie”) — znikają same. */
 export function BoardsNotice() {
@@ -116,27 +106,44 @@ function Section({
   );
 }
 
-function TopicSortToggle({
-  sort,
+function SortModeChip({
+  prefs,
+  fields,
   onChange,
 }: {
-  sort: TopicListSort;
-  onChange: (next: TopicListSort) => void;
+  prefs: BoardTopicViewPrefs;
+  fields: BoardField[];
+  onChange: (next: BoardTopicViewPrefs) => void;
 }) {
-  const isCode = sort === "code";
+  const sort = prefs.sort;
+  const fieldName =
+    sort.mode === "field" ? fields.find((f) => f.id === sort.fieldId)?.name : null;
+
+  if (sort.mode === "field" && fieldName) {
+    return (
+      <button
+        type="button"
+        onClick={() => onChange({ ...prefs, sort: { mode: "manual" } })}
+        className="inline-flex max-w-[9rem] shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent transition hover:bg-surface-raised"
+        title={`Sort wg „${fieldName}”. Kliknij: kolejność ręczna`}
+      >
+        <ArrowDownAZ size={12} />
+        <span className="truncate">{fieldName}</span>
+      </button>
+    );
+  }
+
+  const isCode = sort.mode === "code";
   return (
     <button
       type="button"
-      onClick={() => onChange(isCode ? "manual" : "code")}
-      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint transition hover:bg-surface-raised hover:text-ink-light"
-      aria-label={
-        isCode
-          ? "Sortowanie wg kodu — kliknij, aby wrócić do kolejności ręcznej"
-          : "Kolejność ręczna — kliknij, aby sortować wg kodu"
+      onClick={() =>
+        onChange({ ...prefs, sort: { mode: isCode ? "manual" : "code" } })
       }
+      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint transition hover:bg-surface-raised hover:text-ink-light"
       title={
         isCode
-          ? "Wg kodu (A…, potem 001, 2…). Kliknij: ręczne + przeciąganie"
+          ? "Wg kodu. Kliknij: ręczne + przeciąganie"
           : "Ręczne (przeciąganie). Kliknij: sortuj wg kodu"
       }
     >
@@ -159,6 +166,9 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   const topics = useBoardsStore((s) =>
     s.activeBoardId ? (s.topicsByBoard[s.activeBoardId] ?? EMPTY_TOPICS) : EMPTY_TOPICS,
   );
+  const fields = useBoardsStore((s) =>
+    s.activeBoardId ? (s.fieldsByBoard[s.activeBoardId] ?? EMPTY_FIELDS) : EMPTY_FIELDS,
+  );
   const topicsStatus = useBoardsStore((s) =>
     s.activeBoardId ? s.topicsStatus[s.activeBoardId] : undefined,
   );
@@ -167,23 +177,71 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   );
   const loadBoards = useBoardsStore((s) => s.loadBoards);
   const loadTopics = useBoardsStore((s) => s.loadTopics);
+  const loadFields = useBoardsStore((s) => s.loadFields);
   const reorderTopics = useBoardsStore((s) => s.reorderTopics);
   const setNotice = useBoardsStore((s) => s.setNotice);
 
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [listSort, setListSort] = useState<TopicListSort>(() => readTopicListSort());
+  const [viewPrefs, setViewPrefs] = useState<BoardTopicViewPrefs>(EMPTY_VIEW_PREFS);
   const [dragSection, setDragSection] = useState<"pinned" | "active" | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
 
   const board = boards.find((b) => b.id === activeBoardId) ?? null;
-  const now = useBoardsNow(topics);
-  const grouped = useMemo(() => groupTopics(topics, now, listSort), [topics, now, listSort]);
-  const canDrag = listSort === "manual";
+  const boardId = board?.id ?? null;
 
-  // Brak wybranej tablicy (np. start, usunięta) → pierwsza z listy.
+  useEffect(() => {
+    if (!boardId) {
+      setViewPrefs(EMPTY_VIEW_PREFS);
+      return;
+    }
+    setViewPrefs(readViewPrefs(boardId));
+  }, [boardId]);
+
+  const prefs = useMemo(() => sanitizeViewPrefs(viewPrefs, fields), [viewPrefs, fields]);
+
+  const changePrefs = useCallback(
+    (next: BoardTopicViewPrefs) => {
+      if (!boardId) return;
+      const clean = sanitizeViewPrefs(next, fields);
+      setViewPrefs(clean);
+      writeViewPrefs(boardId, clean);
+      setDragSection(null);
+      setDragId(null);
+      setOverId(null);
+    },
+    [boardId, fields],
+  );
+
+  const now = useBoardsNow(topics);
+  const filteredTopics = useMemo(
+    () => filterTopicsByFields(topics, fields, prefs.filters),
+    [topics, fields, prefs.filters],
+  );
+  const grouped = useMemo(() => {
+    const base = groupTopics(
+      filteredTopics,
+      now,
+      prefs.sort.mode === "code" ? "code" : "manual",
+    );
+    if (prefs.sort.mode !== "field") return base;
+    return applyViewSort(base, prefs.sort, fields);
+  }, [filteredTopics, now, prefs.sort, fields]);
+
+  // DnD tylko w trybie ręcznym bez filtrów (inaczej permutacja sekcji ≠ pełna lista).
+  const columnFields = useMemo(
+    () => prefs.columnIds.map((id) => fields.find((f) => f.id === id)).filter(Boolean) as BoardField[],
+    [prefs.columnIds, fields],
+  );
+  const chips = useMemo(
+    () => activeFilterChips(prefs.filters, fields),
+    [prefs.filters, fields],
+  );
+  // DnD tylko w trybie ręcznym bez filtrów (inaczej permutacja sekcji ≠ pełna lista).
+  const canDrag = prefs.sort.mode === "manual" && chips.length === 0;
+
   useEffect(() => {
     if (boardsStatus !== "ready" || boards.length === 0) return;
     if (!activeBoardId || !boards.some((b) => b.id === activeBoardId)) {
@@ -191,8 +249,6 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     }
   }, [boardsStatus, boards, activeBoardId]);
 
-  const boardId = board?.id ?? null;
-  const loadFields = useBoardsStore((s) => s.loadFields);
   useEffect(() => {
     if (boardId) {
       void loadTopics(boardId);
@@ -210,15 +266,6 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     setOverId(null);
   }, []);
 
-  const changeListSort = useCallback(
-    (next: TopicListSort) => {
-      setListSort(next);
-      writeTopicListSort(next);
-      clearDrag();
-    },
-    [clearDrag],
-  );
-
   const commitReorder = useCallback(
     async (section: "pinned" | "active", fromId: string, toId: string) => {
       if (!board || fromId === toId) {
@@ -235,6 +282,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
       const next = [...list];
       next.splice(from, 1);
       next.splice(to, 0, fromId);
+      // Reorder against full (unfiltered) topic set so filtered-out topics keep place.
       const full = fullOrderAfterSectionReorder(topics, now, section, next);
       clearDrag();
       const res = await reorderTopics(board.id, full);
@@ -294,6 +342,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
         now={now}
         active={t.id === activeTopicId}
         onOpen={openTopic}
+        columnFields={columnFields}
         draggable={sortable}
         dragging={dragId === t.id}
         dropTarget={sortable && dragSection === section && overId === t.id && dragId !== t.id}
@@ -316,7 +365,12 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     ));
   };
 
-  const sortToggle = <TopicSortToggle sort={listSort} onChange={changeListSort} />;
+  const headerExtra = (
+    <div className="flex shrink-0 items-center gap-0.5">
+      <SortModeChip prefs={prefs} fields={fields} onChange={changePrefs} />
+      <BoardTopicViewMenu fields={fields} prefs={prefs} onChange={changePrefs} />
+    </div>
+  );
 
   const loadingTopics = !topicsStatus || (topicsStatus === "loading" && topics.length === 0);
 
@@ -324,6 +378,35 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 px-3 pb-1.5 pt-2">
         <QuickAddTopic key={board.id} boardId={board.id} autoFocus={!mobile} />
+        {chips.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {chips.map((c) => (
+              <button
+                key={`${c.fieldId}:${c.optionId}`}
+                type="button"
+                onClick={() => {
+                  const next = { ...prefs.filters };
+                  const ids = (next[c.fieldId] ?? []).filter((id) => id !== c.optionId);
+                  if (ids.length === 0) delete next[c.fieldId];
+                  else next[c.fieldId] = ids;
+                  changePrefs({ ...prefs, filters: next });
+                }}
+                className="inline-flex items-center gap-1 rounded-md border border-line bg-surface-raised px-1.5 py-0.5 text-[10px] text-ink-light transition hover:border-line-strong hover:text-ink"
+                title="Usuń filtr"
+              >
+                <span className="text-ink-faint">{c.fieldName}:</span> {c.label}
+                <X size={10} />
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => changePrefs({ ...prefs, filters: {} })}
+              className="px-1.5 text-[10px] text-ink-faint hover:text-ink-light"
+            >
+              Wyczyść
+            </button>
+          </div>
+        )}
       </div>
       <BoardsNotice />
       <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar px-1.5 pb-3">
@@ -345,17 +428,28 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
           <div className="px-6 py-10 text-center text-xs text-ink-faint">
             Brak tematów. Wpisz pierwszy powyżej i naciśnij Enter.
           </div>
+        ) : filteredTopics.length === 0 ? (
+          <div className="px-6 py-10 text-center text-xs text-ink-faint">
+            Żaden temat nie pasuje do filtrów.{" "}
+            <button
+              type="button"
+              onClick={() => changePrefs({ ...prefs, filters: {} })}
+              className="text-accent hover:underline"
+            >
+              Wyczyść filtry
+            </button>
+          </div>
         ) : (
           <>
             <Section
               title="Przypięte"
               count={grouped.pinned.length}
               open
-              headerExtra={grouped.active.length === 0 ? sortToggle : undefined}
+              headerExtra={grouped.active.length === 0 ? headerExtra : undefined}
             >
               {renderRows(grouped.pinned, "pinned")}
             </Section>
-            <Section title="Tematy" count={grouped.active.length} open headerExtra={sortToggle}>
+            <Section title="Tematy" count={grouped.active.length} open headerExtra={headerExtra}>
               {renderRows(grouped.active, "active")}
             </Section>
             <Section
