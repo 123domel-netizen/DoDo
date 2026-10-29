@@ -1729,3 +1729,62 @@ export async function fetchLinkPreview(url: string): Promise<LinkPreview | null>
     return null;
   }
 }
+
+function mapPingClientError(raw: string): string {
+  if (raw.includes("ping rate limited") || raw.includes("Odczekaj chwil")) {
+    return "Odczekaj chwilę przed kolejnym PINGiem.";
+  }
+  if (raw.includes("ping no targets") || raw.includes("przynajmniej")) {
+    return "Wybierz przynajmniej jedną osobę.";
+  }
+  if (raw.includes("ping too many")) {
+    return "Za dużo odbiorców PINGa (maks. 20).";
+  }
+  if (raw.includes("ping invalid target") || raw.includes("Nie można wysłać")) {
+    return "Nie można wysłać PINGa do tej osoby.";
+  }
+  if (raw.includes("ping notebook")) {
+    return "PING nie działa w Notatniku.";
+  }
+  if (raw.includes("archived") || raw.includes("zarchiwizowana")) {
+    return "Ta rozmowa jest zarchiwizowana.";
+  }
+  if (raw.includes("not a conversation member") || raw.includes("Brak dostępu")) {
+    return "Brak dostępu do tej rozmowy.";
+  }
+  return raw || "Nie udało się wysłać PINGa.";
+}
+
+/** Pilny PING do wskazanych osób (edge send-ping → RPC + Web Push). */
+export async function sendPing(
+  conversationId: string,
+  targetIds: string[],
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  if (!targetIds.length) return { error: "Wybierz przynajmniej jedną osobę." };
+  try {
+    const { data, error } = await supabase.functions.invoke("send-ping", {
+      body: { conversationId, targetIds },
+    });
+    if (error) {
+      // Edge często pakuje treść błędu w body odpowiedzi.
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === "function") {
+        try {
+          const body = (await ctx.json()) as { error?: string };
+          if (body?.error) return { error: mapPingClientError(body.error) };
+        } catch {
+          /* ignore */
+        }
+      }
+      return { error: mapPingClientError(error.message) };
+    }
+    const d = data as { error?: string; ok?: boolean } | null;
+    if (d?.error) return { error: mapPingClientError(d.error) };
+    return {};
+  } catch (e) {
+    return {
+      error: mapPingClientError(e instanceof Error ? e.message : "Nie udało się wysłać PINGa."),
+    };
+  }
+}

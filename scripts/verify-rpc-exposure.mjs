@@ -182,6 +182,13 @@ const BOARD_RPCS_ANON_CLOSED = [
     fn: "board_reorder_topics",
     body: { p_board_id: crypto.randomUUID(), p_topic_ids: [] },
   },
+  {
+    fn: "send_ping",
+    body: {
+      p_conversation_id: crypto.randomUUID(),
+      p_target_ids: [crypto.randomUUID()],
+    },
+  },
 ];
 
 console.log("\nRPC Tablic (anon musi być odrzucony):");

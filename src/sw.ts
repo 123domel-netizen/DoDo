@@ -89,19 +89,30 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
 });
 
 self.addEventListener("push", (event: PushEvent) => {
-  let data: { title?: string; body?: string; url?: string; tag?: string } = {};
+  let data: {
+    title?: string;
+    body?: string;
+    url?: string;
+    tag?: string;
+    ping?: boolean;
+  } = {};
   try {
     data = event.data?.json() ?? {};
   } catch {
     data = { body: event.data?.text() };
   }
   const title = data.title ?? "Przypomnienie";
+  const isPing = Boolean(data.ping);
   event.waitUntil(
     self.registration.showNotification(title, {
       body: data.body ?? "",
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      vibrate: [40, 60, 40],
+      vibrate: isPing ? [200, 100, 200, 100, 400] : [40, 60, 40],
+      requireInteraction: isPing,
+      ...(isPing
+        ? { actions: [{ action: "open", title: "Otwórz rozmowę" }] }
+        : {}),
       ...(data.tag ? { tag: data.tag, renotify: true } : {}),
       data: { url: data.url ?? "/" },
     }),

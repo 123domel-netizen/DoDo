@@ -46,3 +46,7 @@ verify_jwt = false
 # więc weryfikacja JWT ZOSTAJE włączona.
 [functions.link-preview]
 verify_jwt = true
+
+# PING w rozmowie — klient wywołuje z sesją; RPC send_ping + Web Push.
+[functions.send-ping]
+verify_jwt = true

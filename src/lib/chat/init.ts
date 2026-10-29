@@ -26,6 +26,10 @@ import {
   pushChatNotifyDigest,
 } from "@/lib/chat/notifyDigest";
 import { isMuted } from "@/lib/chat/feed";
+import {
+  enqueuePingFromRow,
+  type ChatPingRow,
+} from "@/lib/chat/pingAlerts";
 import { hasActivePushSubscription, showLocalNotification, syncExistingPushSubscription } from "@/lib/push";
 import { useChatStore, switchChatPersistUser } from "@/lib/chat/store";
 import { mergeMessages } from "@/lib/chat/feed";
@@ -1649,6 +1653,20 @@ async function setupRealtime(userId: string) {
             m.userId === userId ? { ...m, lastReadAt } : m,
           ),
         });
+      },
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "chat_pings",
+        filter: `target_user_id=eq.${userId}`,
+      },
+      (payload) => {
+        const row = payload.new as ChatPingRow | null;
+        if (!row?.id) return;
+        enqueuePingFromRow(row, userId);
       },
     )
     .subscribe((status) => {

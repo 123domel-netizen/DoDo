@@ -85,9 +85,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pin version — `latest` hits GitHub API rate limits resolving the release.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.122.0
 
       # Odtworzenie bazy od zera wykrywa migracje, które przechodzą tylko na
       # istniejącym środowisku (OPS-01), oraz uruchamia bramki weryfikacyjne
@@ -116,6 +117,13 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/boards_rls.sql
+
+      # PING (0076): RPC send_ping, rate limit, RLS select only for parties.
+      - name: Assert chat ping RLS
+        run: |
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/chat_ping_rls.sql
 
       - name: supabase stop
         if: always()
