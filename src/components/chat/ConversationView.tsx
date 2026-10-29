@@ -38,6 +38,7 @@ import {
   threadDisplayTitle,
 } from "@/lib/chat/feed";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
+import { PingButton } from "@/components/chat/PingButton";
 import { ThreadAnnotationGroup } from "@/components/chat/ThreadAnnotationGroup";
 import { useHideThreadPreviews } from "@/lib/chat/threadPreviewPref";
 import { dmPeerMember } from "@/lib/avatar";
@@ -1459,6 +1460,18 @@ export function ConversationView({
                     <Archive size={16} />
                   )}
                 </button>
+              )}
+              {!isNotebook && (
+                <PingButton
+                  conversationId={conversationId}
+                  myUserId={myUserId}
+                  participants={(entry?.members ?? []).map((m) => ({
+                    userId: m.userId,
+                    displayName: m.displayName,
+                    avatarUrl: m.avatarUrl,
+                  }))}
+                  variant="header"
+                />
               )}
               {!isNotebook && (
               <button

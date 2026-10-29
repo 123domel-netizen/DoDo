@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { ConversationView } from "@/components/chat/ConversationView";
+import { PingButton } from "@/components/chat/PingButton";
 import { SnoozeMenu } from "@/components/boards/SnoozeMenu";
 import { useTopicActions } from "@/components/boards/topicActions";
 import { topicConversationEntry } from "@/lib/boards/entry";
@@ -375,6 +376,18 @@ function TopicDetailBody({
 
         {!pending && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {conversationId && (
+              <PingButton
+                conversationId={conversationId}
+                myUserId={myUserId}
+                participants={board.members.map((m) => ({
+                  userId: m.userId,
+                  displayName: m.displayName,
+                  avatarUrl: m.avatarUrl,
+                }))}
+                variant="action"
+              />
+            )}
             {!closed && (
               <button type="button" onClick={() => void actions.togglePin()} className={actionBtn}>
                 {topic.pinnedAt ? <PinOff size={13} /> : <Pin size={13} />}

@@ -64,7 +64,7 @@ export interface BoardsState {
   removeMember: (boardId: string, userId: string) => Promise<{ error?: string }>;
   archiveBoard: (boardId: string) => Promise<{ error?: string }>;
 
-  addTopic: (boardId: string, rawTitle: string) => string | null;
+  addTopic: (boardId: string, rawTitle: string, rawCode?: string) => string | null;
   retryTopic: (topicId: string) => void;
   discardLocalTopic: (topicId: string) => void;
   updateTopic: (topicId: string, patch: TopicPatch) => Promise<{ error?: string }>;
@@ -205,6 +205,23 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
     }
     const conversationId = res.conversationId;
     addBoardConversationRef(conversationId, { boardId: topic.boardId, topicId: topic.id });
+    // Kod jest opcjonalny i idzie osobnym UPDATE (RPC create nie przyjmuje code).
+    if (topic.code) {
+      const codeRes = await api.updateTopic(topicId, { code: topic.code });
+      if (get().generation !== gen) return;
+      if (codeRes.error) {
+        replaceTopic(topicId, (t) => ({
+          ...t,
+          conversationId,
+          code: null,
+          sendState: undefined,
+          sendError: undefined,
+        }));
+        get().setNotice(codeRes.error);
+        return;
+      }
+    }
+    if (get().generation !== gen) return;
     replaceTopic(topicId, (t) => ({
       ...t,
       conversationId,
@@ -373,10 +390,11 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       return res;
     },
 
-    addTopic: (boardId, rawTitle) => {
+    addTopic: (boardId, rawTitle, rawCode) => {
       const { userId } = get();
       const title = normalizeTopicTitle(rawTitle);
       if (!userId || !title) return null;
+      const code = rawCode !== undefined ? normalizeTopicCode(rawCode) : null;
       const now = new Date().toISOString();
       const existing = get().topicsByBoard[boardId] ?? [];
       const maxPos = existing.reduce((m, t) => Math.max(m, t.position), 0);
@@ -385,7 +403,7 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         boardId,
         title,
         description: "",
-        code: null,
+        code,
         position: maxPos + 1,
         createdBy: userId,
         pinnedAt: null,

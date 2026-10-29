@@ -17,11 +17,17 @@ export function useBoardsAvailable(): boolean {
   return boardsBackendAvailable() && Boolean(authUserId) && Boolean(orgId);
 }
 
-/** Zapisany tryb „boards” przy niedostępnym module wygląda jak Kalendarz (bez kasowania ustawienia). */
+/**
+ * Tryb obszaru głównego z uwzględnieniem dostępności modułów.
+ * Przegląd jest wycofany z belki — zapisane `dashboard` traktujemy jak Kalendarz.
+ * Niedostępne Tablice też padają na Kalendarz (bez kasowania ustawienia).
+ */
 export function useEffectiveMainAreaMode(): MainAreaMode {
   const mode = useStore((s) => s.settings.mainAreaMode);
   const available = useBoardsAvailable();
-  return mode === "boards" && !available ? "calendar" : mode;
+  if (mode === "dashboard") return "calendar";
+  if (mode === "boards" && !available) return "calendar";
+  return mode;
 }
 
 /** Id tematu do pokazania w prawym panelu desktopu (tryb Tablice + wybrany temat), inaczej null. */

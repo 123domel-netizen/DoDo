@@ -9,6 +9,7 @@ import { MobileShell } from "@/components/mobile/MobileShell";
 import { GroupSelectPrompt } from "@/components/prompts/GroupSelectPrompt";
 import { NotificationPermissionPrompt } from "@/components/prompts/NotificationPermissionPrompt";
 import { AppUpdatePrompt } from "@/components/prompts/AppUpdatePrompt";
+import { PingAlert } from "@/components/chat/PingAlert";
 import { R2PreviewBanner } from "@/components/media/R2PreviewBanner";
 import { useStore } from "@/state/store";
 import { useReminderScheduler } from "@/hooks/useReminderScheduler";
@@ -95,6 +96,7 @@ export default function App() {
             <GroupSelectPrompt />
             <NotificationPermissionPrompt />
             <AppUpdatePrompt />
+            <PingAlert />
             {isMobile ? (
               <MobileShell />
             ) : (

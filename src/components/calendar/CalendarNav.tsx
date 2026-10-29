@@ -15,8 +15,6 @@ import type { CalendarViewKind, MainAreaMode } from "@/types";
 import { getViewLabel } from "@/lib/viewLabel";
 import { getViewDays } from "@/lib/time";
 import { isValidDate } from "@/lib/dates";
-import { fmt } from "@/lib/format";
-
 const VIEWS: { key: CalendarViewKind; label: string }[] = [
   { key: "day", label: "Dzień" },
   { key: "week", label: "Tydzień" },
@@ -63,7 +61,6 @@ export function CalendarNav() {
   const mainAreaMode = useEffectiveMainAreaMode();
   const boardsUnread = useBoardsUnreadTotal();
   const anchor = navAnchor(settings.anchorDate);
-  const isDashboard = mainAreaMode === "dashboard";
   const isAttendance = mainAreaMode === "attendance";
   const isCalendar = mainAreaMode === "calendar";
   const isBoards = mainAreaMode === "boards";
@@ -155,12 +152,6 @@ export function CalendarNav() {
           </>
         )}
 
-        {isDashboard && (
-          <div className="min-w-0 flex-1 truncate text-xs font-medium capitalize text-ink">
-            {fmt(new Date(), "EEEE, d MMMM")}
-          </div>
-        )}
-
         {isSchedules && (
           <div className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
             {isAttendance ? "Obecności" : "Harmonogramy"}
@@ -185,35 +176,6 @@ export function CalendarNav() {
           >
             Kalendarz
           </button>
-          <button
-            type="button"
-            onClick={() => leaveSchedulesTo({ mainAreaMode: "dashboard" })}
-            className={chipClass(isDashboard)}
-          >
-            Przegląd
-          </button>
-          {schedulesAvailable ? (
-            <>
-              <button
-                type="button"
-                onClick={() => enterSchedules("projects")}
-                className={chipClass(settings.mainAreaMode === "projects")}
-                aria-label="Harmonogramy"
-                title="Harmonogramy"
-              >
-                Harmonogramy
-              </button>
-              <button
-                type="button"
-                onClick={() => enterSchedules("attendance")}
-                className={chipClass(isAttendance)}
-                aria-label="Obecności"
-                title="Obecności"
-              >
-                Obecności
-              </button>
-            </>
-          ) : null}
           {boardsAvailable ? (
             <button
               type="button"
@@ -232,6 +194,17 @@ export function CalendarNav() {
                   {boardsUnread > 99 ? "99+" : boardsUnread}
                 </span>
               )}
+            </button>
+          ) : null}
+          {schedulesAvailable ? (
+            <button
+              type="button"
+              onClick={() => enterSchedules("attendance")}
+              className={chipClass(isSchedules)}
+              aria-label="Obecności"
+              title="Obecności (Harmonogramy wewnątrz)"
+            >
+              Obecności
             </button>
           ) : null}
         </div>
