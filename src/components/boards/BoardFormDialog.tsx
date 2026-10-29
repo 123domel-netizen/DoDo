@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { BoardFieldsEditor } from "@/components/boards/BoardFieldsEditor";
 import { PersonAvatar } from "@/components/chat/PersonAvatar";
 import { fetchOrgContacts } from "@/lib/contacts";
 import { defaultBoardName } from "@/lib/boards/sections";
@@ -318,6 +319,9 @@ export function ManageBoardDialog({
                 Dodaj ({selected.size})
               </button>
             )}
+
+            <div className="my-3 border-t border-line/60" />
+            <BoardFieldsEditor board={board} />
           </>
         )}
 

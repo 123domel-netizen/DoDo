@@ -229,8 +229,10 @@ function boardIdFromChange(table: string, payload: ChangePayload): string | null
     payload.new && Object.keys(payload.new).length > 0 ? payload.new : payload.old
   ) as Record<string, unknown> | undefined;
   if (!row) return null;
-  const id = table === "boards" ? row.id : row.board_id;
-  return typeof id === "string" ? id : null;
+  if (table === "boards") return typeof row.id === "string" ? row.id : null;
+  if (typeof row.board_id === "string") return row.board_id;
+  // field options / viewers / topic values — bez board_id w wierszu → pełny reload
+  return null;
 }
 
 /** Słuchacz nawigacji (#/tablice/...) — montowany raz, niezależnie od dostępności modułu. */
@@ -281,6 +283,26 @@ export function startBoardsRuntime(userId: string, orgId: string): () => void {
         "postgres_changes",
         { event: "*", schema: "public", table: "board_topic_items" },
         onChange("board_topic_items"),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "board_fields" },
+        onChange("board_fields"),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "board_field_options" },
+        onChange("board_field_options"),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "board_field_viewers" },
+        onChange("board_field_viewers"),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "board_topic_field_values" },
+        onChange("board_topic_field_values"),
       )
       .subscribe();
   }

@@ -1,11 +1,16 @@
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import type {
   Board,
+  BoardField,
+  BoardFieldKind,
+  BoardFieldOption,
+  BoardFieldVisibility,
   BoardMember,
   BoardRole,
   BoardTopic,
   LinkedItemType,
   TopicComment,
+  TopicFieldValue,
   TopicItemLink,
 } from "@/lib/boards/types";
 
@@ -38,6 +43,21 @@ export function mapBoardError(message: string | undefined | null): string {
   if (m.includes("invalid topic order")) return "Nie udało się zmienić kolejności tematów.";
   if (m.includes("duplicate key") || m.includes("board_topics_board_code")) {
     return "Ten kod jest już użyty na tej tablicy.";
+  }
+  if (m.includes("too many board fields")) return "Za dużo pól na tablicy (max 20).";
+  if (m.includes("invalid field name")) return "Niepoprawna nazwa pola.";
+  if (m.includes("invalid field options") || m.includes("invalid option label")) {
+    return "Niepoprawne opcje pola.";
+  }
+  if (m.includes("invalid field value")) return "Niepoprawna wartość pola.";
+  if (m.includes("field kind or visibility immutable")) {
+    return "Typu pola nie można zmienić — usuń i dodaj nowe.";
+  }
+  if (m.includes("viewers must be board members")) {
+    return "Osoby z dostępem do ukrytego pola muszą być na tablicy.";
+  }
+  if (m.includes("restricted fields must be text")) {
+    return "Ukryte pole musi być tekstem.";
   }
   if (m.includes("invalid")) return "Niepoprawna nazwa lub tytuł.";
   if (m.includes("failed to fetch") || m.includes("network")) {
@@ -85,6 +105,53 @@ function rowToComment(raw: unknown): TopicComment | null {
   };
 }
 
+function asFieldKind(v: unknown): BoardFieldKind {
+  if (v === "single" || v === "multi" || v === "text") return v;
+  return "text";
+}
+
+function asFieldVisibility(v: unknown): BoardFieldVisibility {
+  return v === "restricted" ? "restricted" : "all";
+}
+
+function parseFieldValues(raw: unknown): Record<string, TopicFieldValue> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, TopicFieldValue> = {};
+  for (const [fieldId, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!val || typeof val !== "object") continue;
+    const v = val as Row;
+    const optionIds = Array.isArray(v.optionIds)
+      ? (v.optionIds as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+    out[fieldId] = {
+      text: typeof v.text === "string" ? v.text : null,
+      optionIds,
+    };
+  }
+  return out;
+}
+
+export function rowToField(row: Row): BoardField {
+  const optionsRaw = (row.options as Row[] | null) ?? [];
+  const viewerIds = (row.viewer_ids as string[] | null) ?? [];
+  return {
+    id: row.id as string,
+    boardId: row.board_id as string,
+    name: (row.name as string) ?? "",
+    kind: asFieldKind(row.kind),
+    visibility: asFieldVisibility(row.visibility),
+    position: Number(row.position ?? 0),
+    options: optionsRaw.map(
+      (o): BoardFieldOption => ({
+        id: o.id as string,
+        label: (o.label as string) ?? "",
+        position: Number(o.position ?? 0),
+      }),
+    ),
+    viewerIds: viewerIds.filter((id) => typeof id === "string"),
+  };
+}
+
 export function rowToTopic(row: Row): BoardTopic {
   const items = (row.items as Row[] | null) ?? [];
   const codeRaw = row.code;
@@ -113,6 +180,7 @@ export function rowToTopic(row: Row): BoardTopic {
         itemType: i.itemType === "event" ? "event" : "task",
       }),
     ),
+    fieldValues: parseFieldValues(row.field_values),
   };
 }
 
@@ -281,5 +349,63 @@ export async function unlinkTopicItem(
     .delete()
     .eq("topic_id", topicId)
     .eq("item_id", itemId);
+  return error ? { error: mapBoardError(error.message) } : {};
+}
+
+export async function fetchBoardFields(
+  boardId: string,
+): Promise<{ fields: BoardField[]; error?: string }> {
+  if (!supabase) return { fields: [] };
+  const { data, error } = await supabase.rpc("get_board_fields", { p_board_id: boardId });
+  if (error) return { fields: [], error: mapBoardError(error.message) };
+  return { fields: ((data as Row[]) ?? []).map(rowToField) };
+}
+
+export async function upsertBoardField(input: {
+  id?: string | null;
+  boardId: string;
+  name: string;
+  kind: BoardFieldKind;
+  visibility: BoardFieldVisibility;
+  position?: number | null;
+  options: { id?: string; label: string }[];
+  viewerIds: string[];
+}): Promise<{ id?: string; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { data, error } = await supabase.rpc("board_upsert_field", {
+    p_id: input.id ?? null,
+    p_board_id: input.boardId,
+    p_name: input.name,
+    p_kind: input.kind,
+    p_visibility: input.visibility,
+    p_position: input.position ?? null,
+    p_options: input.options.map((o) =>
+      o.id ? { id: o.id, label: o.label } : { label: o.label },
+    ),
+    p_viewer_ids: input.viewerIds,
+  });
+  if (error) return { error: mapBoardError(error.message) };
+  return { id: data as string };
+}
+
+export async function deleteBoardField(fieldId: string): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("board_delete_field", { p_field_id: fieldId });
+  return error ? { error: mapBoardError(error.message) } : {};
+}
+
+export async function setTopicFieldValue(input: {
+  topicId: string;
+  fieldId: string;
+  textValue?: string | null;
+  optionIds?: string[];
+}): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("board_set_topic_field_value", {
+    p_topic_id: input.topicId,
+    p_field_id: input.fieldId,
+    p_text_value: input.textValue ?? null,
+    p_option_ids: input.optionIds ?? [],
+  });
   return error ? { error: mapBoardError(error.message) } : {};
 }
