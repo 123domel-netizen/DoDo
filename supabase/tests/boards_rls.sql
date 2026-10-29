@@ -123,9 +123,12 @@ begin
   from public.get_board_topics('00000000-0000-0000-0000-0000000000c1')
   where id = '00000000-0000-0000-0000-0000000000d1';
 
-  insert into public.messages (id, conversation_id, author_user_id, body)
+  -- now() jest stałe w całej transakcji testu, więc daty komentarzy przesuwamy
+  -- jawnie (w produkcji komentarz zawsze powstaje po dołączeniu do rozmowy).
+  insert into public.messages (id, conversation_id, author_user_id, body, created_at)
   values ('00000000-0000-0000-0000-0000000000e1', v_conv,
-          '00000000-0000-0000-0000-0000000000a1', 'Sprawdzić działkę kowalewo');
+          '00000000-0000-0000-0000-0000000000a1', 'Sprawdzić działkę kowalewo',
+          now() + interval '1 second');
 
   -- autor nie ma unread od własnego komentarza
   if (select unread_count from public.get_board_topics('00000000-0000-0000-0000-0000000000c1')
@@ -173,9 +176,10 @@ begin
   end if;
 
   -- u2 komentuje → u1 ma unread
-  insert into public.messages (id, conversation_id, author_user_id, body)
+  insert into public.messages (id, conversation_id, author_user_id, body, created_at)
   values ('00000000-0000-0000-0000-0000000000e2', v_conv,
-          '00000000-0000-0000-0000-0000000000a2', 'Odpowiedź Dominika');
+          '00000000-0000-0000-0000-0000000000a2', 'Odpowiedź Dominika',
+          now() + interval '2 seconds');
 
   -- członek może zamknąć / przypiąć / odłożyć (wspólny notes)
   update public.board_topics
