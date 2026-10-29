@@ -11,6 +11,9 @@ import { ConversationMediaView } from "@/components/chat/ConversationMediaView";
 import { RegistryDetailPanel } from "@/components/hub/RegistryDetailPanel";
 import { DetailPanelChrome } from "@/components/hub/DetailPanelChrome";
 import { useStore } from "@/state/store";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { TopicDetail } from "@/components/boards/TopicDetail";
+import { useBoardTopicInPanel } from "@/hooks/useBoards";
 
 /**
  * Prawy panel desktop: zadania / edytor / rozmowa / decyzja / notatka / media.
@@ -21,6 +24,7 @@ export function SidePanel() {
   const panelMode = useChatStore((s) => s.panelMode);
   const activeConversationId = useChatStore((s) => s.activeConversationId);
   const mediaConversationId = useChatStore((s) => s.mediaConversationId);
+  const boardTopicId = useBoardTopicInPanel();
 
   if (editingId) return <ItemEditorPanel />;
 
@@ -58,6 +62,14 @@ export function SidePanel() {
       <DetailPanelChrome>
         <RegistryDetailPanel />
       </DetailPanelChrome>
+    );
+  }
+
+  if (boardTopicId) {
+    return (
+      <ErrorBoundary label="tablice" compact>
+        <TopicDetail key={boardTopicId} topicId={boardTopicId} />
+      </ErrorBoundary>
     );
   }
 

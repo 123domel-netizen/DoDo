@@ -9,6 +9,11 @@ import {
   setRouteHash,
 } from "@/lib/navigation";
 import * as api from "@/lib/chat/api";
+import {
+  addBoardConversationRef,
+  emitBoardChatEvent,
+  getBoardConversationRef,
+} from "@/lib/chat/boardBridge";
 import { uploadAttachmentsForMessage, uploadChannelIcon } from "@/lib/chat/upload";
 import {
   channelPresetIconUrl,
@@ -1361,8 +1366,42 @@ export async function setChannelPublic(
 function handleIncomingMessage(msg: ChatMessage) {
   const st = useChatStore.getState();
   const visible = documentVisible();
+  // Zawsze zapisz wiadomość w feedzie (również komentarze Tablic — osadzone
+  // ConversationView czyta z messagesByConv); overview jej nie zawiera.
   const known = st.applyIncomingMessage(msg, visible);
-  if (!known) scheduleOverviewRefresh();
+
+  // Komentarz tematu Tablicy: NIE jest rozmową czatu — bez odświeżania listy,
+  // bez dźwięku/powiadomienia czatu; obsługuje go moduł Tablice.
+  const boardRef = getBoardConversationRef(msg.conversationId);
+  if (boardRef) {
+    emitBoardChatEvent({ type: "message", message: msg, ref: boardRef });
+    return;
+  }
+  if (!known) {
+    void handleUnknownConversationMessage(msg);
+    return;
+  }
+  finishIncomingMessage(msg, visible);
+}
+
+/**
+ * Rozmowy nie ma w overview. To albo nowa rozmowa czatu (→ odśwież listę),
+ * albo komentarz tematu Tablicy utworzonego przed chwilą (→ zarejestruj i
+ * przekaż modułowi Tablice; Tablice nigdy nie trafiają do overview).
+ */
+async function handleUnknownConversationMessage(msg: ChatMessage) {
+  const ref = await api.resolveBoardConversation(msg.conversationId);
+  if (ref) {
+    addBoardConversationRef(msg.conversationId, ref);
+    emitBoardChatEvent({ type: "message", message: msg, ref });
+    return;
+  }
+  scheduleOverviewRefresh();
+  finishIncomingMessage(msg, documentVisible());
+}
+
+function finishIncomingMessage(msg: ChatMessage, visible: boolean) {
+  const st = useChatStore.getState();
   // patrzę na tę rozmowę → od razu przeczytane
   if (
     visible &&
@@ -1552,6 +1591,10 @@ async function setupRealtime(userId: string) {
       "postgres_changes",
       { event: "*", schema: "public", table: "conversations" },
       (payload) => {
+        // Rozmowy tematów Tablic nie należą do czatu — pomijamy (obsługuje je
+        // moduł Tablice przez własny kanał realtime).
+        const changed = (payload.new ?? payload.old) as Record<string, unknown> | null;
+        if (changed?.kind === "board_topic") return;
         // last_message_at podbija applyIncomingMessage; refresh tylko przy
         // realnych zmianach (nazwa/archiwizacja/nowa rozmowa).
         if (payload.eventType === "UPDATE") {
@@ -1579,6 +1622,16 @@ async function setupRealtime(userId: string) {
       (payload) => {
         const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
         if (!row) return;
+        const boardRef = getBoardConversationRef(row.conversation_id as string);
+        if (boardRef) {
+          // Stan odczytu tematu Tablicy (też z innego urządzenia) — nie czat.
+          emitBoardChatEvent({
+            type: "membership",
+            conversationId: row.conversation_id as string,
+            ref: boardRef,
+          });
+          return;
+        }
         if ((row.user_id as string) === currentUserId) {
           scheduleOverviewRefresh();
           return;

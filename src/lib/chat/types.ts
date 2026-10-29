@@ -1,4 +1,9 @@
-export type ConversationKind = "channel" | "dm" | "item";
+/**
+ * `board_topic` = wątek komentarzy tematu Tablicy. Te rozmowy NIGDY nie trafiają
+ * do listy Czatu (wykluczone w `get_conversation_overview`, a tutaj dodatkowo
+ * w `isChatListConversationKind`).
+ */
+export type ConversationKind = "channel" | "dm" | "item" | "board_topic";
 
 export type MessageKind =
   | "text"

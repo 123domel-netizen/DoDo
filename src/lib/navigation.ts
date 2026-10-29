@@ -7,6 +7,9 @@
  *   #/czat/{conversationId}     rozmowa
  *   #/czat/{cid}/watek/{mid}    wątek
  *   #/wpis/{itemId}             edytor itemu
+ *   #/tablice                   moduł Tablice
+ *   #/tablice/{boardId}         tablica
+ *   #/tablice/{boardId}/{topicId}  temat tablicy
  *
  * Hashe nie zaczynające się od "#/" (np. #error=... z OAuth) są ignorowane.
  *
@@ -17,7 +20,8 @@
 export type AppRoute =
   | { view: "chat" }
   | { view: "conversation"; conversationId: string; threadRootId?: string }
-  | { view: "item"; itemId: string };
+  | { view: "item"; itemId: string }
+  | { view: "board"; boardId?: string; topicId?: string };
 
 export type HistoryMode = "replace" | "push";
 
@@ -44,6 +48,11 @@ export function parseAppHash(hash: string): AppRoute | null {
   if (parts[0] === "wpis" && parts[1]) {
     return { view: "item", itemId: parts[1] };
   }
+  if (parts[0] === "tablice") {
+    if (!parts[1]) return { view: "board" };
+    if (!parts[2]) return { view: "board", boardId: parts[1] };
+    return { view: "board", boardId: parts[1], topicId: parts[2] };
+  }
   return null;
 }
 
@@ -57,6 +66,11 @@ export function buildAppHash(route: AppRoute): string {
         : `#/czat/${route.conversationId}`;
     case "item":
       return `#/wpis/${route.itemId}`;
+    case "board":
+      if (!route.boardId) return "#/tablice";
+      return route.topicId
+        ? `#/tablice/${route.boardId}/${route.topicId}`
+        : `#/tablice/${route.boardId}`;
   }
 }
 

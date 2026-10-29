@@ -16,6 +16,16 @@ describe("parseAppHash", () => {
     expect(parseAppHash("#/wpis/i7")).toEqual({ view: "item", itemId: "i7" });
   });
 
+  it("parsuje trasy Tablic", () => {
+    expect(parseAppHash("#/tablice")).toEqual({ view: "board" });
+    expect(parseAppHash("#/tablice/b1")).toEqual({ view: "board", boardId: "b1" });
+    expect(parseAppHash("#/tablice/b1/t9")).toEqual({
+      view: "board",
+      boardId: "b1",
+      topicId: "t9",
+    });
+  });
+
   it("ignoruje hashe nie-trasowe (np. OAuth error)", () => {
     expect(parseAppHash("")).toBeNull();
     expect(parseAppHash("#error=access_denied&error_description=x")).toBeNull();
@@ -30,6 +40,9 @@ describe("parseAppHash", () => {
       { view: "conversation", conversationId: "c1" },
       { view: "conversation", conversationId: "c1", threadRootId: "m1" },
       { view: "item", itemId: "i1" },
+      { view: "board" },
+      { view: "board", boardId: "b1" },
+      { view: "board", boardId: "b1", topicId: "t1" },
     ];
     for (const r of routes) {
       expect(parseAppHash(buildAppHash(r))).toEqual(r);

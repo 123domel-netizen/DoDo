@@ -109,6 +109,14 @@ jobs:
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/nested_call_model.sql
 
+      # Tablice (0074): RLS, izolacja per tablica/organizacja, brak wycieku do Czatu.
+      # Skrypt działa w transakcji i kończy się ROLLBACK.
+      - name: Assert boards RLS and chat separation
+        run: |
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/boards_rls.sql
+
       - name: supabase stop
         if: always()
         run: supabase stop --no-backup

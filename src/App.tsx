@@ -15,6 +15,9 @@ import { useReminderScheduler } from "@/hooks/useReminderScheduler";
 import { useAutoCloudRefresh } from "@/hooks/useAutoCloudRefresh";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useHubHotkeys } from "@/hooks/useHubHotkeys";
+import { useBoardsLifecycle, useBoardTopicInPanel } from "@/hooks/useBoards";
+import { useBoardsStore } from "@/lib/boards/store";
+import { navigateToBoards } from "@/lib/boards/runtime";
 import { cloudEnabled } from "@/lib/supabase";
 import { useChatStore } from "@/lib/chat/store";
 import { closeChatDetailPanel } from "@/lib/chat/init";
@@ -37,6 +40,10 @@ export default function App() {
   useReminderScheduler();
   useAutoCloudRefresh();
   useHubHotkeys(!isMobile && cloudEnabled);
+  useBoardsLifecycle();
+  // Na mobile temat Tablic jest pełnoekranowy (MobileShell), nie w panelu bocznym.
+  const boardTopicId = useBoardTopicInPanel();
+  const boardTopicOpen = !isMobile && boardTopicId !== null;
 
   useEffect(() => {
     document.title = "DoDo";
@@ -50,7 +57,7 @@ export default function App() {
   }, [theme]);
 
   // Detal hubu / edytor wymuszają otwarcie prawego panelu.
-  const detailForced = Boolean(editingId) || panelMode !== "todo";
+  const detailForced = Boolean(editingId) || panelMode !== "todo" || boardTopicOpen;
   const panelOpen = todoOpen || detailForced;
 
   useEffect(() => {
@@ -61,6 +68,9 @@ export default function App() {
     if (detailForced) {
       if (editingId) useStore.getState().setEditing(null);
       if (panelMode !== "todo") closeChatDetailPanel();
+      if (boardTopicOpen) {
+        navigateToBoards({ boardId: useBoardsStore.getState().activeBoardId ?? undefined });
+      }
       setTodoOpen(false);
       return;
     }

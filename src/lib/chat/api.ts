@@ -1,5 +1,9 @@
 import { cloudEnabled, supabase } from "@/lib/supabase";
 import { mapOrgRpcError } from "@/lib/orgsPlans";
+import {
+  filterChatListEntries,
+  type BoardConversationRef,
+} from "@/lib/chat/boardBridge";
 import type {
   ChatAttachment,
   ChatDecision,
@@ -183,6 +187,15 @@ export function chatAvailable(): boolean {
   return cloudEnabled && Boolean(supabase);
 }
 
+/**
+ * Wiersze overview → wpisy listy Czatu. Rozmowy Tablic (`board_topic`) są
+ * odrzucane tutaj niezależnie od filtra w SQL (obrona w głąb): lista Czatu
+ * nigdy nie może zawierać wątków Tablic.
+ */
+export function mapOverviewRows(rows: Row[]): ChatOverviewEntry[] {
+  return filterChatListEntries(rows.map(rowToOverviewEntry));
+}
+
 export async function fetchOverview(): Promise<ChatOverviewEntry[]> {
   if (!supabase) return [];
   const { data, error } = await supabase.rpc("get_conversation_overview");
@@ -190,7 +203,31 @@ export async function fetchOverview(): Promise<ChatOverviewEntry[]> {
     console.warn("[chat] overview fetch failed:", error.message);
     return [];
   }
-  return ((data as Row[]) ?? []).map(rowToOverviewEntry);
+  return mapOverviewRows((data as Row[]) ?? []);
+}
+
+/**
+ * Czy rozmowa jest wątkiem tematu Tablicy? Używane dla wiadomości z realtime,
+ * gdy rozmowy nie ma ani w overview (z założenia), ani w rejestrze Tablic
+ * (temat utworzony właśnie przez inną osobę).
+ */
+export async function resolveBoardConversation(
+  conversationId: string,
+): Promise<BoardConversationRef | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("kind, board_topic_id, board_topics(board_id)")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as Row;
+  if (row.kind !== "board_topic" || !row.board_topic_id) return null;
+  const topic = row.board_topics as Row | Row[] | null;
+  const topicRow = Array.isArray(topic) ? topic[0] : topic;
+  const boardId = topicRow?.board_id as string | undefined;
+  if (!boardId) return null;
+  return { boardId, topicId: row.board_topic_id as string };
 }
 
 /** Liczba wiadomości w rozmowach od `sinceIso` (do rankingu „Ulubione”). */
