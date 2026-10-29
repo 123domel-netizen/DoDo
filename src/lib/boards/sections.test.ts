@@ -6,6 +6,7 @@ import {
   effectiveUnread,
   formatTopicTime,
   fullOrderAfterSectionReorder,
+  byCodeAsc,
   groupTopics,
   isSnoozed,
   nextSnoozeWake,
@@ -141,6 +142,41 @@ describe("groupTopics", () => {
     ];
     const g = groupTopics(all, NOW);
     expect(g.pinned.length + g.active.length + g.snoozed.length + g.closed.length).toBe(4);
+  });
+
+  it("sort=code: litery przed cyframi, naturalnie, bez kodu na końcu", () => {
+    const grouped = groupTopics(
+      [
+        topic("n01", { code: "N01", position: 9 }),
+        topic("two", { code: "2", position: 1 }),
+        topic("a", { code: "A", position: 8 }),
+        topic("z299", { code: "299", position: 2 }),
+        topic("z03", { code: "03", position: 3 }),
+        topic("z001", { code: "001", position: 4 }),
+        topic("b", { code: "B", position: 7 }),
+        topic("none", { code: null, position: 0 }),
+      ],
+      NOW,
+      "code",
+    );
+    expect(grouped.active.map((t) => t.code ?? "(brak)")).toEqual([
+      "A",
+      "B",
+      "N01",
+      "001",
+      "2",
+      "03",
+      "299",
+      "(brak)",
+    ]);
+  });
+});
+
+describe("byCodeAsc", () => {
+  it("traktuje puste kody jak brak", () => {
+    const a = topic("a", { code: "  ", position: 2 });
+    const b = topic("b", { code: "A", position: 1 });
+    expect(byCodeAsc(a, b)).toBeGreaterThan(0);
   });
 });
 
