@@ -56,9 +56,6 @@ export function mapBoardError(message: string | undefined | null): string {
   if (m.includes("viewers must be board members")) {
     return "Osoby z dostępem do ukrytego pola muszą być na tablicy.";
   }
-  if (m.includes("restricted fields must be text")) {
-    return "Ukryte pole musi być tekstem.";
-  }
   if (m.includes("invalid")) return "Niepoprawna nazwa lub tytuł.";
   if (m.includes("failed to fetch") || m.includes("network")) {
     return "Brak połączenia z internetem.";

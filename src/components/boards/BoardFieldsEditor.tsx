@@ -10,10 +10,7 @@ import {
   type Board,
   type BoardField,
   type BoardFieldKind,
-  type BoardFieldVisibility,
 } from "@/lib/boards/types";
-
-type DraftKind = BoardFieldKind | "hidden";
 
 interface OptionDraft {
   id?: string;
@@ -23,25 +20,18 @@ interface OptionDraft {
 interface FieldDraft {
   id?: string;
   name: string;
-  draftKind: DraftKind;
+  kind: BoardFieldKind;
+  hidden: boolean;
   options: OptionDraft[];
   viewerIds: string[];
 }
 
-function toDraftKind(f: BoardField): DraftKind {
-  return f.visibility === "restricted" ? "hidden" : f.kind;
-}
-
-function fromDraftKind(k: DraftKind): { kind: BoardFieldKind; visibility: BoardFieldVisibility } {
-  if (k === "hidden") return { kind: "text", visibility: "restricted" };
-  return { kind: k, visibility: "all" };
-}
-
-function emptyDraft(draftKind: DraftKind = "text"): FieldDraft {
+function emptyDraft(kind: BoardFieldKind = "text"): FieldDraft {
   return {
     name: "",
-    draftKind,
-    options: draftKind === "single" || draftKind === "multi" ? [{ label: "" }, { label: "" }] : [],
+    kind,
+    hidden: false,
+    options: kind === "single" || kind === "multi" ? [{ label: "" }, { label: "" }] : [],
     viewerIds: [],
   };
 }
@@ -50,7 +40,8 @@ function fieldToDraft(f: BoardField): FieldDraft {
   return {
     id: f.id,
     name: f.name,
-    draftKind: toDraftKind(f),
+    kind: f.kind,
+    hidden: f.visibility === "restricted",
     options:
       f.kind === "single" || f.kind === "multi"
         ? f.options.map((o) => ({ id: o.id, label: o.label }))
@@ -59,12 +50,16 @@ function fieldToDraft(f: BoardField): FieldDraft {
   };
 }
 
-const KIND_LABEL: Record<DraftKind, string> = {
+const KIND_LABEL: Record<BoardFieldKind, string> = {
   single: "Jednokrotny wybór",
   multi: "Wielokrotny wybór",
   text: "Tekst",
-  hidden: "Ukryte (tekst)",
 };
+
+function fieldTypeLabel(f: BoardField): string {
+  const base = KIND_LABEL[f.kind];
+  return f.visibility === "restricted" ? `${base} · ukryte` : base;
+}
 
 /** Zarządzanie definicjami pól — tylko właściciel tablicy. */
 export function BoardFieldsEditor({ board }: { board: Board }) {
@@ -88,7 +83,7 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
     [board.members],
   );
 
-  const startCreate = (kind: DraftKind) => {
+  const startCreate = (kind: BoardFieldKind) => {
     if (fields.length >= BOARD_FIELDS_MAX) {
       setError(`Maksymalnie ${BOARD_FIELDS_MAX} pól na tablicę.`);
       return;
@@ -104,11 +99,10 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
       setError("Podaj nazwę pola.");
       return;
     }
-    const { kind, visibility } = fromDraftKind(editing.draftKind);
     let options = editing.options
       .map((o) => ({ id: o.id, label: o.label.trim() }))
       .filter((o) => o.label.length > 0);
-    if (kind === "single" || kind === "multi") {
+    if (editing.kind === "single" || editing.kind === "multi") {
       if (options.length < 1) {
         setError("Dodaj co najmniej jedną opcję.");
         return;
@@ -126,10 +120,10 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
       id: editing.id ?? null,
       boardId: board.id,
       name,
-      kind,
-      visibility,
+      kind: editing.kind,
+      visibility: editing.hidden ? "restricted" : "all",
       options,
-      viewerIds: visibility === "restricted" ? editing.viewerIds : [],
+      viewerIds: editing.hidden ? editing.viewerIds : [],
     });
     setBusy(false);
     if (res.error) setError(res.error);
@@ -175,7 +169,7 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
             >
               {f.name}
               <span className="ml-1.5 text-[10px] uppercase tracking-wide text-ink-faint">
-                {KIND_LABEL[toDraftKind(f)]}
+                {fieldTypeLabel(f)}
               </span>
             </button>
             <button
@@ -194,7 +188,7 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
       {editing && (
         <div className="mb-2 space-y-2 rounded-lg border border-line bg-surface-raised p-2.5">
           <div className="text-[11px] font-medium text-ink-faint">
-            {editing.id ? "Edycja pola" : "Nowe pole"} · {KIND_LABEL[editing.draftKind]}
+            {editing.id ? "Edycja pola" : "Nowe pole"} · {KIND_LABEL[editing.kind]}
           </div>
           <input
             value={editing.name}
@@ -204,7 +198,7 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
             className="w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
           />
 
-          {(editing.draftKind === "single" || editing.draftKind === "multi") && (
+          {(editing.kind === "single" || editing.kind === "multi") && (
             <div className="space-y-1">
               <div className="text-[10px] uppercase tracking-wide text-ink-faint">Opcje</div>
               {editing.options.map((o, i) => (
@@ -249,7 +243,17 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
             </div>
           )}
 
-          {editing.draftKind === "hidden" && (
+          <label className="flex cursor-pointer items-center gap-2 rounded-md px-0.5 py-1 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={editing.hidden}
+              onChange={(e) => setEditing({ ...editing, hidden: e.target.checked })}
+              className="accent-accent"
+            />
+            <span>Ukryte — tylko wybrane osoby (i właściciele)</span>
+          </label>
+
+          {editing.hidden && (
             <div>
               <div className="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">
                 Widoczne dla (oprócz właścicieli)
@@ -305,7 +309,7 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
 
       {!editing && (
         <div className="flex flex-wrap gap-1">
-          {(["single", "multi", "text", "hidden"] as DraftKind[]).map((k) => (
+          {(["single", "multi", "text"] as BoardFieldKind[]).map((k) => (
             <button
               key={k}
               type="button"

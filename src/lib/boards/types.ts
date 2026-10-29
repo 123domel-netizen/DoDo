@@ -13,7 +13,7 @@ export const BOARD_FIELD_TEXT_MAX = 200;
 export const BOARD_FIELDS_MAX = 20;
 export const BOARD_FIELD_OPTIONS_MAX = 20;
 
-/** Typ wartości pola tablicy. UI „ukryte” = text + visibility restricted. */
+/** Typ wartości pola tablicy. Ukrycie = visibility restricted (dowolny kind). */
 export type BoardFieldKind = "single" | "multi" | "text";
 export type BoardFieldVisibility = "all" | "restricted";
 
