@@ -107,10 +107,21 @@ begin
     '[]'::jsonb,
     array['00000000-0000-0000-0000-0000000000f3']::uuid[]
   );
+  -- Ukryty single (dowolny kind moze byc restricted)
+  perform public.board_upsert_field(
+    '00000000-0000-0000-0000-0000000000a5',
+    '00000000-0000-0000-0000-0000000000c9',
+    'Sekretny status',
+    'single',
+    'restricted',
+    null,
+    '[{"label":"Tak"},{"label":"Nie"}]'::jsonb,
+    array['00000000-0000-0000-0000-0000000000f3']::uuid[]
+  );
 
   select count(*) into v_n from public.get_board_fields('00000000-0000-0000-0000-0000000000c9');
-  if v_n <> 4 then
-    raise exception 'FAIL: owner should see 4 fields, got %', v_n;
+  if v_n <> 5 then
+    raise exception 'FAIL: owner should see 5 fields, got %', v_n;
   end if;
 
   select (o->>'id')::uuid into v_opt_a
@@ -155,7 +166,7 @@ declare
 begin
   select count(*) into v_n from public.get_board_fields('00000000-0000-0000-0000-0000000000c9');
   if v_n <> 3 then
-    raise exception 'FAIL: member should see 3 fields (no hidden), got %', v_n;
+    raise exception 'FAIL: member should see 3 public fields (no hidden), got %', v_n;
   end if;
 
   begin
@@ -216,8 +227,8 @@ declare
   v_fv jsonb;
 begin
   select count(*) into v_n from public.get_board_fields('00000000-0000-0000-0000-0000000000c9');
-  if v_n <> 4 then
-    raise exception 'FAIL: viewer should see 4 fields, got %', v_n;
+  if v_n <> 5 then
+    raise exception 'FAIL: viewer should see 5 fields, got %', v_n;
   end if;
 
   perform public.board_set_topic_field_value(
