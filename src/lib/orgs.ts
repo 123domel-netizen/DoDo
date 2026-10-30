@@ -11,6 +11,8 @@ export interface MyOrg {
   planEndsAt: string | null;
   invitesLocked: boolean;
   schedulesEnabled: boolean;
+  /** Czy na tablicach pokazywać/wpisywać miejscowość tematu. */
+  boardsTopicLocalityEnabled: boolean;
   createdAt: string;
   seatUsed: number;
   myRole: OrgMemberRole;
@@ -58,6 +60,7 @@ export interface OrgDetail {
   adminNote: string | null;
   invitesLocked: boolean;
   schedulesEnabled: boolean;
+  boardsTopicLocalityEnabled: boolean;
   createdAt: string;
   seatUsed: number;
   canInvite: boolean;
@@ -82,6 +85,7 @@ function mapMyOrg(row: Record<string, unknown>): MyOrg {
     planEndsAt: (row.plan_ends_at as string | null) ?? null,
     invitesLocked: Boolean(row.invites_locked),
     schedulesEnabled: Boolean(row.schedules_enabled),
+    boardsTopicLocalityEnabled: Boolean(row.boards_topic_locality_enabled),
     createdAt: row.created_at as string,
     seatUsed: Number(row.seat_used),
     myRole: row.my_role === "admin" ? "admin" : "member",
@@ -117,6 +121,7 @@ function mapDetail(raw: Record<string, unknown>): OrgDetail {
     adminNote: (raw.adminNote as string | null) ?? null,
     invitesLocked: Boolean(raw.invitesLocked),
     schedulesEnabled: Boolean(raw.schedulesEnabled),
+    boardsTopicLocalityEnabled: Boolean(raw.boardsTopicLocalityEnabled),
     createdAt: raw.createdAt as string,
     seatUsed: Number(raw.seatUsed),
     canInvite: Boolean(raw.canInvite),
@@ -407,6 +412,19 @@ export async function setOrgSchedulesEnabled(
     p_enabled: enabled,
   });
   if (error) return { error: error.message };
+  return {};
+}
+
+export async function setOrgBoardsTopicLocalityEnabled(
+  orgId: string,
+  enabled: boolean,
+): Promise<{ error?: string }> {
+  if (!cloudEnabled || !supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("org_set_boards_topic_locality_enabled", {
+    p_org_id: orgId,
+    p_enabled: enabled,
+  });
+  if (error) return { error: mapOrgRpcError(error.message) };
   return {};
 }
 

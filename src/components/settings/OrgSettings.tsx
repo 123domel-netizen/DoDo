@@ -7,6 +7,7 @@ import {
   inviteToOrg,
   removeOrgMember,
   renameOrg,
+  setOrgBoardsTopicLocalityEnabled,
   setOrgMemberDisplayName,
   transferOrgAdmin,
   type OrgDetail,
@@ -118,6 +119,20 @@ export function OrgSettings() {
       setRenaming(false);
       await refresh();
     }
+  };
+
+  const toggleLocality = async (enabled: boolean) => {
+    if (!orgId || !isAdmin) return;
+    if (detail?.boardsTopicLocalityEnabled === enabled) return;
+    setError(null);
+    setLoading(true);
+    const res = await setOrgBoardsTopicLocalityEnabled(orgId, enabled);
+    setLoading(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    await refresh();
   };
 
   const startEditMemberName = (userId: string, current: string | null) => {
@@ -426,6 +441,42 @@ export function OrgSettings() {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {isAdmin && (
+            <div className="rounded-lg border border-line bg-surface-raised p-2.5">
+              <div className="mb-1 text-[11px] font-medium text-ink">Tablice · miejscowość</div>
+              <p className="mb-2 text-[11px] leading-snug text-ink-faint">
+                Gdy włączone, przy dodawaniu tematu pojawia się pole miejscowości, a na liście
+                widać ją obok nazwy (np. „Artur Grugel — Chojnice”).
+              </p>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void toggleLocality(true)}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    detail.boardsTopicLocalityEnabled
+                      ? "bg-accent text-white"
+                      : "border border-line text-ink-light hover:bg-surface"
+                  }`}
+                >
+                  Włączona
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void toggleLocality(false)}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    !detail.boardsTopicLocalityEnabled
+                      ? "bg-accent text-white"
+                      : "border border-line text-ink-light hover:bg-surface"
+                  }`}
+                >
+                  Wyłączona
+                </button>
+              </div>
             </div>
           )}
 

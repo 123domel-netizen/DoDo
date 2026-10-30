@@ -35,6 +35,7 @@ describe("rowToField / field_values", () => {
       created_at: "2026-10-01T00:00:00Z",
       updated_at: "2026-10-01T00:00:00Z",
       code: null,
+      locality: "Chojnice",
       sort_order: 1,
       conversation_id: "c1",
       last_activity_at: "2026-10-01T00:00:00Z",
@@ -49,6 +50,7 @@ describe("rowToField / field_values", () => {
     });
     expect(t.fieldValues.f1).toEqual({ text: "ok", optionIds: [] });
     expect(t.fieldValues.f2?.optionIds).toEqual(["o1", "o2"]);
+    expect(t.locality).toBe("Chojnice");
   });
 
   it("puste field_values gdy brak kolumny", () => {

@@ -25,6 +25,7 @@ export function useTopicActions(topic: BoardTopic) {
     reopen: () => apply({ closed_at: null }),
     rename: (title: string) => apply({ title }),
     setCode: (code: string | null) => apply({ code }),
+    setLocality: (locality: string | null) => apply({ locality }),
     setDescription: (description: string) => apply({ description }),
   };
 }
