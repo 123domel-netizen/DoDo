@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Columns3, Filter, ListFilter } from "lucide-react";
 import type { BoardField } from "@/lib/boards/types";
 import type { BoardTopicViewPrefs, TopicFieldFilters, TopicViewSort } from "@/lib/boards/topicView";
+
+const PANEL_W = 288; // w-72
 
 export function BoardTopicViewMenu({
   fields,
@@ -13,7 +16,9 @@ export function BoardTopicViewMenu({
   onChange: (next: BoardTopicViewPrefs) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const choiceFields = fields.filter((f) => f.kind === "single" || f.kind === "multi");
   const filterCount = Object.values(prefs.filters).reduce((n, ids) => n + ids.length, 0);
   /** null = wszystkie kolumny (domyślne). */
@@ -22,10 +27,41 @@ export function BoardTopicViewMenu({
   const active =
     prefs.columnIds != null || filterCount > 0 || prefs.sort.mode !== "manual";
 
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current) {
+      setPos(null);
+      return;
+    }
+    const place = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const gap = 4;
+      let left = r.left;
+      left = Math.max(8, Math.min(left, window.innerWidth - PANEL_W - 8));
+      let top = r.bottom + gap;
+      const maxH = Math.min(window.innerHeight * 0.7, window.innerHeight - top - 8);
+      if (maxH < 160 && r.top > 200) {
+        top = Math.max(8, r.top - gap);
+        setPos({ top, left });
+        return;
+      }
+      setPos({ top, left });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -64,6 +100,115 @@ export function BoardTopicViewMenu({
     onChange({ ...prefs, filters });
   };
 
+  const panel =
+    open && pos
+      ? createPortal(
+          <div
+            ref={panelRef}
+            style={{ top: pos.top, left: pos.left, width: PANEL_W }}
+            className="fixed z-[80] max-h-[min(70vh,calc(100vh-1rem))] overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-overlay p-2.5 shadow-panel"
+          >
+            <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              <Columns3 size={11} /> Kolumny
+            </div>
+            <div className="mb-3 space-y-0.5">
+              {fields.map((f) => (
+                <label
+                  key={f.id}
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedColumns.has(f.id)}
+                    onChange={() => toggleColumn(f.id)}
+                    className="accent-accent"
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    {f.name}
+                    {f.visibility === "restricted" ? (
+                      <span className="ml-1 text-[10px] text-ink-faint">ukryte</span>
+                    ) : null}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {choiceFields.length > 0 && (
+              <>
+                <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                  <Filter size={11} /> Filtr
+                </div>
+                <div className="mb-3 space-y-2">
+                  {choiceFields.map((f) => (
+                    <div key={f.id}>
+                      <div className="mb-0.5 px-1.5 text-[11px] font-medium text-ink-light">{f.name}</div>
+                      <div className="space-y-0.5">
+                        {f.options.map((o) => (
+                          <label
+                            key={o.id}
+                            className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={(prefs.filters[f.id] ?? []).includes(o.id)}
+                              onChange={() => toggleFilterOption(f.id, o.id)}
+                              className="accent-accent"
+                            />
+                            <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              Sortuj według
+            </div>
+            <div className="space-y-0.5">
+              {(
+                [
+                  { mode: "manual" as const, label: "Ręczne (przeciąganie)" },
+                  { mode: "code" as const, label: "Kod" },
+                ] as const
+              ).map((opt) => (
+                <label
+                  key={opt.mode}
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+                >
+                  <input
+                    type="radio"
+                    name="topic-view-sort"
+                    checked={prefs.sort.mode === opt.mode}
+                    onChange={() => setSort({ mode: opt.mode })}
+                    className="accent-accent"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+              {fields.map((f) => (
+                <label
+                  key={f.id}
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+                >
+                  <input
+                    type="radio"
+                    name="topic-view-sort"
+                    checked={prefs.sort.mode === "field" && prefs.sort.fieldId === f.id}
+                    onChange={() => setSort({ mode: "field", fieldId: f.id })}
+                    className="accent-accent"
+                  />
+                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
@@ -84,107 +229,7 @@ export function BoardTopicViewMenu({
           </span>
         )}
       </button>
-
-      {open && (
-        <div className="absolute right-0 z-30 mt-1 w-72 max-h-[70vh] overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-overlay p-2.5 shadow-panel">
-          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-            <Columns3 size={11} /> Kolumny
-          </div>
-          <div className="mb-3 space-y-0.5">
-            {fields.map((f) => (
-              <label
-                key={f.id}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedColumns.has(f.id)}
-                  onChange={() => toggleColumn(f.id)}
-                  className="accent-accent"
-                />
-                <span className="min-w-0 flex-1 truncate">
-                  {f.name}
-                  {f.visibility === "restricted" ? (
-                    <span className="ml-1 text-[10px] text-ink-faint">ukryte</span>
-                  ) : null}
-                </span>
-              </label>
-            ))}
-          </div>
-
-          {choiceFields.length > 0 && (
-            <>
-              <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-                <Filter size={11} /> Filtr
-              </div>
-              <div className="mb-3 space-y-2">
-                {choiceFields.map((f) => (
-                  <div key={f.id}>
-                    <div className="mb-0.5 px-1.5 text-[11px] font-medium text-ink-light">{f.name}</div>
-                    <div className="space-y-0.5">
-                      {f.options.map((o) => (
-                        <label
-                          key={o.id}
-                          className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={(prefs.filters[f.id] ?? []).includes(o.id)}
-                            onChange={() => toggleFilterOption(f.id, o.id)}
-                            className="accent-accent"
-                          />
-                          <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-            Sortuj według
-          </div>
-          <div className="space-y-0.5">
-            {(
-              [
-                { mode: "manual" as const, label: "Ręczne (przeciąganie)" },
-                { mode: "code" as const, label: "Kod" },
-              ] as const
-            ).map((opt) => (
-              <label
-                key={opt.mode}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
-              >
-                <input
-                  type="radio"
-                  name="topic-view-sort"
-                  checked={prefs.sort.mode === opt.mode}
-                  onChange={() => setSort({ mode: opt.mode })}
-                  className="accent-accent"
-                />
-                {opt.label}
-              </label>
-            ))}
-            {fields.map((f) => (
-              <label
-                key={f.id}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
-              >
-                <input
-                  type="radio"
-                  name="topic-view-sort"
-                  checked={prefs.sort.mode === "field" && prefs.sort.fieldId === f.id}
-                  onChange={() => setSort({ mode: "field", fieldId: f.id })}
-                  className="accent-accent"
-                />
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+      {panel}
     </div>
   );
 }
