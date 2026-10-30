@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  ArrowDownAZ,
-  ChevronDown,
-  ChevronRight,
-  GripVertical,
-  NotebookPen,
-  X,
-} from "lucide-react";
-import { BoardTopicViewMenu } from "@/components/boards/BoardTopicViewMenu";
+import { ChevronDown, ChevronRight, NotebookPen, X } from "lucide-react";
 import { useBoardsNow } from "@/hooks/useBoards";
 import { fullOrderAfterSectionReorder, groupTopics } from "@/lib/boards/sections";
 import { navigateToBoards } from "@/lib/boards/runtime";
@@ -66,7 +58,7 @@ function Section({
   collapsible,
   open,
   onToggle,
-  headerExtra,
+  hideTitle,
   children,
 }: {
   title: string;
@@ -74,82 +66,35 @@ function Section({
   collapsible?: boolean;
   open: boolean;
   onToggle?: () => void;
-  headerExtra?: ReactNode;
+  /** Ukryj belkę tytułu (np. Tematy — kontrolki są w TopicColumnsHeader). */
+  hideTitle?: boolean;
   children: ReactNode;
 }) {
   if (count === 0) return null;
   return (
     <section className="mb-1.5">
-      {collapsible ? (
-        <div className="mb-0.5 flex items-center gap-1 px-2 py-0.5">
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-expanded={open}
-            className="flex min-w-0 flex-1 items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint transition hover:text-ink-light"
-          >
-            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {title} <span className="font-normal">({count})</span>
-          </button>
-          {headerExtra}
-        </div>
-      ) : (
-        <div className="mb-0.5 flex items-center gap-1 px-2 py-0.5">
-          <h3 className="min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-            {title}
-          </h3>
-          {headerExtra}
-        </div>
-      )}
+      {!hideTitle &&
+        (collapsible ? (
+          <div className="mb-0.5 flex items-center gap-1 px-2 py-0.5">
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={open}
+              className="flex min-w-0 flex-1 items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint transition hover:text-ink-light"
+            >
+              {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              {title} <span className="font-normal">({count})</span>
+            </button>
+          </div>
+        ) : (
+          <div className="mb-0.5 flex items-center gap-1 px-2 py-0.5">
+            <h3 className="min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              {title}
+            </h3>
+          </div>
+        ))}
       {open && <ul className="space-y-px">{children}</ul>}
     </section>
-  );
-}
-
-function SortModeChip({
-  prefs,
-  fields,
-  onChange,
-}: {
-  prefs: BoardTopicViewPrefs;
-  fields: BoardField[];
-  onChange: (next: BoardTopicViewPrefs) => void;
-}) {
-  const sort = prefs.sort;
-  const fieldName =
-    sort.mode === "field" ? fields.find((f) => f.id === sort.fieldId)?.name : null;
-
-  if (sort.mode === "field" && fieldName) {
-    return (
-      <button
-        type="button"
-        onClick={() => onChange({ ...prefs, sort: { mode: "manual" } })}
-        className="inline-flex max-w-[9rem] shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent transition hover:bg-surface-raised"
-        title={`Sort wg „${fieldName}”. Kliknij: kolejność ręczna`}
-      >
-        <ArrowDownAZ size={12} />
-        <span className="truncate">{fieldName}</span>
-      </button>
-    );
-  }
-
-  const isCode = sort.mode === "code";
-  return (
-    <button
-      type="button"
-      onClick={() =>
-        onChange({ ...prefs, sort: { mode: isCode ? "manual" : "code" } })
-      }
-      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint transition hover:bg-surface-raised hover:text-ink-light"
-      title={
-        isCode
-          ? "Wg kodu. Kliknij: ręczne + przeciąganie"
-          : "Ręczne (przeciąganie). Kliknij: sortuj wg kodu"
-      }
-    >
-      {isCode ? <ArrowDownAZ size={12} /> : <GripVertical size={12} />}
-      <span>{isCode ? "Kod" : "Ręczne"}</span>
-    </button>
   );
 }
 
@@ -365,13 +310,6 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     ));
   };
 
-  const headerExtra = (
-    <div className="flex shrink-0 items-center gap-0.5">
-      <SortModeChip prefs={prefs} fields={fields} onChange={changePrefs} />
-      <BoardTopicViewMenu fields={fields} prefs={prefs} onChange={changePrefs} />
-    </div>
-  );
-
   const loadingTopics = !topicsStatus || (topicsStatus === "loading" && topics.length === 0);
 
   return (
@@ -441,16 +379,16 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
           </div>
         ) : (
           <>
-            {columnFields.length > 0 && <TopicColumnsHeader fields={columnFields} />}
-            <Section
-              title="Przypięte"
-              count={grouped.pinned.length}
-              open
-              headerExtra={grouped.active.length === 0 ? headerExtra : undefined}
-            >
+            <TopicColumnsHeader
+              columnFields={columnFields}
+              allFields={fields}
+              prefs={prefs}
+              onChange={changePrefs}
+            />
+            <Section title="Przypięte" count={grouped.pinned.length} open>
               {renderRows(grouped.pinned, "pinned")}
             </Section>
-            <Section title="Tematy" count={grouped.active.length} open headerExtra={headerExtra}>
+            <Section title="Tematy" count={grouped.active.length} open hideTitle>
               {renderRows(grouped.active, "active")}
             </Section>
             <Section
