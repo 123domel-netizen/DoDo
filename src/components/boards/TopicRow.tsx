@@ -246,7 +246,6 @@ function TopicFieldCell({
       field={field}
       topic={topic}
       disabled={disabled}
-      panelClassName="absolute right-0 z-30 mt-0.5 w-44 rounded-lg border border-line bg-surface-overlay p-2 shadow-panel"
       trigger={({ summary, empty, disabled: d, toggle }) => (
         <button
           type="button"
@@ -422,7 +421,6 @@ export function TopicRow({
                   field={f}
                   topic={topic}
                   disabled={fieldDisabled}
-                  panelClassName="absolute left-0 z-30 mt-0.5 w-44 rounded-lg border border-line bg-surface-overlay p-2 shadow-panel"
                   trigger={({ summary, empty, disabled: d, toggle }) => (
                     <button
                       type="button"

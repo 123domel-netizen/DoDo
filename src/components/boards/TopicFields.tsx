@@ -28,7 +28,7 @@ export function TopicFields({ topic }: { topic: BoardTopic }) {
             field={f}
             topic={topic}
             disabled={pending}
-            panelClassName="absolute left-0 right-0 z-20 mt-0.5 rounded-lg border border-line bg-surface-overlay p-2 shadow-panel"
+            panelWidth={240}
             trigger={({ summary, empty, disabled, toggle }) => (
               <button
                 type="button"

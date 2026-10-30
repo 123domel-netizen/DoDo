@@ -146,9 +146,11 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
         Pola ({fields.length}/{BOARD_FIELDS_MAX})
       </div>
 
-      {fields.length === 0 && !editing && (
+      {!editing && (
         <p className="mb-2 text-xs text-ink-faint">
-          Pola pojawią się w każdym temacie na tej tablicy.
+          {fields.length === 0
+            ? "Dodaj pola — pojawią się jako kolumny na liście i w szczegółach tematu."
+            : "Wartości ustawiasz w wierszu listy (klik w komórkę) albo w otwartym temacie · Pola."}
         </p>
       )}
 

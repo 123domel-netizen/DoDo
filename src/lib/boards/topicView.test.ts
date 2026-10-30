@@ -4,6 +4,7 @@ import {
   compareByField,
   filterTopicsByFields,
   formatFieldCell,
+  resolveColumnFields,
   sanitizeViewPrefs,
 } from "@/lib/boards/topicView";
 
@@ -130,5 +131,27 @@ describe("sanitizeViewPrefs", () => {
     expect(prefs.columnIds).toEqual(["status"]);
     expect(prefs.filters).toEqual({ status: ["s1"] });
     expect(prefs.sort).toEqual({ mode: "manual" });
+  });
+
+  it("zachowuje null = wszystkie kolumny", () => {
+    expect(sanitizeViewPrefs({ columnIds: null, filters: {}, sort: { mode: "manual" } }, [status]).columnIds).toBe(
+      null,
+    );
+  });
+});
+
+describe("resolveColumnFields", () => {
+  it("null/[] = wszystkie pola; lista = podzbiór", () => {
+    expect(resolveColumnFields({ columnIds: null, filters: {}, sort: { mode: "manual" } }, [status, tags])).toEqual([
+      status,
+      tags,
+    ]);
+    expect(resolveColumnFields({ columnIds: [], filters: {}, sort: { mode: "manual" } }, [status, tags])).toEqual([
+      status,
+      tags,
+    ]);
+    expect(
+      resolveColumnFields({ columnIds: ["tags"], filters: {}, sort: { mode: "manual" } }, [status, tags]),
+    ).toEqual([tags]);
   });
 });

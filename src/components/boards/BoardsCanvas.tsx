@@ -11,6 +11,7 @@ import {
   EMPTY_VIEW_PREFS,
   filterTopicsByFields,
   readViewPrefs,
+  resolveColumnFields,
   sanitizeViewPrefs,
   writeViewPrefs,
   type BoardTopicViewPrefs,
@@ -176,10 +177,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   }, [filteredTopics, now, prefs.sort, fields]);
 
   // DnD tylko w trybie ręcznym bez filtrów (inaczej permutacja sekcji ≠ pełna lista).
-  const columnFields = useMemo(
-    () => prefs.columnIds.map((id) => fields.find((f) => f.id === id)).filter(Boolean) as BoardField[],
-    [prefs.columnIds, fields],
-  );
+  const columnFields = useMemo(() => resolveColumnFields(prefs, fields), [prefs, fields]);
   const chips = useMemo(
     () => activeFilterChips(prefs.filters, fields),
     [prefs.filters, fields],
