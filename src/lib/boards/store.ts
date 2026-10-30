@@ -10,6 +10,7 @@ import type { ChatMessage } from "@/lib/chat/types";
 import {
   normalizeBoardName,
   normalizeTopicCode,
+  normalizeTopicLocality,
   normalizeTopicTitle,
 } from "@/lib/boards/sections";
 import type {
@@ -72,7 +73,12 @@ export interface BoardsState {
   removeMember: (boardId: string, userId: string) => Promise<{ error?: string }>;
   archiveBoard: (boardId: string) => Promise<{ error?: string }>;
 
-  addTopic: (boardId: string, rawTitle: string, rawCode?: string) => string | null;
+  addTopic: (
+    boardId: string,
+    rawTitle: string,
+    rawCode?: string,
+    rawLocality?: string,
+  ) => string | null;
   retryTopic: (topicId: string) => void;
   discardLocalTopic: (topicId: string) => void;
   updateTopic: (topicId: string, patch: TopicPatch) => Promise<{ error?: string }>;
@@ -173,6 +179,7 @@ export function applyTopicPatchLocal(topic: BoardTopic, patch: TopicPatch): Boar
   if (patch.title !== undefined) next.title = patch.title;
   if (patch.description !== undefined) next.description = patch.description;
   if (patch.code !== undefined) next.code = patch.code;
+  if (patch.locality !== undefined) next.locality = patch.locality;
   if (patch.pinned_at !== undefined) next.pinnedAt = patch.pinned_at;
   if (patch.snoozed_until !== undefined) next.snoozedUntil = patch.snoozed_until;
   if (patch.closed_at !== undefined) next.closedAt = patch.closed_at;
@@ -232,19 +239,23 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
     }
     const conversationId = res.conversationId;
     addBoardConversationRef(conversationId, { boardId: topic.boardId, topicId: topic.id });
-    // Kod jest opcjonalny i idzie osobnym UPDATE (RPC create nie przyjmuje code).
-    if (topic.code) {
-      const codeRes = await api.updateTopic(topicId, { code: topic.code });
+    // Kod / miejscowość idą osobnym UPDATE (RPC create przyjmuje tylko title).
+    const extras: TopicPatch = {};
+    if (topic.code) extras.code = topic.code;
+    if (topic.locality) extras.locality = topic.locality;
+    if (Object.keys(extras).length > 0) {
+      const extraRes = await api.updateTopic(topicId, extras);
       if (get().generation !== gen) return;
-      if (codeRes.error) {
+      if (extraRes.error) {
         replaceTopic(topicId, (t) => ({
           ...t,
           conversationId,
-          code: null,
+          code: extras.code !== undefined ? null : t.code,
+          locality: extras.locality !== undefined ? null : t.locality,
           sendState: undefined,
           sendError: undefined,
         }));
-        get().setNotice(codeRes.error);
+        get().setNotice(extraRes.error);
         return;
       }
     }
@@ -434,11 +445,13 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       return res;
     },
 
-    addTopic: (boardId, rawTitle, rawCode) => {
+    addTopic: (boardId, rawTitle, rawCode, rawLocality) => {
       const { userId } = get();
       const title = normalizeTopicTitle(rawTitle);
       if (!userId || !title) return null;
       const code = rawCode !== undefined ? normalizeTopicCode(rawCode) : null;
+      const locality =
+        rawLocality !== undefined ? normalizeTopicLocality(rawLocality) : null;
       const now = new Date().toISOString();
       const existing = get().topicsByBoard[boardId] ?? [];
       const maxPos = existing.reduce((m, t) => Math.max(m, t.position), 0);
@@ -448,6 +461,7 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         title,
         description: "",
         code,
+        locality,
         position: maxPos + 1,
         createdBy: userId,
         pinnedAt: null,
@@ -505,6 +519,12 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       }
       if (patch.code !== undefined) {
         patch = { ...patch, code: patch.code === null ? null : normalizeTopicCode(patch.code) };
+      }
+      if (patch.locality !== undefined) {
+        patch = {
+          ...patch,
+          locality: patch.locality === null ? null : normalizeTopicLocality(patch.locality),
+        };
       }
       holdTopic(topicId);
       replaceTopic(topicId, (t) => applyTopicPatchLocal(t, patch));

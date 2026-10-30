@@ -23,6 +23,7 @@ import {
   deletedTopicItemIds,
   isSnoozed,
   normalizeTopicCode,
+  normalizeTopicLocality,
   visibleTopicItems,
 } from "@/lib/boards/sections";
 import {
@@ -35,6 +36,7 @@ import { useBoardsStore } from "@/lib/boards/store";
 import {
   TOPIC_CODE_MAX,
   TOPIC_DESCRIPTION_MAX,
+  TOPIC_LOCALITY_MAX,
   TOPIC_TITLE_MAX,
   type Board,
   type BoardTopic,
@@ -156,6 +158,59 @@ function EditableTitle({ topic }: { topic: BoardTopic }) {
       }}
       aria-label="Tytuł tematu"
       className="min-w-0 flex-1 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 text-base font-semibold text-ink outline-none"
+    />
+  );
+}
+
+function EditableLocality({ topic }: { topic: BoardTopic }) {
+  const actions = useTopicActions(topic);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(topic.locality ?? "");
+
+  useEffect(() => {
+    if (!editing) setValue(topic.locality ?? "");
+  }, [topic.locality, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const clean = normalizeTopicLocality(value);
+    if (clean !== topic.locality) void actions.setLocality(clean);
+    else setValue(topic.locality ?? "");
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className={`shrink-0 rounded-md px-1 py-0.5 text-sm transition hover:bg-surface-raised ${
+          topic.locality ? "text-ink-faint" : "text-ink-faint/70"
+        }`}
+        title="Kliknij, aby ustawić miejscowość"
+      >
+        {topic.locality ? `— ${topic.locality}` : "— miejscowość"}
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      value={value}
+      maxLength={TOPIC_LOCALITY_MAX}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          setValue(topic.locality ?? "");
+          setEditing(false);
+        }
+      }}
+      placeholder="Miejscowość"
+      aria-label="Miejscowość tematu"
+      className="w-36 shrink-0 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 text-sm text-ink outline-none"
     />
   );
 }
@@ -319,6 +374,10 @@ function TopicDetailBody({
   const deleteTopic = useBoardsStore((s) => s.deleteTopic);
   const setNotice = useBoardsStore((s) => s.setNotice);
   const actions = useTopicActions(topic);
+  const activeOrgId = useStore((s) => s.activeOrgId);
+  const myOrgs = useStore((s) => s.myOrgs);
+  const localityEnabled =
+    myOrgs.find((o) => o.id === activeOrgId)?.boardsTopicLocalityEnabled ?? false;
   const topicId = topic.id;
   const conversationId = topic.conversationId;
 
@@ -363,6 +422,7 @@ function TopicDetailBody({
         <div className="flex items-start gap-1">
           <EditableCode topic={topic} />
           <EditableTitle topic={topic} />
+          {localityEnabled && <EditableLocality topic={topic} />}
         </div>
         <div className="mb-1 px-1 text-[11px] text-ink-faint">
           {author ? `${author} · ` : ""}

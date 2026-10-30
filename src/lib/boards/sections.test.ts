@@ -12,6 +12,7 @@ import {
   nextSnoozeWake,
   normalizeBoardName,
   normalizeTopicCode,
+  normalizeTopicLocality,
   normalizeTopicTitle,
   shouldReopenOnComment,
   snoozeUntilForDate,
@@ -32,6 +33,7 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     title: `Temat ${id}`,
     description: "",
     code: null,
+    locality: null,
     position: 1,
     createdBy: "u1",
     pinnedAt: null,
@@ -307,6 +309,12 @@ describe("kod tematu i widoczne powiązania", () => {
     expect(normalizeTopicCode("  N01  ")).toBe("N01");
     expect(normalizeTopicCode("   ")).toBeNull();
     expect(normalizeTopicCode("x".repeat(20))?.length).toBe(16);
+  });
+
+  it("normalizeTopicLocality: trim, max 80, pusty → null", () => {
+    expect(normalizeTopicLocality("  Chojnice  ")).toBe("Chojnice");
+    expect(normalizeTopicLocality("   ")).toBeNull();
+    expect(normalizeTopicLocality("x".repeat(100))?.length).toBe(80);
   });
 
   it("visibleTopicItems pomija brakujące i soft-delete; deletedTopicItemIds tylko tombstone", () => {

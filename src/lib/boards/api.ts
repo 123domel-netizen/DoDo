@@ -152,12 +152,14 @@ export function rowToField(row: Row): BoardField {
 export function rowToTopic(row: Row): BoardTopic {
   const items = (row.items as Row[] | null) ?? [];
   const codeRaw = row.code;
+  const localityRaw = row.locality;
   return {
     id: row.id as string,
     boardId: row.board_id as string,
     title: (row.title as string) ?? "",
     description: (row.description as string) ?? "",
     code: typeof codeRaw === "string" && codeRaw.length > 0 ? codeRaw : null,
+    locality: typeof localityRaw === "string" && localityRaw.length > 0 ? localityRaw : null,
     position: Number(row.sort_order ?? row.position ?? 0),
     createdBy: (row.created_by as string | null) ?? null,
     pinnedAt: (row.pinned_at as string | null) ?? null,
@@ -277,6 +279,7 @@ export interface TopicPatch {
   title?: string;
   description?: string;
   code?: string | null;
+  locality?: string | null;
   pinned_at?: string | null;
   snoozed_until?: string | null;
   closed_at?: string | null;

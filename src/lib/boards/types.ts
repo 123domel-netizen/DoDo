@@ -7,6 +7,7 @@ export const BOARD_NAME_MAX = 120;
 export const TOPIC_TITLE_MAX = 200;
 export const TOPIC_DESCRIPTION_MAX = 4000;
 export const TOPIC_CODE_MAX = 16;
+export const TOPIC_LOCALITY_MAX = 80;
 export const BOARD_FIELD_NAME_MAX = 80;
 export const BOARD_FIELD_OPTION_MAX = 80;
 export const BOARD_FIELD_TEXT_MAX = 200;
@@ -86,6 +87,8 @@ export interface BoardTopic {
   description: string;
   /** Ręczny identyfikator (np. N01); null gdy brak. */
   code: string | null;
+  /** Miejscowość (gdy zespół ma włączoną opcję); null gdy brak. */
+  locality: string | null;
   /** Kolejność w tablicy (1..n); DnD w sekcjach przypięte/aktywne. */
   position: number;
   createdBy: string | null;

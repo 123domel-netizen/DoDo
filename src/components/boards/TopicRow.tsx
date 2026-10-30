@@ -429,6 +429,9 @@ export function TopicRow({
                 }`}
               >
                 {topic.title}
+                {topic.locality ? (
+                  <span className="font-normal text-ink-faint"> — {topic.locality}</span>
+                ) : null}
               </span>
             </button>
 

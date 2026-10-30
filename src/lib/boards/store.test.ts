@@ -53,6 +53,7 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     title: `Temat ${id}`,
     description: "",
     code: null,
+    locality: null,
     position: 1,
     createdBy: "u1",
     pinnedAt: null,
@@ -139,11 +140,21 @@ describe("addTopic — szybkie dodawanie", () => {
   it("opcjonalny kod jest na liście od razu i zapisywany po create", async () => {
     api.createTopic.mockResolvedValue({ conversationId: "conv-code" });
     api.updateTopic.mockResolvedValue({});
-    const id = state().addTopic("b1", "Temat z kodem", "  N01  ");
-    expect(topicsOf()[0]).toMatchObject({ id, title: "Temat z kodem", code: "N01", sendState: "pending" });
+    const id = state().addTopic("b1", "Temat z kodem", "  N01  ", "  Chojnice ");
+    expect(topicsOf()[0]).toMatchObject({
+      id,
+      title: "Temat z kodem",
+      code: "N01",
+      locality: "Chojnice",
+      sendState: "pending",
+    });
     await flush();
-    expect(api.updateTopic).toHaveBeenCalledWith(id, { code: "N01" });
-    expect(topicsOf()[0]).toMatchObject({ code: "N01", conversationId: "conv-code" });
+    expect(api.updateTopic).toHaveBeenCalledWith(id, { code: "N01", locality: "Chojnice" });
+    expect(topicsOf()[0]).toMatchObject({
+      code: "N01",
+      locality: "Chojnice",
+      conversationId: "conv-code",
+    });
   });
 
   it("kilka tematów pod rząd zapisuje po kolei, w kolejności wpisywania", async () => {

@@ -3,6 +3,7 @@ import { pl } from "date-fns/locale";
 import {
   BOARD_NAME_MAX,
   TOPIC_CODE_MAX,
+  TOPIC_LOCALITY_MAX,
   TOPIC_TITLE_MAX,
   type Board,
   type BoardTopic,
@@ -230,6 +231,13 @@ export function normalizeTopicCode(raw: string): string | null {
   const t = raw.replace(/\s+/g, " ").trim();
   if (!t) return null;
   return t.slice(0, TOPIC_CODE_MAX);
+}
+
+/** Miejscowo?? tematu: trim, max 80; pusty ? null. */
+export function normalizeTopicLocality(raw: string): string | null {
+  const t = raw.replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  return t.slice(0, TOPIC_LOCALITY_MAX);
 }
 
 /** Linki do zada?/wydarze?, kt�re nadal istniej? i nie s? soft-delete. */
