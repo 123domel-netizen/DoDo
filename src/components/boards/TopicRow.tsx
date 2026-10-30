@@ -1,13 +1,18 @@
-import type { DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import {
   AlertCircle,
+  ArrowDownAZ,
   CheckSquare,
   CalendarClock,
+  Filter,
   GripVertical,
   MessageSquare,
   Pin,
   PinOff,
 } from "lucide-react";
+import { BoardTopicViewMenu } from "@/components/boards/BoardTopicViewMenu";
+import { TopicFieldEditor } from "@/components/boards/TopicFieldEditor";
+import { useTopicActions } from "@/components/boards/topicActions";
 import {
   effectiveUnread,
   commentPreviewText,
@@ -16,9 +21,8 @@ import {
 } from "@/lib/boards/sections";
 import { useBoardsStore } from "@/lib/boards/store";
 import type { Board, BoardField, BoardTopic, TopicSection } from "@/lib/boards/types";
-import { formatFieldCell } from "@/lib/boards/topicView";
+import type { BoardTopicViewPrefs, TopicFieldFilters } from "@/lib/boards/topicView";
 import { fmt } from "@/lib/format";
-import { useTopicActions } from "@/components/boards/topicActions";
 import { useStore } from "@/state/store";
 
 /** Stała szerokość komórki pola — nagłówek i wiersze muszą się zgadzać. */
@@ -37,9 +41,168 @@ function authorLabel(board: Board, userId: string | undefined, myUserId: string 
   return name ? name.split(/\s+/)[0]! : "";
 }
 
-/** Nagłówek kolumn pól — wyrównany z komórkami w TopicRow. */
-export function TopicColumnsHeader({ fields }: { fields: BoardField[] }) {
-  if (fields.length === 0) return null;
+export function SortModeChip({
+  prefs,
+  fields,
+  onChange,
+}: {
+  prefs: BoardTopicViewPrefs;
+  fields: BoardField[];
+  onChange: (next: BoardTopicViewPrefs) => void;
+}) {
+  const sort = prefs.sort;
+  const fieldName =
+    sort.mode === "field" ? fields.find((f) => f.id === sort.fieldId)?.name : null;
+
+  if (sort.mode === "field" && fieldName) {
+    return (
+      <button
+        type="button"
+        onClick={() => onChange({ ...prefs, sort: { mode: "manual" } })}
+        className="inline-flex max-w-[9rem] shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent transition hover:bg-surface-raised"
+        title={`Sort wg „${fieldName}”. Kliknij: kolejność ręczna`}
+      >
+        <ArrowDownAZ size={12} />
+        <span className="truncate">{fieldName}</span>
+      </button>
+    );
+  }
+
+  const isCode = sort.mode === "code";
+  return (
+    <button
+      type="button"
+      onClick={() => onChange({ ...prefs, sort: { mode: isCode ? "manual" : "code" } })}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint transition hover:bg-surface-raised hover:text-ink-light"
+      title={
+        isCode
+          ? "Wg kodu. Kliknij: ręczne + przeciąganie"
+          : "Ręczne (przeciąganie). Kliknij: sortuj wg kodu"
+      }
+    >
+      {isCode ? <ArrowDownAZ size={12} /> : <GripVertical size={12} />}
+      <span>{isCode ? "Kod" : "Ręczne"}</span>
+    </button>
+  );
+}
+
+function toggleFilterOption(
+  prefs: BoardTopicViewPrefs,
+  fieldId: string,
+  optionId: string,
+): BoardTopicViewPrefs {
+  const filters: TopicFieldFilters = { ...prefs.filters };
+  const cur = new Set(filters[fieldId] ?? []);
+  if (cur.has(optionId)) cur.delete(optionId);
+  else cur.add(optionId);
+  if (cur.size === 0) delete filters[fieldId];
+  else filters[fieldId] = [...cur];
+  return { ...prefs, filters };
+}
+
+function ColumnFilterHeader({
+  field,
+  prefs,
+  onChange,
+}: {
+  field: BoardField;
+  prefs: BoardTopicViewPrefs;
+  onChange: (next: BoardTopicViewPrefs) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const canFilter = field.kind === "single" || field.kind === "multi";
+  const selected = prefs.filters[field.id] ?? [];
+  const active = selected.length > 0;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (!canFilter) {
+    return (
+      <span
+        className={`${TOPIC_FIELD_COL_CLASS} font-semibold uppercase tracking-wide text-ink-faint`}
+        title={field.name}
+      >
+        {field.name}
+      </span>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className={`relative ${TOPIC_FIELD_COL_CLASS}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex w-full items-center gap-0.5 truncate text-left font-semibold uppercase tracking-wide transition hover:text-ink-light ${
+          active ? "text-accent" : "text-ink-faint"
+        }`}
+        title={active ? `${field.name} · filtr aktywny` : `Filtr: ${field.name}`}
+        aria-expanded={open}
+      >
+        <span className="min-w-0 flex-1 truncate">{field.name}</span>
+        <Filter size={9} className={`shrink-0 ${active ? "opacity-100" : "opacity-50"}`} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-30 mt-1 w-44 max-h-48 overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-overlay p-1.5 shadow-panel">
+          {field.options.map((o) => (
+            <label
+              key={o.id}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(o.id)}
+                onChange={() => onChange(toggleFilterOption(prefs, field.id, o.id))}
+                className="accent-accent"
+              />
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+            </label>
+          ))}
+          {active && (
+            <button
+              type="button"
+              onClick={() => {
+                const filters = { ...prefs.filters };
+                delete filters[field.id];
+                onChange({ ...prefs, filters });
+              }}
+              className="mt-0.5 w-full rounded-md px-1.5 py-1 text-left text-[11px] text-ink-faint hover:bg-surface-raised hover:text-ink-light"
+            >
+              Wyczyść
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Sticky belka: Temat + sort/widok + nagłówki kolumn z filtrami. */
+export function TopicColumnsHeader({
+  columnFields,
+  allFields,
+  prefs,
+  onChange,
+}: {
+  columnFields: BoardField[];
+  allFields: BoardField[];
+  prefs: BoardTopicViewPrefs;
+  onChange: (next: BoardTopicViewPrefs) => void;
+}) {
   return (
     <div
       className="sticky top-0 z-10 mb-0.5 flex items-center gap-0.5 border-b border-line/60 bg-surface px-0 py-1"
@@ -48,24 +211,60 @@ export function TopicColumnsHeader({ fields }: { fields: BoardField[] }) {
       <span className={TOPIC_DRAG_GUTTER} aria-hidden />
       <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5">
         <span className={TOPIC_META_DOT} aria-hidden />
-        <span className="min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-          Temat
-        </span>
-        <span className="hidden items-center sm:flex">
-          {fields.map((f) => (
-            <span
-              key={f.id}
-              className={`${TOPIC_FIELD_COL_CLASS} font-semibold uppercase tracking-wide text-ink-faint`}
-              title={f.name}
-            >
-              {f.name}
-            </span>
-          ))}
-        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            Temat
+          </span>
+          <SortModeChip prefs={prefs} fields={allFields} onChange={onChange} />
+          <BoardTopicViewMenu fields={allFields} prefs={prefs} onChange={onChange} />
+        </div>
+        {columnFields.length > 0 && (
+          <span className="hidden items-center sm:flex">
+            {columnFields.map((f) => (
+              <ColumnFilterHeader key={f.id} field={f} prefs={prefs} onChange={onChange} />
+            ))}
+          </span>
+        )}
         <span className={TOPIC_TIME_SLOT} aria-hidden />
       </div>
       <span className={TOPIC_PIN_GUTTER} aria-hidden />
     </div>
+  );
+}
+
+function TopicFieldCell({
+  field,
+  topic,
+  disabled,
+}: {
+  field: BoardField;
+  topic: BoardTopic;
+  disabled?: boolean;
+}) {
+  return (
+    <TopicFieldEditor
+      field={field}
+      topic={topic}
+      disabled={disabled}
+      panelClassName="absolute right-0 z-30 mt-0.5 w-44 rounded-lg border border-line bg-surface-overlay p-2 shadow-panel"
+      trigger={({ summary, empty, disabled: d, toggle }) => (
+        <button
+          type="button"
+          disabled={d}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggle();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className={`${TOPIC_FIELD_COL_CLASS} rounded text-left transition hover:bg-surface-raised hover:text-ink disabled:cursor-default disabled:opacity-50 ${
+            empty ? "text-ink-faint" : "text-ink-light"
+          }`}
+          title={`${field.name}: ${summary}`}
+        >
+          {summary}
+        </button>
+      )}
+    />
   );
 }
 
@@ -116,6 +315,7 @@ export function TopicRow({
   const eventCount = visible.filter((i) => i.itemType === "event").length;
   const muted = section === "closed" || section === "snoozed";
   const showPin = !local && section !== "closed";
+  const fieldDisabled = local;
 
   const handleDragStart = (e: DragEvent) => {
     if (!canDrag || local) return;
@@ -151,7 +351,6 @@ export function TopicRow({
           : undefined
       }
     >
-      {/* Stały gutter — z uchwytem albo pusty, żeby kolumny nie skakały. */}
       {canDrag && !local ? (
         <button
           type="button"
@@ -168,13 +367,7 @@ export function TopicRow({
         <span className={TOPIC_DRAG_GUTTER} aria-hidden />
       )}
 
-      <button
-        type="button"
-        disabled={local && topic.sendState === "pending" && !topic.conversationId}
-        onClick={() => onOpen(topic)}
-        className="flex min-w-0 flex-1 items-start gap-1.5 rounded-md px-1.5 py-1 text-left disabled:cursor-default"
-        aria-current={active ? "true" : undefined}
-      >
+      <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1">
         <span className={`mt-0.5 ${TOPIC_META_DOT}`}>
           {unread > 0 ? (
             <span className="block h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
@@ -182,9 +375,16 @@ export function TopicRow({
             <Pin size={10} className="text-accent" aria-hidden />
           ) : null}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5">
-            <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={local && topic.sendState === "pending" && !topic.conversationId}
+              onClick={() => onOpen(topic)}
+              className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-md text-left disabled:cursor-default"
+              aria-current={active ? "true" : undefined}
+            >
               {topic.code && (
                 <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-faint">
                   {topic.code}
@@ -197,90 +397,108 @@ export function TopicRow({
               >
                 {topic.title}
               </span>
-            </span>
+            </button>
+
             {columnFields.length > 0 && (
-              <span className="hidden items-center sm:flex">
-                {columnFields.map((f) => {
-                  const cell = formatFieldCell(topic, f);
-                  return (
-                    <span
-                      key={f.id}
-                      className={`${TOPIC_FIELD_COL_CLASS} text-ink-faint`}
-                      title={`${f.name}: ${cell}`}
-                    >
-                      {cell}
-                    </span>
-                  );
-                })}
-              </span>
+              <div className="hidden items-center sm:flex">
+                {columnFields.map((f) => (
+                  <TopicFieldCell key={f.id} field={f} topic={topic} disabled={fieldDisabled} />
+                ))}
+              </div>
             )}
+
             {!local ? (
               <span className={TOPIC_TIME_SLOT}>{formatTopicTime(topic.lastActivityAt, now)}</span>
             ) : (
               <span className={TOPIC_TIME_SLOT} aria-hidden />
             )}
-          </span>
+          </div>
+
           {columnFields.length > 0 && (
-            <span className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 sm:hidden">
-              {columnFields.map((f) => {
-                const cell = formatFieldCell(topic, f);
-                return (
-                  <span key={f.id} className="text-[10px] text-ink-faint" title={`${f.name}: ${cell}`}>
-                    <span className="opacity-60">{f.name}:</span> {cell}
-                  </span>
-                );
-              })}
-            </span>
+            <div className="mt-0.5 flex flex-wrap gap-x-1 gap-y-0.5 sm:hidden">
+              {columnFields.map((f) => (
+                <TopicFieldEditor
+                  key={f.id}
+                  field={f}
+                  topic={topic}
+                  disabled={fieldDisabled}
+                  panelClassName="absolute left-0 z-30 mt-0.5 w-44 rounded-lg border border-line bg-surface-overlay p-2 shadow-panel"
+                  trigger={({ summary, empty, disabled: d, toggle }) => (
+                    <button
+                      type="button"
+                      disabled={d}
+                      onClick={toggle}
+                      className={`rounded px-1 py-0.5 text-[10px] transition hover:bg-surface-raised disabled:opacity-50 ${
+                        empty ? "text-ink-faint" : "text-ink-light"
+                      }`}
+                      title={`${f.name}: ${summary}`}
+                    >
+                      <span className="opacity-60">{f.name}:</span> {summary}
+                    </button>
+                  )}
+                />
+              ))}
+            </div>
           )}
-          {topic.sendState === "pending" ? (
-            <span className="block truncate text-[11px] text-ink-faint">Zapisywanie…</span>
-          ) : topic.sendState === "failed" ? (
-            <span className="flex items-center gap-1 truncate text-[11px] text-red-400">
-              <AlertCircle size={11} />
-              {topic.sendError ?? "Nie udało się zapisać tematu."}
-            </span>
-          ) : (
-            <span className="flex items-center gap-1.5 text-[11px] leading-snug text-ink-faint">
-              <span className="min-w-0 flex-1 truncate">
-                {section === "snoozed" && topic.snoozedUntil
-                  ? `Wróci ${fmt(topic.snoozedUntil, "EEE d MMM")}`
-                  : preview
-                    ? `${who ? `${who}: ` : ""}${preview}`
-                    : "Brak komentarzy"}
+
+          <button
+            type="button"
+            disabled={local && topic.sendState === "pending" && !topic.conversationId}
+            onClick={() => onOpen(topic)}
+            className="mt-0.5 flex w-full items-center gap-1.5 text-left text-[11px] leading-snug text-ink-faint disabled:cursor-default"
+          >
+            {topic.sendState === "pending" ? (
+              <span className="block truncate">Zapisywanie…</span>
+            ) : topic.sendState === "failed" ? (
+              <span className="flex items-center gap-1 truncate text-red-400">
+                <AlertCircle size={11} />
+                {topic.sendError ?? "Nie udało się zapisać tematu."}
               </span>
-              {taskCount > 0 && (
-                <span className="flex shrink-0 items-center gap-0.5" title="Powiązane zadania">
-                  <CheckSquare size={10} />
-                  {taskCount}
+            ) : (
+              <>
+                <span className="min-w-0 flex-1 truncate">
+                  {section === "snoozed" && topic.snoozedUntil
+                    ? `Wróci ${fmt(topic.snoozedUntil, "EEE d MMM")}`
+                    : preview
+                      ? `${who ? `${who}: ` : ""}${preview}`
+                      : "Brak komentarzy"}
                 </span>
-              )}
-              {eventCount > 0 && (
-                <span className="flex shrink-0 items-center gap-0.5" title="Powiązane wydarzenia">
-                  <CalendarClock size={10} />
-                  {eventCount}
-                </span>
-              )}
-              {topic.commentCount > 0 && (
-                <span className="flex shrink-0 items-center gap-0.5" title="Komentarze">
-                  <MessageSquare size={10} />
-                  {topic.commentCount}
-                </span>
-              )}
-              {unread > 0 && (
-                <span
-                  className="flex h-3.5 min-w-[0.875rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold leading-none text-white"
-                  aria-label={`${unread} nieprzeczytanych`}
-                >
-                  {unread > 99 ? "99+" : unread}
-                </span>
-              )}
-            </span>
-          )}
-        </span>
-      </button>
+                {taskCount > 0 && (
+                  <span className="flex shrink-0 items-center gap-0.5" title="Powiązane zadania">
+                    <CheckSquare size={10} />
+                    {taskCount}
+                  </span>
+                )}
+                {eventCount > 0 && (
+                  <span className="flex shrink-0 items-center gap-0.5" title="Powiązane wydarzenia">
+                    <CalendarClock size={10} />
+                    {eventCount}
+                  </span>
+                )}
+                {topic.commentCount > 0 && (
+                  <span className="flex shrink-0 items-center gap-0.5" title="Komentarze">
+                    <MessageSquare size={10} />
+                    {topic.commentCount}
+                  </span>
+                )}
+                {unread > 0 && (
+                  <span
+                    className="flex h-3.5 min-w-[0.875rem] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold leading-none text-white"
+                    aria-label={`${unread} nieprzeczytanych`}
+                  >
+                    {unread > 99 ? "99+" : unread}
+                  </span>
+                )}
+              </>
+            )}
+          </button>
+        </div>
+      </div>
 
       {topic.sendState === "failed" ? (
-        <div className={`${TOPIC_PIN_GUTTER} flex flex-col items-center justify-center gap-0.5 pr-0.5 text-[10px]`}>
+        <div
+          className={`${TOPIC_PIN_GUTTER} flex flex-col items-center justify-center gap-0.5 pr-0.5 text-[10px]`}
+        >
           <button
             type="button"
             onClick={() => retryTopic(topic.id)}
