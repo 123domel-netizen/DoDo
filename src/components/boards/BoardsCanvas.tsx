@@ -24,7 +24,7 @@ import {
   type BoardTopicViewPrefs,
 } from "@/lib/boards/topicView";
 import { QuickAddTopic } from "@/components/boards/QuickAddTopic";
-import { TopicRow } from "@/components/boards/TopicRow";
+import { TopicColumnsHeader, TopicRow } from "@/components/boards/TopicRow";
 import { CreateBoardDialog } from "@/components/boards/BoardFormDialog";
 
 const EMPTY_TOPICS: BoardTopic[] = [];
@@ -441,6 +441,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
           </div>
         ) : (
           <>
+            {columnFields.length > 0 && <TopicColumnsHeader fields={columnFields} />}
             <Section
               title="Przypięte"
               count={grouped.pinned.length}
