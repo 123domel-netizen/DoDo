@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   ArrowDownAZ,
@@ -110,15 +111,41 @@ function ColumnFilterHeader({
   onChange: (next: BoardTopicViewPrefs) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const canFilter = field.kind === "single" || field.kind === "multi";
   const selected = prefs.filters[field.id] ?? [];
   const active = selected.length > 0;
+  const panelW = 176;
+
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current) {
+      setPos(null);
+      return;
+    }
+    const place = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (!r) return;
+      let left = r.right - panelW;
+      left = Math.max(8, Math.min(left, window.innerWidth - panelW - 8));
+      setPos({ top: r.bottom + 4, left });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -156,37 +183,44 @@ function ColumnFilterHeader({
         <span className="min-w-0 flex-1 truncate">{field.name}</span>
         <Filter size={9} className={`shrink-0 ${active ? "opacity-100" : "opacity-50"}`} />
       </button>
-      {open && (
-        <div className="absolute right-0 z-30 mt-1 w-44 max-h-48 overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-overlay p-1.5 shadow-panel">
-          {field.options.map((o) => (
-            <label
-              key={o.id}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(o.id)}
-                onChange={() => onChange(toggleFilterOption(prefs, field.id, o.id))}
-                className="accent-accent"
-              />
-              <span className="min-w-0 flex-1 truncate">{o.label}</span>
-            </label>
-          ))}
-          {active && (
-            <button
-              type="button"
-              onClick={() => {
-                const filters = { ...prefs.filters };
-                delete filters[field.id];
-                onChange({ ...prefs, filters });
-              }}
-              className="mt-0.5 w-full rounded-md px-1.5 py-1 text-left text-[11px] text-ink-faint hover:bg-surface-raised hover:text-ink-light"
-            >
-              Wyczyść
-            </button>
-          )}
-        </div>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={{ top: pos.top, left: pos.left, width: panelW }}
+            className="fixed z-[80] max-h-48 overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-overlay p-1.5 shadow-panel"
+          >
+            {field.options.map((o) => (
+              <label
+                key={o.id}
+                className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(o.id)}
+                  onChange={() => onChange(toggleFilterOption(prefs, field.id, o.id))}
+                  className="accent-accent"
+                />
+                <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              </label>
+            ))}
+            {active && (
+              <button
+                type="button"
+                onClick={() => {
+                  const filters = { ...prefs.filters };
+                  delete filters[field.id];
+                  onChange({ ...prefs, filters });
+                }}
+                className="mt-0.5 w-full rounded-md px-1.5 py-1 text-left text-[11px] text-ink-faint hover:bg-surface-raised hover:text-ink-light"
+              >
+                Wyczyść
+              </button>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
