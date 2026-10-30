@@ -19,6 +19,7 @@ alter table public.board_topics
 create or replace function public.board_topics_normalize_locality()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   if new.locality is not null then
@@ -175,7 +176,12 @@ begin
 end;
 $$;
 
+revoke all on function public.org_my_orgs() from public;
+revoke all on function public.org_my_orgs() from anon;
 grant execute on function public.org_my_orgs() to authenticated;
+
+revoke all on function public.org_get_detail(uuid) from public;
+revoke all on function public.org_get_detail(uuid) from anon;
 grant execute on function public.org_get_detail(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
