@@ -10,16 +10,34 @@ export type TopicViewSort =
   | { mode: "field"; fieldId: string };
 
 export interface BoardTopicViewPrefs {
-  columnIds: string[];
+  /**
+   * Kolumny na liście tematów.
+   * `null` = wszystkie widoczne pola (domyślne — bez klikania w Widok).
+   * `[]` = żadna kolumna; `[...]` = wybrany podzbiór.
+   */
+  columnIds: string[] | null;
   filters: TopicFieldFilters;
   sort: TopicViewSort;
 }
 
 export const EMPTY_VIEW_PREFS: BoardTopicViewPrefs = {
-  columnIds: [],
+  columnIds: null,
   filters: {},
   sort: { mode: "manual" },
 };
+
+/**
+ * Pola do wyświetlenia jako kolumny.
+ * `null` / `[]` = wszystkie (domyślne + migracja starych prefs bez kolumn).
+ */
+export function resolveColumnFields(
+  prefs: BoardTopicViewPrefs,
+  fields: BoardField[],
+): BoardField[] {
+  if (prefs.columnIds == null || prefs.columnIds.length === 0) return fields;
+  const byId = new Map(fields.map((f) => [f.id, f]));
+  return prefs.columnIds.map((id) => byId.get(id)).filter((f): f is BoardField => Boolean(f));
+}
 
 export function viewStorageKey(boardId: string): string {
   return `dodo.boards.view.${boardId}`;
@@ -37,9 +55,7 @@ export function readViewPrefs(boardId: string): BoardTopicViewPrefs {
     const parsed = JSON.parse(raw) as Partial<BoardTopicViewPrefs>;
     const sort = parseSort(parsed.sort);
     return {
-      columnIds: Array.isArray(parsed.columnIds)
-        ? parsed.columnIds.filter((id): id is string => typeof id === "string")
-        : [],
+      columnIds: parseColumnIds(parsed.columnIds),
       filters: normalizeFilters(parsed.filters),
       sort,
     };
@@ -64,6 +80,13 @@ function parseSort(raw: unknown): TopicViewSort {
     return { mode: "field", fieldId: s.fieldId };
   }
   return { mode: "manual" };
+}
+
+/** Brak / null → wszystkie kolumny; tablica → jawny wybór (może być pusta). */
+function parseColumnIds(raw: unknown): string[] | null {
+  if (raw == null) return null;
+  if (!Array.isArray(raw)) return null;
+  return raw.filter((id): id is string => typeof id === "string");
 }
 
 function normalizeFilters(raw: unknown): TopicFieldFilters {
@@ -139,7 +162,8 @@ export function sanitizeViewPrefs(
   fields: BoardField[],
 ): BoardTopicViewPrefs {
   const ids = new Set(fields.map((f) => f.id));
-  const columnIds = prefs.columnIds.filter((id) => ids.has(id));
+  const columnIds =
+    prefs.columnIds == null ? null : prefs.columnIds.filter((id) => ids.has(id));
   const filters: TopicFieldFilters = {};
   for (const [fieldId, optionIds] of Object.entries(prefs.filters)) {
     const field = fields.find((f) => f.id === fieldId);

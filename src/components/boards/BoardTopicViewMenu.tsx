@@ -16,8 +16,11 @@ export function BoardTopicViewMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const choiceFields = fields.filter((f) => f.kind === "single" || f.kind === "multi");
   const filterCount = Object.values(prefs.filters).reduce((n, ids) => n + ids.length, 0);
+  /** null = wszystkie kolumny (domyślne). */
+  const selectedColumns = new Set(prefs.columnIds ?? fields.map((f) => f.id));
+  const columnCount = selectedColumns.size;
   const active =
-    prefs.columnIds.length > 0 || filterCount > 0 || prefs.sort.mode !== "manual";
+    prefs.columnIds != null || filterCount > 0 || prefs.sort.mode !== "manual";
 
   useEffect(() => {
     if (!open) return;
@@ -40,9 +43,14 @@ export function BoardTopicViewMenu({
   const setSort = (sort: TopicViewSort) => onChange({ ...prefs, sort });
 
   const toggleColumn = (fieldId: string) => {
-    const set = new Set(prefs.columnIds);
+    const set = new Set(selectedColumns);
     if (set.has(fieldId)) set.delete(fieldId);
     else set.add(fieldId);
+    // 0 albo wszystkie → null (domyślne „pokaż wszystkie”).
+    if (set.size === 0 || set.size === fields.length) {
+      onChange({ ...prefs, columnIds: null });
+      return;
+    }
     onChange({ ...prefs, columnIds: fields.map((f) => f.id).filter((id) => set.has(id)) });
   };
 
@@ -70,9 +78,9 @@ export function BoardTopicViewMenu({
       >
         <ListFilter size={12} />
         <span>Widok</span>
-        {(prefs.columnIds.length > 0 || filterCount > 0) && (
+        {(columnCount > 0 || filterCount > 0) && (
           <span className="rounded bg-accent/15 px-1 text-[9px] tabular-nums text-accent">
-            {prefs.columnIds.length + filterCount}
+            {columnCount + filterCount}
           </span>
         )}
       </button>
@@ -90,7 +98,7 @@ export function BoardTopicViewMenu({
               >
                 <input
                   type="checkbox"
-                  checked={prefs.columnIds.includes(f.id)}
+                  checked={selectedColumns.has(f.id)}
                   onChange={() => toggleColumn(f.id)}
                   className="accent-accent"
                 />
