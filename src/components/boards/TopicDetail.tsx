@@ -9,6 +9,7 @@ import {
   ListPlus,
   Pin,
   PinOff,
+  Plus,
   RotateCcw,
   Trash2,
   X,
@@ -379,11 +380,19 @@ function TopicDetailBody({
 }) {
   const myUserId = useBoardsStore((s) => s.userId);
   const deleteTopic = useBoardsStore((s) => s.deleteTopic);
+  const addTopic = useBoardsStore((s) => s.addTopic);
   const setNotice = useBoardsStore((s) => s.setNotice);
   const actions = useTopicActions(topic);
   const localityEnabled = board.localityEnabled;
   const topicId = topic.id;
   const conversationId = topic.conversationId;
+  const isRoot = !topic.parentId;
+  const parentTitle = useBoardsStore((s) => {
+    if (!topic.parentId) return null;
+    return (
+      (s.topicsByBoard[topic.boardId] ?? []).find((t) => t.id === topic.parentId)?.title ?? null
+    );
+  });
 
   // Oglądany temat: komentarze od razu „przeczytane”, wiadomości załadowane.
   useEffect(() => {
@@ -429,9 +438,15 @@ function TopicDetailBody({
           {localityEnabled && <EditableLocality topic={topic} />}
         </div>
         <div className="mb-1 px-1 text-[11px] text-ink-faint">
+          {parentTitle ? (
+            <>
+              Podtemat · {parentTitle}
+              {" · "}
+            </>
+          ) : null}
           {author ? `${author} · ` : ""}
           {fmt(topic.createdAt, "d MMM yyyy, HH:mm")}
-          {topic.pinnedAt && !closed ? " · przypięty" : ""}
+          {topic.pinnedAt && !closed && isRoot ? " · przypięty" : ""}
           {snoozed && topic.snoozedUntil && !closed
             ? ` · odłożony do ${fmt(topic.snoozedUntil, "d MMM")}`
             : ""}
@@ -454,10 +469,23 @@ function TopicDetailBody({
                 variant="action"
               />
             )}
-            {!closed && (
+            {!closed && isRoot && (
               <button type="button" onClick={() => void actions.togglePin()} className={actionBtn}>
                 {topic.pinnedAt ? <PinOff size={13} /> : <Pin size={13} />}
                 {topic.pinnedAt ? "Odepnij" : "Przypnij"}
+              </button>
+            )}
+            {!closed && isRoot && (
+              <button
+                type="button"
+                onClick={() => {
+                  const id = addTopic(board.id, "Nowy podtemat", undefined, undefined, topic.id);
+                  if (id) navigateToBoards({ boardId: board.id, topicId: id }, mobile ? "push" : "replace");
+                }}
+                className={actionBtn}
+              >
+                <Plus size={13} />
+                Podtemat
               </button>
             )}
             {!closed &&

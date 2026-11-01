@@ -5,11 +5,14 @@ import {
   ArrowDownAZ,
   CheckSquare,
   CalendarClock,
+  ChevronDown,
+  ChevronRight,
   Filter,
   GripVertical,
   MessageSquare,
   Pin,
   PinOff,
+  Plus,
 } from "lucide-react";
 import { BoardTopicViewMenu } from "@/components/boards/BoardTopicViewMenu";
 import { TopicFieldEditor } from "@/components/boards/TopicFieldEditor";
@@ -446,6 +449,12 @@ export function TopicRow({
   onDragEnd,
   dragging,
   dropTarget,
+  depth = 0,
+  childCount = 0,
+  expanded = true,
+  onToggleExpand,
+  onAddChild,
+  parentLabel,
 }: {
   topic: BoardTopic;
   board: Board;
@@ -461,6 +470,13 @@ export function TopicRow({
   onDragEnd?: () => void;
   dragging?: boolean;
   dropTarget?: boolean;
+  depth?: 0 | 1;
+  childCount?: number;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+  onAddChild?: () => void;
+  /** Gdy podtemat w sekcji odłożone/zamknięte — nazwa rodzica. */
+  parentLabel?: string | null;
 }) {
   const myUserId = useBoardsStore((s) => s.userId);
   const readAt = useBoardsStore((s) => s.locallyReadAt[topic.id]);
@@ -477,8 +493,10 @@ export function TopicRow({
   const taskCount = visible.filter((i) => i.itemType === "task").length;
   const eventCount = visible.filter((i) => i.itemType === "event").length;
   const muted = section === "closed" || section === "snoozed";
-  const showPin = !local && section !== "closed";
+  const isChild = depth > 0 || Boolean(topic.parentId);
+  const showPin = !local && section !== "closed" && !isChild;
   const fieldDisabled = local;
+  const canExpand = !isChild && childCount > 0 && Boolean(onToggleExpand);
 
   const handleDragStart = (e: DragEvent) => {
     if (!canDrag || local) return;
@@ -530,14 +548,36 @@ export function TopicRow({
         <span className={TOPIC_DRAG_GUTTER} aria-hidden />
       )}
 
-      <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1">
-        <span className={`mt-0.5 ${TOPIC_META_DOT}`}>
-          {unread > 0 ? (
-            <span className="block h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
-          ) : topic.pinnedAt && section === "pinned" ? (
-            <Pin size={10} className="text-accent" aria-hidden />
-          ) : null}
-        </span>
+      <div
+        className={`flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1 ${
+          isChild ? "pl-5 sm:pl-7" : ""
+        }`}
+      >
+        {canExpand ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExpand?.();
+            }}
+            className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+            aria-expanded={expanded}
+            aria-label={expanded ? "Zwiń podtematy" : "Rozwiń podtematy"}
+            title={expanded ? "Zwiń" : `Rozwiń (${childCount})`}
+          >
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+        ) : (
+          <span className={`mt-0.5 ${TOPIC_META_DOT}`}>
+            {unread > 0 ? (
+              <span className="block h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
+            ) : topic.pinnedAt && section === "pinned" ? (
+              <Pin size={10} className="text-accent" aria-hidden />
+            ) : isChild ? (
+              <span className="block h-1 w-1 rounded-full bg-line-strong" aria-hidden />
+            ) : null}
+          </span>
+        )}
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -548,6 +588,14 @@ export function TopicRow({
               className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-md text-left disabled:cursor-default"
               aria-current={active ? "true" : undefined}
             >
+              {parentLabel ? (
+                <span className="shrink-0 truncate text-[11px] text-ink-faint">{parentLabel}</span>
+              ) : null}
+              {parentLabel ? (
+                <span className="shrink-0 text-[11px] text-ink-faint" aria-hidden>
+                  /
+                </span>
+              ) : null}
               {topic.code && (
                 <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-faint">
                   {topic.code}
@@ -585,6 +633,21 @@ export function TopicRow({
                 ))}
               </div>
             )}
+
+            {!isChild && onAddChild && !local ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddChild();
+                }}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-faint opacity-0 transition hover:bg-surface-raised hover:text-ink group-hover:opacity-100 focus-visible:opacity-100"
+                aria-label="Dodaj podtemat"
+                title="Dodaj podtemat"
+              >
+                <Plus size={13} />
+              </button>
+            ) : null}
 
             {!local ? (
               <span className={TOPIC_TIME_SLOT}>{formatTopicTime(topic.lastActivityAt, now)}</span>

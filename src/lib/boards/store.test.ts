@@ -55,6 +55,7 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     description: "",
     code: null,
     locality: null,
+    parentId: null,
     position: 1,
     createdBy: "u1",
     pinnedAt: null,
@@ -311,8 +312,12 @@ describe("reorderTopics", () => {
   it("optymistycznie przestawia position i woła RPC", async () => {
     const res = await state().reorderTopics("b1", ["t2", "t1"]);
     expect(res.error).toBeUndefined();
-    expect(api.reorderTopics).toHaveBeenCalledWith("b1", ["t2", "t1"]);
-    expect(topicsOf().map((t) => ({ id: t.id, position: t.position }))).toEqual([
+    expect(api.reorderTopics).toHaveBeenCalledWith("b1", ["t2", "t1"], null);
+    expect(
+      [...topicsOf()]
+        .sort((a, b) => a.position - b.position)
+        .map((t) => ({ id: t.id, position: t.position })),
+    ).toEqual([
       { id: "t2", position: 1 },
       { id: "t1", position: 2 },
     ]);
@@ -322,7 +327,11 @@ describe("reorderTopics", () => {
     api.reorderTopics.mockResolvedValue({ error: "Nie udało się zmienić kolejności tematów." });
     const res = await state().reorderTopics("b1", ["t2", "t1"]);
     expect(res.error).toBeTruthy();
-    expect(topicsOf().map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(
+      [...topicsOf()]
+        .sort((a, b) => a.position - b.position)
+        .map((t) => t.id),
+    ).toEqual(["t1", "t2"]);
   });
 });
 

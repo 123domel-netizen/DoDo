@@ -82,11 +82,17 @@ export interface BoardsState {
     rawTitle: string,
     rawCode?: string,
     rawLocality?: string,
+    parentId?: string | null,
   ) => string | null;
   retryTopic: (topicId: string) => void;
   discardLocalTopic: (topicId: string) => void;
   updateTopic: (topicId: string, patch: TopicPatch) => Promise<{ error?: string }>;
-  reorderTopics: (boardId: string, orderedIds: string[]) => Promise<{ error?: string }>;
+  /** Kolejność wśród rodzeństwa (`parentId` null = tematy główne). */
+  reorderTopics: (
+    boardId: string,
+    orderedIds: string[],
+    parentId?: string | null,
+  ) => Promise<{ error?: string }>;
   deleteTopic: (topicId: string) => Promise<{ error?: string }>;
   markTopicRead: (topicId: string) => void;
   linkItem: (input: {
@@ -231,6 +237,7 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       id: topic.id,
       boardId: topic.boardId,
       title: topic.title,
+      parentId: topic.parentId,
     });
     if (get().generation !== gen) return;
     if (res.error || !res.conversationId) {
@@ -461,16 +468,23 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       return res;
     },
 
-    addTopic: (boardId, rawTitle, rawCode, rawLocality) => {
+    addTopic: (boardId, rawTitle, rawCode, rawLocality, parentId) => {
       const { userId } = get();
       const title = normalizeTopicTitle(rawTitle);
       if (!userId || !title) return null;
       const code = rawCode !== undefined ? normalizeTopicCode(rawCode) : null;
       const locality =
         rawLocality !== undefined ? normalizeTopicLocality(rawLocality) : null;
+      const parent =
+        typeof parentId === "string" && parentId.length > 0 ? parentId : null;
+      if (parent) {
+        const parentTopic = (get().topicsByBoard[boardId] ?? []).find((t) => t.id === parent);
+        if (!parentTopic || parentTopic.parentId) return null;
+      }
       const now = new Date().toISOString();
       const existing = get().topicsByBoard[boardId] ?? [];
-      const maxPos = existing.reduce((m, t) => Math.max(m, t.position), 0);
+      const siblings = existing.filter((t) => t.parentId === parent);
+      const maxPos = siblings.reduce((m, t) => Math.max(m, t.position), 0);
       const topic: BoardTopic = {
         id: uid(),
         boardId,
@@ -478,6 +492,7 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         description: "",
         code,
         locality,
+        parentId: parent,
         position: maxPos + 1,
         createdBy: userId,
         pinnedAt: null,
@@ -554,26 +569,31 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       return {};
     },
 
-    reorderTopics: async (boardId, orderedIds) => {
+    reorderTopics: async (boardId, orderedIds, parentId = null) => {
       const before = get().topicsByBoard[boardId] ?? [];
       if (before.length === 0) return {};
-      if (orderedIds.length !== before.length) {
+      const parent = parentId ?? null;
+      const siblings = before.filter((t) => t.parentId === parent);
+      if (orderedIds.length !== siblings.length) {
         return { error: "Nie udało się zmienić kolejności tematów." };
       }
-      const byId = new Map(before.map((t) => [t.id, t]));
+      const byId = new Map(siblings.map((t) => [t.id, t]));
       if (orderedIds.some((id) => !byId.has(id))) {
         return { error: "Nie udało się zmienić kolejności tematów." };
       }
-      const next = orderedIds.map((id, i) => {
-        const t = byId.get(id)!;
-        return t.position === i + 1 ? t : { ...t, position: i + 1 };
+      const posById = new Map(orderedIds.map((id, i) => [id, i + 1]));
+      const next = before.map((t) => {
+        if (t.parentId !== parent) return t;
+        const pos = posById.get(t.id);
+        if (pos == null || t.position === pos) return t;
+        return { ...t, position: pos };
       });
-      for (const t of next) holdTopic(t.id);
+      for (const id of orderedIds) holdTopic(id);
       set((s) => ({
         topicsByBoard: { ...s.topicsByBoard, [boardId]: next },
       }));
-      const res = await api.reorderTopics(boardId, orderedIds);
-      for (const t of next) releaseTopic(t.id);
+      const res = await api.reorderTopics(boardId, orderedIds, parent);
+      for (const id of orderedIds) releaseTopic(id);
       if (res.error) {
         set((s) => ({
           topicsByBoard: { ...s.topicsByBoard, [boardId]: before },
@@ -596,7 +616,10 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       set((s) => ({
         topicsByBoard: {
           ...s.topicsByBoard,
-          [t.boardId]: (s.topicsByBoard[t.boardId] ?? []).filter((x) => x.id !== topicId),
+          // CASCADE w DB usuwa też podtematy — lokalnie też.
+          [t.boardId]: (s.topicsByBoard[t.boardId] ?? []).filter(
+            (x) => x.id !== topicId && x.parentId !== topicId,
+          ),
         },
         activeTopicId: s.activeTopicId === topicId ? null : s.activeTopicId,
       }));

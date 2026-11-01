@@ -161,6 +161,7 @@ export function rowToTopic(row: Row): BoardTopic {
     description: (row.description as string) ?? "",
     code: typeof codeRaw === "string" && codeRaw.length > 0 ? codeRaw : null,
     locality: typeof localityRaw === "string" && localityRaw.length > 0 ? localityRaw : null,
+    parentId: (row.parent_id as string | null) ?? null,
     position: Number(row.sort_order ?? row.position ?? 0),
     createdBy: (row.created_by as string | null) ?? null,
     pinnedAt: (row.pinned_at as string | null) ?? null,
@@ -277,12 +278,14 @@ export async function createTopic(input: {
   id: string;
   boardId: string;
   title: string;
+  parentId?: string | null;
 }): Promise<{ conversationId?: string; error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { data, error } = await supabase.rpc("board_create_topic", {
     p_id: input.id,
     p_board_id: input.boardId,
     p_title: input.title,
+    p_parent_id: input.parentId ?? null,
   });
   if (error) return { error: mapBoardError(error.message) };
   return { conversationId: data as string };
@@ -301,11 +304,13 @@ export interface TopicPatch {
 export async function reorderTopics(
   boardId: string,
   topicIds: string[],
+  parentId: string | null = null,
 ): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { error } = await supabase.rpc("board_reorder_topics", {
     p_board_id: boardId,
     p_topic_ids: topicIds,
+    p_parent_id: parentId,
   });
   return error ? { error: mapBoardError(error.message) } : {};
 }

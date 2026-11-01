@@ -51,6 +51,7 @@ describe("rowToField / field_values", () => {
     expect(t.fieldValues.f1).toEqual({ text: "ok", optionIds: [] });
     expect(t.fieldValues.f2?.optionIds).toEqual(["o1", "o2"]);
     expect(t.locality).toBe("Chojnice");
+    expect(t.parentId).toBeNull();
   });
 
   it("puste field_values gdy brak kolumny", () => {
