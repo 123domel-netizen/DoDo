@@ -4,6 +4,7 @@ import {
   defaultBoardName,
   deletedTopicItemIds,
   effectiveUnread,
+  ensureTopicParents,
   formatTopicTime,
   fullOrderAfterSectionReorder,
   byCodeAsc,
@@ -14,6 +15,7 @@ import {
   normalizeTopicCode,
   normalizeTopicLocality,
   normalizeTopicTitle,
+  openChildrenOf,
   shouldReopenOnComment,
   snoozeUntilForDate,
   snoozeUntilForPreset,
@@ -34,6 +36,7 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     description: "",
     code: null,
     locality: null,
+    parentId: null,
     position: 1,
     createdBy: "u1",
     pinnedAt: null,
@@ -145,6 +148,28 @@ describe("groupTopics", () => {
     ];
     const g = groupTopics(all, NOW);
     expect(g.pinned.length + g.active.length + g.snoozed.length + g.closed.length).toBe(4);
+  });
+
+  it("pomija otwarte podtematy w pinned/active (są pod rodzicem)", () => {
+    const all = [
+      topic("root", { position: 1 }),
+      topic("child", { position: 1, parentId: "root" }),
+      topic("closed-child", {
+        position: 2,
+        parentId: "root",
+        closedAt: "2026-10-03T00:00:00Z",
+      }),
+    ];
+    const g = groupTopics(all, NOW);
+    expect(g.active.map((t) => t.id)).toEqual(["root"]);
+    expect(g.closed.map((t) => t.id)).toEqual(["closed-child"]);
+    expect(openChildrenOf("root", all, NOW).map((t) => t.id)).toEqual(["child"]);
+  });
+
+  it("ensureTopicParents dokłada brakującego rodzica", () => {
+    const all = [topic("root"), topic("child", { parentId: "root" })];
+    const filtered = [all[1]!];
+    expect(ensureTopicParents(filtered, all).map((t) => t.id).sort()).toEqual(["child", "root"]);
   });
 
   it("sort=code: litery przed cyframi, naturalnie, bez kodu na końcu", () => {

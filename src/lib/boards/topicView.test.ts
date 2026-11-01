@@ -18,6 +18,7 @@ function topic(id: string, over: Partial<BoardTopic> = {}): BoardTopic {
     description: "",
     code: null,
     locality: null,
+    parentId: null,
     position: Number(id.replace(/\D/g, "") || 0),
     createdBy: "u1",
     pinnedAt: null,

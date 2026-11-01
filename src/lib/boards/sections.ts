@@ -91,14 +91,22 @@ export function byCodeAsc(a: BoardTopic, b: BoardTopic): number {
   return byPositionAsc(a, b);
 }
 
-/** Podzia? i sortowanie: przypi?te/aktywne wg trybu; od?o?one/zamkni?te jak wcze?niej. */
+/**
+ * Podzia? i sortowanie.
+ * W pinned/active: tylko tematy g?ówne (podtematy renderowane pod rodzicem).
+ * Od?o?one/zamkni?te: wszystkie (podtematy te?, ?eby da?o si? je znale??).
+ */
 export function groupTopics(
   topics: BoardTopic[],
   now: Date,
   sort: TopicListSort = "manual",
 ): GroupedTopics {
   const out: GroupedTopics = { pinned: [], active: [], snoozed: [], closed: [] };
-  for (const t of topics) out[topicSection(t, now)].push(t);
+  for (const t of topics) {
+    const section = topicSection(t, now);
+    if ((section === "pinned" || section === "active") && t.parentId) continue;
+    out[section].push(t);
+  }
   const listSort = sort === "code" ? byCodeAsc : byPositionAsc;
   out.pinned.sort(listSort);
   out.active.sort(listSort);
@@ -114,9 +122,47 @@ export function groupTopics(
 }
 
 /**
- * Pe?na kolejno?? tablicy po DnD w jednej sekcji: pinned + active (z now? kolejno?ci?
- * w tej sekcji) + snoozed/closed bez zmian wzgl?dnych. Przy niespï¿½jnej permutacji
- * zwraca obecn? kolejno?? (no-op dla RPC).
+ * Otwarte podtematy rodzica (nie zamkni?te / nie od?o?one), posortowane.
+ * Przypi?cie dziecka jest ignorowane ? i tak l?duje pod rodzicem.
+ */
+export function openChildrenOf(
+  parentId: string,
+  topics: BoardTopic[],
+  now: Date,
+  sort: TopicListSort = "manual",
+): BoardTopic[] {
+  const listSort = sort === "code" ? byCodeAsc : byPositionAsc;
+  return topics
+    .filter((t) => {
+      if (t.parentId !== parentId) return false;
+      if (t.closedAt) return false;
+      if (isSnoozed(t, now)) return false;
+      return true;
+    })
+    .sort(listSort);
+}
+
+/** Po filtrach: do??cz rodziców, ?eby pasuj?ce podtematy da?o si? zagnie?dzi?. */
+export function ensureTopicParents(
+  filtered: BoardTopic[],
+  all: BoardTopic[],
+): BoardTopic[] {
+  const ids = new Set(filtered.map((t) => t.id));
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const out = [...filtered];
+  for (const t of filtered) {
+    if (!t.parentId || ids.has(t.parentId)) continue;
+    const parent = byId.get(t.parentId);
+    if (!parent) continue;
+    out.push(parent);
+    ids.add(parent.id);
+  }
+  return out;
+}
+
+/**
+ * Pe?na kolejno?? tematów g?ównych po DnD w sekcji pinned/active.
+ * Podtematy nie wchodz? do permutacji korzeni.
  */
 export function fullOrderAfterSectionReorder(
   topics: BoardTopic[],
@@ -124,7 +170,8 @@ export function fullOrderAfterSectionReorder(
   section: "pinned" | "active",
   reorderedSectionIds: string[],
 ): string[] {
-  const grouped = groupTopics(topics, now);
+  const roots = topics.filter((t) => !t.parentId);
+  const grouped = groupTopics(roots, now);
   const currentOrder = () =>
     [...grouped.pinned, ...grouped.active, ...grouped.snoozed, ...grouped.closed].map((t) => t.id);
 
@@ -137,7 +184,7 @@ export function fullOrderAfterSectionReorder(
     return currentOrder();
   }
 
-  const byId = new Map(topics.map((t) => [t.id, t]));
+  const byId = new Map(roots.map((t) => [t.id, t]));
   const reordered = reorderedSectionIds
     .map((id) => byId.get(id))
     .filter((t): t is BoardTopic => Boolean(t));

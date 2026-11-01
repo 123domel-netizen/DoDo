@@ -4,10 +4,23 @@ import { useBoardsStore } from "@/lib/boards/store";
 import { TOPIC_CODE_MAX, TOPIC_LOCALITY_MAX, TOPIC_TITLE_MAX } from "@/lib/boards/types";
 
 /**
- * Szybkie dodawanie tematów: opcjonalny kod + tytuł (+ miejscowość gdy włączona na tablicy).
- * Enter dodaje temat, pola się czyszczą i fokus wraca do tytułu.
+ * Szybkie dodawanie tematów / podtematów: opcjonalny kod + tytuł (+ miejscowość).
+ * Enter dodaje, pola się czyszczą i fokus wraca do tytułu.
  */
-export function QuickAddTopic({ boardId, autoFocus = false }: { boardId: string; autoFocus?: boolean }) {
+export function QuickAddTopic({
+  boardId,
+  parentId = null,
+  autoFocus = false,
+  compact = false,
+  onAdded,
+}: {
+  boardId: string;
+  parentId?: string | null;
+  autoFocus?: boolean;
+  /** Węższy wariant pod listą podtematów. */
+  compact?: boolean;
+  onAdded?: () => void;
+}) {
   const addTopic = useBoardsStore((s) => s.addTopic);
   const localityEnabled = useBoardsStore(
     (s) => s.boards.find((b) => b.id === boardId)?.localityEnabled ?? false,
@@ -20,31 +33,45 @@ export function QuickAddTopic({ boardId, autoFocus = false }: { boardId: string;
 
   const submit = () => {
     if (!title.trim()) return;
-    addTopic(boardId, title, code, localityEnabled ? locality : undefined);
+    const id = addTopic(
+      boardId,
+      title,
+      code,
+      localityEnabled ? locality : undefined,
+      parentId,
+    );
+    if (!id) return;
     setCode("");
     setTitle("");
     setLocality("");
+    onAdded?.();
     titleRef.current?.focus();
   };
 
+  const isChild = Boolean(parentId);
+
   return (
     <form
-      className="flex items-center gap-1.5 rounded-xl border border-line bg-surface-raised px-2.5 py-1.5 transition focus-within:border-accent"
+      className={`flex items-center gap-1.5 transition focus-within:border-accent ${
+        compact
+          ? "rounded-lg border border-line/70 bg-surface-raised/60 px-2 py-1"
+          : "rounded-xl border border-line bg-surface-raised px-2.5 py-1.5"
+      }`}
       onSubmit={(e) => {
         e.preventDefault();
         submit();
       }}
     >
-      <Plus size={15} className="shrink-0 text-ink-faint" aria-hidden />
+      <Plus size={compact ? 13 : 15} className="shrink-0 text-ink-faint" aria-hidden />
       <input
         value={code}
         maxLength={TOPIC_CODE_MAX}
         enterKeyHint="next"
         onChange={(e) => setCode(e.target.value)}
         placeholder="Kod"
-        aria-label="Kod tematu (opcjonalny)"
+        aria-label={isChild ? "Kod podtematu (opcjonalny)" : "Kod tematu (opcjonalny)"}
         title="Opcjonalny kod, np. N01"
-        className="w-14 shrink-0 bg-transparent py-1 font-mono text-sm tabular-nums text-ink outline-none placeholder:font-sans placeholder:text-ink-faint"
+        className={`${compact ? "w-10" : "w-14"} shrink-0 bg-transparent py-1 font-mono text-sm tabular-nums text-ink outline-none placeholder:font-sans placeholder:text-ink-faint`}
       />
       <span className="h-4 w-px shrink-0 bg-line" aria-hidden />
       <input
@@ -57,8 +84,8 @@ export function QuickAddTopic({ boardId, autoFocus = false }: { boardId: string;
         onKeyDown={(e) => {
           if (e.key === "Enter" && e.nativeEvent.isComposing) e.preventDefault();
         }}
-        placeholder="Dodaj temat…"
-        aria-label="Dodaj temat"
+        placeholder={isChild ? "Dodaj podtemat…" : "Dodaj temat…"}
+        aria-label={isChild ? "Dodaj podtemat" : "Dodaj temat"}
         className="min-w-0 flex-1 bg-transparent py-1 text-sm text-ink outline-none placeholder:text-ink-faint"
       />
       {localityEnabled && (
@@ -72,7 +99,7 @@ export function QuickAddTopic({ boardId, autoFocus = false }: { boardId: string;
             placeholder="Miejscowość"
             aria-label="Miejscowość (opcjonalna)"
             title="Opcjonalna miejscowość"
-            className="w-[7.5rem] shrink-0 bg-transparent py-1 text-sm text-ink outline-none placeholder:text-ink-faint sm:w-36"
+            className={`${compact ? "w-24" : "w-[7.5rem] sm:w-36"} shrink-0 bg-transparent py-1 text-sm text-ink outline-none placeholder:text-ink-faint`}
           />
         </>
       )}

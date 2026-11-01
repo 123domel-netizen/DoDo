@@ -91,7 +91,9 @@ export interface BoardTopic {
   code: string | null;
   /** Miejscowość (gdy zespół ma włączoną opcję); null gdy brak. */
   locality: string | null;
-  /** Kolejność w tablicy (1..n); DnD w sekcjach przypięte/aktywne. */
+  /** Rodzic (tylko 1 poziom); null = temat główny. */
+  parentId: string | null;
+  /** Kolejność wśród rodzeństwa (1..n); DnD w sekcjach / pod rodzicem. */
   position: number;
   createdBy: string | null;
   pinnedAt: string | null;

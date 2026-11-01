@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, NotebookPen, X } from "lucide-react";
 import { useBoardsNow } from "@/hooks/useBoards";
-import { fullOrderAfterSectionReorder, groupTopics } from "@/lib/boards/sections";
+import {
+  ensureTopicParents,
+  fullOrderAfterSectionReorder,
+  groupTopics,
+  openChildrenOf,
+} from "@/lib/boards/sections";
 import { navigateToBoards } from "@/lib/boards/runtime";
 import { useBoardsStore } from "@/lib/boards/store";
 import type { BoardField, BoardTopic, TopicSection } from "@/lib/boards/types";
@@ -24,6 +29,30 @@ import { CreateBoardDialog } from "@/components/boards/BoardFormDialog";
 
 const EMPTY_TOPICS: BoardTopic[] = [];
 const EMPTY_FIELDS: BoardField[] = [];
+
+function collapsedStorageKey(boardId: string) {
+  return `dodo.boards.collapsed.${boardId}`;
+}
+
+function readCollapsed(boardId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(collapsedStorageKey(boardId));
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsed(boardId: string, ids: Set<string>) {
+  try {
+    localStorage.setItem(collapsedStorageKey(boardId), JSON.stringify([...ids]));
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Krótkie komunikaty (np. błąd zapisu, „temat otwarty ponownie”) — znikają same. */
 export function BoardsNotice() {
@@ -134,8 +163,12 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   const [creating, setCreating] = useState(false);
   const [viewPrefs, setViewPrefs] = useState<BoardTopicViewPrefs>(EMPTY_VIEW_PREFS);
   const [dragSection, setDragSection] = useState<"pinned" | "active" | null>(null);
+  /** null = korzenie; string = DnD wśród dzieci tego rodzica. */
+  const [dragParentId, setDragParentId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [addingChildOf, setAddingChildOf] = useState<string | null>(null);
 
   const board = boards.find((b) => b.id === activeBoardId) ?? null;
   const boardId = board?.id ?? null;
@@ -143,9 +176,13 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   useEffect(() => {
     if (!boardId) {
       setViewPrefs(EMPTY_VIEW_PREFS);
+      setCollapsed(new Set());
+      setAddingChildOf(null);
       return;
     }
     setViewPrefs(readViewPrefs(boardId));
+    setCollapsed(readCollapsed(boardId));
+    setAddingChildOf(null);
   }, [boardId]);
 
   const prefs = useMemo(() => sanitizeViewPrefs(viewPrefs, fields), [viewPrefs, fields]);
@@ -157,6 +194,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
       setViewPrefs(clean);
       writeViewPrefs(boardId, clean);
       setDragSection(null);
+      setDragParentId(null);
       setDragId(null);
       setOverId(null);
     },
@@ -166,19 +204,35 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   const now = useBoardsNow(topics);
   const localityOptions = useMemo(() => collectTopicLocalities(topics), [topics]);
   const activeLocalities = board?.localityEnabled ? prefs.localities : [];
+  const listSort: "manual" | "code" = prefs.sort.mode === "code" ? "code" : "manual";
   const filteredTopics = useMemo(() => {
     const byFields = filterTopicsByFields(topics, fields, prefs.filters);
-    return filterTopicsByLocality(byFields, activeLocalities);
+    const byLocality = filterTopicsByLocality(byFields, activeLocalities);
+    return ensureTopicParents(byLocality, topics);
   }, [topics, fields, prefs.filters, activeLocalities]);
   const grouped = useMemo(() => {
-    const base = groupTopics(
-      filteredTopics,
-      now,
-      prefs.sort.mode === "code" ? "code" : "manual",
-    );
+    const base = groupTopics(filteredTopics, now, listSort);
     if (prefs.sort.mode !== "field") return base;
     return applyViewSort(base, prefs.sort, fields);
-  }, [filteredTopics, now, prefs.sort, fields]);
+  }, [filteredTopics, now, listSort, prefs.sort, fields]);
+  const topicById = useMemo(
+    () => new Map(topics.map((t) => [t.id, t])),
+    [topics],
+  );
+
+  const toggleCollapsed = useCallback(
+    (topicId: string) => {
+      if (!boardId) return;
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(topicId)) next.delete(topicId);
+        else next.add(topicId);
+        writeCollapsed(boardId, next);
+        return next;
+      });
+    },
+    [boardId],
+  );
 
   // DnD tylko w trybie ręcznym bez filtrów (inaczej permutacja sekcji ≠ pełna lista).
   const columnFields = useMemo(() => resolveColumnFields(prefs, fields), [prefs, fields]);
@@ -211,11 +265,12 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
 
   const clearDrag = useCallback(() => {
     setDragSection(null);
+    setDragParentId(null);
     setDragId(null);
     setOverId(null);
   }, []);
 
-  const commitReorder = useCallback(
+  const commitRootReorder = useCallback(
     async (section: "pinned" | "active", fromId: string, toId: string) => {
       if (!board || fromId === toId) {
         clearDrag();
@@ -231,13 +286,36 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
       const next = [...list];
       next.splice(from, 1);
       next.splice(to, 0, fromId);
-      // Reorder against full (unfiltered) topic set so filtered-out topics keep place.
       const full = fullOrderAfterSectionReorder(topics, now, section, next);
       clearDrag();
-      const res = await reorderTopics(board.id, full);
+      const res = await reorderTopics(board.id, full, null);
       if (res.error) setNotice(res.error);
     },
     [board, grouped, topics, now, reorderTopics, setNotice, clearDrag],
+  );
+
+  const commitChildReorder = useCallback(
+    async (parentId: string, fromId: string, toId: string) => {
+      if (!board || fromId === toId) {
+        clearDrag();
+        return;
+      }
+      const children = openChildrenOf(parentId, topics, now, listSort);
+      const list = children.map((t) => t.id);
+      const from = list.indexOf(fromId);
+      const to = list.indexOf(toId);
+      if (from < 0 || to < 0) {
+        clearDrag();
+        return;
+      }
+      const next = [...list];
+      next.splice(from, 1);
+      next.splice(to, 0, fromId);
+      clearDrag();
+      const res = await reorderTopics(board.id, next, parentId);
+      if (res.error) setNotice(res.error);
+    },
+    [board, topics, now, listSort, reorderTopics, setNotice, clearDrag],
   );
 
   if (boardsStatus === "idle" || (boardsStatus === "loading" && boards.length === 0)) {
@@ -281,37 +359,130 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   }
 
   const renderRows = (list: BoardTopic[], section: TopicSection) => {
-    const sortable = canDrag && (section === "pinned" || section === "active");
-    return list.map((t) => (
-      <TopicRow
-        key={t.id}
-        topic={t}
-        board={board}
-        section={section}
-        now={now}
-        active={t.id === activeTopicId}
-        onOpen={openTopic}
-        columnFields={columnFields}
-        draggable={sortable}
-        dragging={dragId === t.id}
-        dropTarget={sortable && dragSection === section && overId === t.id && dragId !== t.id}
-        onDragStart={
-          sortable
-            ? (id) => {
-                setDragSection(section);
-                setDragId(id);
+    const nestable = section === "pinned" || section === "active";
+    const rootSortable = canDrag && nestable;
+    const nodes: ReactNode[] = [];
+
+    for (const t of list) {
+      const children = nestable
+        ? openChildrenOf(t.id, filteredTopics, now, listSort)
+        : [];
+      const expanded = !collapsed.has(t.id);
+      const rootDrag =
+        rootSortable && dragSection === section && dragParentId === null;
+
+      nodes.push(
+        <TopicRow
+          key={t.id}
+          topic={t}
+          board={board}
+          section={section}
+          now={now}
+          active={t.id === activeTopicId}
+          onOpen={openTopic}
+          columnFields={columnFields}
+          depth={t.parentId ? 1 : 0}
+          childCount={children.length}
+          expanded={expanded}
+          onToggleExpand={children.length > 0 ? () => toggleCollapsed(t.id) : undefined}
+          onAddChild={
+            nestable && !t.parentId
+              ? () => {
+                  setCollapsed((prev) => {
+                    if (!prev.has(t.id)) return prev;
+                    const next = new Set(prev);
+                    next.delete(t.id);
+                    if (boardId) writeCollapsed(boardId, next);
+                    return next;
+                  });
+                  setAddingChildOf(t.id);
+                }
+              : undefined
+          }
+          parentLabel={
+            t.parentId && (section === "snoozed" || section === "closed")
+              ? topicById.get(t.parentId)?.title ?? null
+              : null
+          }
+          draggable={rootSortable && !t.parentId}
+          dragging={dragId === t.id}
+          dropTarget={rootDrag && overId === t.id && dragId !== t.id}
+          onDragStart={
+            rootSortable && !t.parentId
+              ? (id) => {
+                  setDragSection(section);
+                  setDragParentId(null);
+                  setDragId(id);
+                }
+              : undefined
+          }
+          onDragOver={rootDrag ? (id) => setOverId(id) : undefined}
+          onDrop={
+            rootDrag && dragId
+              ? (id) => void commitRootReorder(section, dragId, id)
+              : undefined
+          }
+          onDragEnd={clearDrag}
+        />,
+      );
+
+      if (nestable && expanded) {
+        const childSortable = canDrag;
+        const childDrag =
+          childSortable && dragSection === section && dragParentId === t.id;
+
+        for (const child of children) {
+          nodes.push(
+            <TopicRow
+              key={child.id}
+              topic={child}
+              board={board}
+              section="active"
+              now={now}
+              active={child.id === activeTopicId}
+              onOpen={openTopic}
+              columnFields={columnFields}
+              depth={1}
+              draggable={childSortable}
+              dragging={dragId === child.id}
+              dropTarget={childDrag && overId === child.id && dragId !== child.id}
+              onDragStart={
+                childSortable
+                  ? (id) => {
+                      setDragSection(section);
+                      setDragParentId(t.id);
+                      setDragId(id);
+                    }
+                  : undefined
               }
-            : undefined
+              onDragOver={childDrag ? (id) => setOverId(id) : undefined}
+              onDrop={
+                childDrag && dragId
+                  ? (id) => void commitChildReorder(t.id, dragId, id)
+                  : undefined
+              }
+              onDragEnd={clearDrag}
+            />,
+          );
         }
-        onDragOver={sortable && dragSection === section ? (id) => setOverId(id) : undefined}
-        onDrop={
-          sortable && dragSection === section && dragId
-            ? (id) => void commitReorder(section, dragId, id)
-            : undefined
+
+        if (addingChildOf === t.id) {
+          nodes.push(
+            <li key={`add-${t.id}`} className="px-1.5 pb-1 pl-7 sm:pl-9">
+              <QuickAddTopic
+                boardId={board.id}
+                parentId={t.id}
+                autoFocus
+                compact
+                onAdded={() => setAddingChildOf(null)}
+              />
+            </li>,
+          );
         }
-        onDragEnd={clearDrag}
-      />
-    ));
+      }
+    }
+
+    return nodes;
   };
 
   const loadingTopics = !topicsStatus || (topicsStatus === "loading" && topics.length === 0);
