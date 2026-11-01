@@ -72,7 +72,7 @@ export function SnoozeMenu({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-1 rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-ink transition hover:border-line-strong disabled:opacity-50"
+        className="flex h-7 items-center gap-1 rounded-md border border-line bg-surface-raised px-1.5 text-[11px] text-ink transition hover:border-line-strong disabled:opacity-50"
       >
         <BellOff size={13} />
         {label}
