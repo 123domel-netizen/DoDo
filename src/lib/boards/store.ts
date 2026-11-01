@@ -69,6 +69,10 @@ export interface BoardsState {
     error?: string;
   }>;
   renameBoard: (boardId: string, name: string) => Promise<{ error?: string }>;
+  setBoardLocalityEnabled: (
+    boardId: string,
+    enabled: boolean,
+  ) => Promise<{ error?: string }>;
   addMembers: (boardId: string, userIds: string[]) => Promise<{ error?: string }>;
   removeMember: (boardId: string, userId: string) => Promise<{ error?: string }>;
   archiveBoard: (boardId: string) => Promise<{ error?: string }>;
@@ -409,6 +413,18 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         boards: s.boards.map((b) => (b.id === boardId ? { ...b, name: clean } : b)),
       }));
       const res = await api.renameBoard(boardId, clean);
+      if (res.error) set({ boards: prev });
+      return res;
+    },
+
+    setBoardLocalityEnabled: async (boardId, enabled) => {
+      const prev = get().boards;
+      set((s) => ({
+        boards: s.boards.map((b) =>
+          b.id === boardId ? { ...b, localityEnabled: enabled } : b,
+        ),
+      }));
+      const res = await api.setBoardLocalityEnabled(boardId, enabled);
       if (res.error) set({ boards: prev });
       return res;
     },

@@ -60,6 +60,8 @@ export interface Board {
   myRole: BoardRole;
   /** Nieprzeczytane komentarze innych osób w całej tablicy (per ja). */
   unreadCount: number;
+  /** Czy QuickAdd / lista / szczegóły pokazują miejscowość tematu. */
+  localityEnabled: boolean;
   members: BoardMember[];
 }
 

@@ -374,10 +374,7 @@ function TopicDetailBody({
   const deleteTopic = useBoardsStore((s) => s.deleteTopic);
   const setNotice = useBoardsStore((s) => s.setNotice);
   const actions = useTopicActions(topic);
-  const activeOrgId = useStore((s) => s.activeOrgId);
-  const myOrgs = useStore((s) => s.myOrgs);
-  const localityEnabled =
-    myOrgs.find((o) => o.id === activeOrgId)?.boardsTopicLocalityEnabled ?? false;
+  const localityEnabled = board.localityEnabled;
   const topicId = topic.id;
   const conversationId = topic.conversationId;
 

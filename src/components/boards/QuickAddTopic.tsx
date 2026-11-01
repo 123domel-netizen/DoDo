@@ -2,18 +2,16 @@ import { useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { useBoardsStore } from "@/lib/boards/store";
 import { TOPIC_CODE_MAX, TOPIC_LOCALITY_MAX, TOPIC_TITLE_MAX } from "@/lib/boards/types";
-import { useStore } from "@/state/store";
 
 /**
- * Szybkie dodawanie tematów: opcjonalny kod + tytuł (+ miejscowość gdy włączona w zespole).
+ * Szybkie dodawanie tematów: opcjonalny kod + tytuł (+ miejscowość gdy włączona na tablicy).
  * Enter dodaje temat, pola się czyszczą i fokus wraca do tytułu.
  */
 export function QuickAddTopic({ boardId, autoFocus = false }: { boardId: string; autoFocus?: boolean }) {
   const addTopic = useBoardsStore((s) => s.addTopic);
-  const activeOrgId = useStore((s) => s.activeOrgId);
-  const myOrgs = useStore((s) => s.myOrgs);
-  const localityEnabled =
-    myOrgs.find((o) => o.id === activeOrgId)?.boardsTopicLocalityEnabled ?? false;
+  const localityEnabled = useBoardsStore(
+    (s) => s.boards.find((b) => b.id === boardId)?.localityEnabled ?? false,
+  );
 
   const [code, setCode] = useState("");
   const [title, setTitle] = useState("");

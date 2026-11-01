@@ -41,6 +41,7 @@ function board(id: string, over: Partial<Board> = {}): Board {
     updatedAt: "2026-10-01T10:00:00Z",
     myRole: "owner",
     unreadCount: 0,
+    localityEnabled: false,
     members: [],
     ...over,
   };
