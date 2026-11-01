@@ -52,17 +52,17 @@ export function QuickAddTopic({
 
   return (
     <form
-      className={`flex items-center gap-1.5 transition focus-within:border-accent ${
+      className={`flex h-8 items-center gap-1.5 transition focus-within:border-accent ${
         compact
-          ? "rounded-lg border border-line/70 bg-surface-raised/60 px-2 py-1"
-          : "rounded-xl border border-line bg-surface-raised px-2.5 py-1.5"
+          ? "rounded-md border border-line/70 bg-surface-raised/60 px-1.5"
+          : "rounded-lg border border-line bg-surface-raised px-2"
       }`}
       onSubmit={(e) => {
         e.preventDefault();
         submit();
       }}
     >
-      <Plus size={compact ? 13 : 15} className="shrink-0 text-ink-faint" aria-hidden />
+      <Plus size={compact ? 12 : 14} className="shrink-0 text-ink-faint" aria-hidden />
       <input
         value={code}
         maxLength={TOPIC_CODE_MAX}
@@ -71,9 +71,9 @@ export function QuickAddTopic({
         placeholder="Kod"
         aria-label={isChild ? "Kod podtematu (opcjonalny)" : "Kod tematu (opcjonalny)"}
         title="Opcjonalny kod, np. N01"
-        className={`${compact ? "w-10" : "w-14"} shrink-0 bg-transparent py-1 font-mono text-sm tabular-nums text-ink outline-none placeholder:font-sans placeholder:text-ink-faint`}
+        className={`${compact ? "w-10" : "w-12"} shrink-0 bg-transparent py-0.5 font-mono text-[13px] tabular-nums text-ink outline-none placeholder:font-sans placeholder:text-ink-faint`}
       />
-      <span className="h-4 w-px shrink-0 bg-line" aria-hidden />
+      <span className="h-3.5 w-px shrink-0 bg-line" aria-hidden />
       <input
         ref={titleRef}
         value={title}
@@ -86,11 +86,11 @@ export function QuickAddTopic({
         }}
         placeholder={isChild ? "Dodaj podtemat…" : "Dodaj temat…"}
         aria-label={isChild ? "Dodaj podtemat" : "Dodaj temat"}
-        className="min-w-0 flex-1 bg-transparent py-1 text-sm text-ink outline-none placeholder:text-ink-faint"
+        className="min-w-0 flex-1 bg-transparent py-0.5 text-[13px] text-ink outline-none placeholder:text-ink-faint"
       />
       {localityEnabled && (
         <>
-          <span className="h-4 w-px shrink-0 bg-line" aria-hidden />
+          <span className="h-3.5 w-px shrink-0 bg-line" aria-hidden />
           <input
             value={locality}
             maxLength={TOPIC_LOCALITY_MAX}
@@ -99,14 +99,14 @@ export function QuickAddTopic({
             placeholder="Miejscowość"
             aria-label="Miejscowość (opcjonalna)"
             title="Opcjonalna miejscowość"
-            className={`${compact ? "w-24" : "w-[7.5rem] sm:w-36"} shrink-0 bg-transparent py-1 text-sm text-ink outline-none placeholder:text-ink-faint`}
+            className={`${compact ? "w-24" : "w-[7rem] sm:w-32"} shrink-0 bg-transparent py-0.5 text-[13px] text-ink outline-none placeholder:text-ink-faint`}
           />
         </>
       )}
       <button
         type="submit"
         disabled={!title.trim()}
-        className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-40"
+        className="shrink-0 rounded-md bg-accent px-2 py-0.5 text-[11px] font-medium text-white transition hover:brightness-110 disabled:opacity-40"
       >
         Dodaj
       </button>
