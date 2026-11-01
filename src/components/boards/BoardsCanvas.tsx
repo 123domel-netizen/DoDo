@@ -489,7 +489,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 px-3 pb-1.5 pt-2">
+      <div className="shrink-0 px-3 py-1">
         <QuickAddTopic key={board.id} boardId={board.id} autoFocus={!mobile} />
         {(chips.length > 0 || localityChips.length > 0) && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
