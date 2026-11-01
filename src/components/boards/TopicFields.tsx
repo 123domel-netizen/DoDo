@@ -3,7 +3,7 @@ import { TopicFieldEditor } from "@/components/boards/TopicFieldEditor";
 import { useBoardsStore } from "@/lib/boards/store";
 import type { BoardTopic } from "@/lib/boards/types";
 
-/** Wartości pól tablicy w szczegółach tematu (kompakt: etykieta + wartość, klik = edycja). */
+/** Wartości pól tablicy w szczegółach tematu (kompaktowa siatka). */
 export function TopicFields({ topic }: { topic: BoardTopic }) {
   const fields = useBoardsStore((s) => s.fieldsByBoard[topic.boardId] ?? []);
   const loadFields = useBoardsStore((s) => s.loadFields);
@@ -17,11 +17,11 @@ export function TopicFields({ topic }: { topic: BoardTopic }) {
   if (fields.length === 0) return null;
 
   return (
-    <div className="mt-2 border-t border-line/50 pt-2">
-      <div className="mb-0.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+    <div className="mt-1 border-t border-line/40 pt-1">
+      <div className="mb-0.5 px-0.5 text-[9px] font-semibold uppercase tracking-wide text-ink-faint">
         Pola
       </div>
-      <div className="space-y-0.5">
+      <div className="grid grid-cols-1 gap-x-2 gap-y-px sm:grid-cols-2">
         {fields.map((f) => (
           <TopicFieldEditor
             key={f.id}
@@ -34,22 +34,22 @@ export function TopicFields({ topic }: { topic: BoardTopic }) {
                 type="button"
                 disabled={disabled}
                 onClick={toggle}
-                className="flex w-full items-baseline gap-2 rounded-md px-1 py-0.5 text-left transition hover:bg-surface-raised disabled:opacity-50"
+                className="flex w-full min-w-0 items-baseline gap-1 rounded px-0.5 py-px text-left transition hover:bg-surface-raised disabled:opacity-50"
               >
-                <span className="shrink-0 text-[11px] font-medium text-ink-faint">
+                <span className="max-w-[45%] shrink-0 truncate text-[10px] font-medium text-ink-faint">
                   {f.name}
                   {f.visibility === "restricted" ? (
                     <span
-                      className="ml-1 font-normal opacity-70"
+                      className="ml-0.5 font-normal opacity-60"
                       title="Widoczne tylko dla wybranych osób"
                     >
-                      · ukryte
+                      · ukr.
                     </span>
                   ) : null}
                   :
                 </span>
                 <span
-                  className={`min-w-0 flex-1 truncate text-sm ${empty ? "text-ink-faint" : "text-ink"}`}
+                  className={`min-w-0 flex-1 truncate text-[12px] ${empty ? "text-ink-faint" : "text-ink"}`}
                 >
                   {summary}
                 </span>

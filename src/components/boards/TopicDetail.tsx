@@ -58,7 +58,7 @@ function findTopic(
 }
 
 const actionBtn =
-  "flex items-center gap-1 rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-ink transition hover:border-line-strong disabled:opacity-50";
+  "flex h-7 items-center gap-1 rounded-md border border-line bg-surface-raised px-1.5 text-[11px] text-ink transition hover:border-line-strong disabled:opacity-50";
 
 function EditableCode({ topic }: { topic: BoardTopic }) {
   const actions = useTopicActions(topic);
@@ -81,7 +81,7 @@ function EditableCode({ topic }: { topic: BoardTopic }) {
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className={`shrink-0 rounded-md px-1 py-0.5 font-mono text-sm tabular-nums transition hover:bg-surface-raised ${
+        className={`shrink-0 rounded px-0.5 py-px font-mono text-[12px] tabular-nums transition hover:bg-surface-raised ${
           topic.code ? "text-ink-light" : "text-ink-faint"
         }`}
         title="Kliknij, aby nadać kod (np. N01)"
@@ -108,7 +108,7 @@ function EditableCode({ topic }: { topic: BoardTopic }) {
       }}
       placeholder="N01"
       aria-label="Kod tematu"
-      className="w-16 shrink-0 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 font-mono text-sm tabular-nums text-ink outline-none"
+      className="w-14 shrink-0 rounded border border-accent bg-surface-raised px-1 py-px font-mono text-[12px] tabular-nums text-ink outline-none"
     />
   );
 }
@@ -134,7 +134,7 @@ function EditableTitle({ topic }: { topic: BoardTopic }) {
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="min-w-0 flex-1 rounded-md px-1 py-0.5 text-left text-base font-semibold text-ink transition hover:bg-surface-raised"
+        className="min-w-0 flex-1 rounded px-0.5 py-px text-left text-[15px] font-semibold leading-snug text-ink transition hover:bg-surface-raised"
         title="Kliknij, aby zmienić tytuł"
       >
         {topic.title}
@@ -158,7 +158,7 @@ function EditableTitle({ topic }: { topic: BoardTopic }) {
         }
       }}
       aria-label="Tytuł tematu"
-      className="min-w-0 flex-1 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 text-base font-semibold text-ink outline-none"
+      className="min-w-0 flex-1 rounded border border-accent bg-surface-raised px-1 py-px text-[15px] font-semibold text-ink outline-none"
     />
   );
 }
@@ -184,7 +184,7 @@ function EditableLocality({ topic }: { topic: BoardTopic }) {
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className={`shrink-0 rounded-md px-1 py-0.5 text-sm transition hover:bg-surface-raised ${
+        className={`shrink-0 rounded px-0.5 py-px text-[13px] transition hover:bg-surface-raised ${
           topic.locality ? "text-ink" : "text-ink-faint/70"
         }`}
         title="Kliknij, aby ustawić miejscowość"
@@ -218,7 +218,7 @@ function EditableLocality({ topic }: { topic: BoardTopic }) {
       }}
       placeholder="Miejscowość"
       aria-label="Miejscowość tematu"
-      className="w-36 shrink-0 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 text-sm text-ink outline-none"
+      className="w-28 shrink-0 rounded border border-accent bg-surface-raised px-1 py-px text-[13px] text-ink outline-none"
     />
   );
 }
@@ -242,7 +242,7 @@ function EditableDescription({ topic }: { topic: BoardTopic }) {
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className={`w-full whitespace-pre-wrap rounded-md px-1 py-1 text-left text-sm transition hover:bg-surface-raised ${
+        className={`w-full whitespace-pre-wrap rounded px-0.5 py-0.5 text-left text-[12px] leading-snug transition hover:bg-surface-raised ${
           topic.description ? "text-ink-light" : "text-ink-faint"
         }`}
       >
@@ -254,7 +254,7 @@ function EditableDescription({ topic }: { topic: BoardTopic }) {
     <textarea
       autoFocus
       value={value}
-      rows={4}
+      rows={3}
       maxLength={TOPIC_DESCRIPTION_MAX}
       onChange={(e) => setValue(e.target.value)}
       onBlur={commit}
@@ -265,7 +265,7 @@ function EditableDescription({ topic }: { topic: BoardTopic }) {
         }
       }}
       aria-label="Opis tematu"
-      className="w-full resize-y rounded-md border border-accent bg-surface-raised px-2 py-1.5 text-sm text-ink outline-none"
+      className="w-full resize-y rounded border border-accent bg-surface-raised px-1.5 py-1 text-[12px] text-ink outline-none"
     />
   );
 }
@@ -419,25 +419,25 @@ function TopicDetailBody({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <div className="shrink-0 border-b border-line/80 px-3 py-2">
-        <div className="mb-1 flex items-center gap-1.5">
-          <div className="min-w-0 flex-1 truncate text-[11px] text-ink-faint">{board.name}</div>
+      <div className="shrink-0 border-b border-line/80 px-2.5 py-1.5">
+        <div className="mb-0.5 flex items-center gap-1">
+          <div className="min-w-0 flex-1 truncate text-[10px] text-ink-faint">{board.name}</div>
           <button
             type="button"
             onClick={close}
-            className="shrink-0 rounded-md p-1.5 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
+            className="shrink-0 rounded p-1 text-ink-light transition hover:bg-surface-overlay hover:text-ink"
             aria-label="Wróć do listy tematów"
           >
-            {mobile ? <ArrowLeft size={20} /> : <X size={20} />}
+            {mobile ? <ArrowLeft size={18} /> : <X size={16} />}
           </button>
         </div>
 
-        <div className="flex items-start gap-1">
+        <div className="flex items-baseline gap-0.5">
           <EditableCode topic={topic} />
           <EditableTitle topic={topic} />
           {localityEnabled && <EditableLocality topic={topic} />}
         </div>
-        <div className="mb-1 px-1 text-[11px] text-ink-faint">
+        <div className="truncate px-0.5 text-[10px] leading-tight text-ink-faint">
           {parentTitle ? (
             <>
               Podtemat · {parentTitle}
@@ -456,7 +456,7 @@ function TopicDetailBody({
         <TopicFields topic={topic} />
 
         {!pending && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
             {conversationId && (
               <PingButton
                 conversationId={conversationId}
@@ -537,7 +537,7 @@ function TopicDetailBody({
           </div>
         )}
 
-        <div className="mt-2">
+        <div className="mt-1.5">
           <LinkedItems topic={topic} />
         </div>
       </div>
