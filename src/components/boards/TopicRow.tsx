@@ -38,6 +38,16 @@ export const TOPIC_PIN_GUTTER = "w-7 shrink-0";
 export const TOPIC_TIME_SLOT = "w-11 shrink-0 text-right text-[10px] text-ink-faint";
 export const TOPIC_META_DOT = "w-2.5 shrink-0";
 
+/** Spójny chip narzędzi belki (sort / filtr / widok). */
+const HEADER_TOOL =
+  "inline-flex h-6 max-w-[8.5rem] shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition hover:bg-surface-raised hover:text-ink-light";
+const HEADER_TOOL_IDLE = `${HEADER_TOOL} text-ink-faint`;
+const HEADER_TOOL_ACTIVE = `${HEADER_TOOL} bg-accent/10 text-accent hover:bg-accent/15 hover:text-accent`;
+const HEADER_COL_LABEL =
+  "flex w-full min-w-0 items-center gap-1 truncate text-left text-[10px] font-medium tracking-wide text-ink-faint transition hover:text-ink-light";
+const HEADER_COL_LABEL_ACTIVE =
+  "flex w-full min-w-0 items-center gap-1 truncate text-left text-[10px] font-medium tracking-wide text-accent transition hover:text-accent";
+
 function authorLabel(board: Board, userId: string | undefined, myUserId: string | null): string {
   if (!userId) return "";
   if (userId === myUserId) return "Ty";
@@ -63,11 +73,11 @@ export function SortModeChip({
       <button
         type="button"
         onClick={() => onChange({ ...prefs, sort: { mode: "manual" } })}
-        className="inline-flex max-w-[9rem] shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent transition hover:bg-surface-raised"
+        className={HEADER_TOOL_ACTIVE}
         title={`Sort wg „${fieldName}”. Kliknij: kolejność ręczna`}
       >
-        <ArrowDownAZ size={12} />
-        <span className="truncate">{fieldName}</span>
+        <ArrowDownAZ size={12} className="shrink-0 opacity-80" />
+        <span className="min-w-0 truncate">{fieldName}</span>
       </button>
     );
   }
@@ -77,14 +87,18 @@ export function SortModeChip({
     <button
       type="button"
       onClick={() => onChange({ ...prefs, sort: { mode: isCode ? "manual" : "code" } })}
-      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint transition hover:bg-surface-raised hover:text-ink-light"
+      className={isCode ? HEADER_TOOL_ACTIVE : HEADER_TOOL_IDLE}
       title={
         isCode
           ? "Wg kodu. Kliknij: ręczne + przeciąganie"
           : "Ręczne (przeciąganie). Kliknij: sortuj wg kodu"
       }
     >
-      {isCode ? <ArrowDownAZ size={12} /> : <GripVertical size={12} />}
+      {isCode ? (
+        <ArrowDownAZ size={12} className="shrink-0 opacity-80" />
+      ) : (
+        <GripVertical size={12} className="shrink-0 opacity-70" />
+      )}
       <span>{isCode ? "Kod" : "Ręczne"}</span>
     </button>
   );
@@ -174,14 +188,17 @@ function LocalityFilterHeader({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`inline-flex max-w-[7.5rem] items-center gap-0.5 truncate rounded-md px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition hover:bg-surface-raised hover:text-ink-light ${
-          active ? "text-accent" : "text-ink-faint"
-        }`}
+        className={active ? HEADER_TOOL_ACTIVE : HEADER_TOOL_IDLE}
         title={active ? "Miejscowość · filtr aktywny" : "Filtr: miejscowość"}
         aria-expanded={open}
       >
-        <span className="min-w-0 truncate">Miejsc.</span>
-        <Filter size={9} className={`shrink-0 ${active ? "opacity-100" : "opacity-50"}`} />
+        <Filter size={11} className={`shrink-0 ${active ? "opacity-100" : "opacity-60"}`} />
+        <span className="min-w-0 truncate">Miejsce</span>
+        {active ? (
+          <span className="rounded bg-accent/20 px-1 text-[9px] tabular-nums leading-none">
+            {selected.length}
+          </span>
+        ) : null}
       </button>
       {open &&
         pos &&
@@ -280,28 +297,28 @@ function ColumnFilterHeader({
 
   if (!canFilter) {
     return (
-      <span
-        className={`${TOPIC_FIELD_COL_CLASS} font-semibold uppercase tracking-wide text-ink-faint`}
-        title={field.name}
-      >
-        {field.name}
+      <span className={`${TOPIC_FIELD_COL_CLASS} ${HEADER_COL_LABEL}`} title={field.name}>
+        <span className="min-w-0 flex-1 truncate">{field.name}</span>
       </span>
     );
   }
 
   return (
-    <div ref={rootRef} className={`relative ${TOPIC_FIELD_COL_CLASS}`}>
+    <div ref={rootRef} className={`group/col relative ${TOPIC_FIELD_COL_CLASS}`}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex w-full items-center gap-0.5 truncate text-left font-semibold uppercase tracking-wide transition hover:text-ink-light ${
-          active ? "text-accent" : "text-ink-faint"
-        }`}
+        className={active ? HEADER_COL_LABEL_ACTIVE : HEADER_COL_LABEL}
         title={active ? `${field.name} · filtr aktywny` : `Filtr: ${field.name}`}
         aria-expanded={open}
       >
         <span className="min-w-0 flex-1 truncate">{field.name}</span>
-        <Filter size={9} className={`shrink-0 ${active ? "opacity-100" : "opacity-50"}`} />
+        <Filter
+          size={10}
+          className={`shrink-0 transition ${
+            active ? "opacity-100" : "opacity-35 group-hover/col:opacity-70"
+          }`}
+        />
       </button>
       {open &&
         pos &&
@@ -345,7 +362,7 @@ function ColumnFilterHeader({
   );
 }
 
-/** Sticky belka: Temat + sort/widok + nagłówki kolumn z filtrami. */
+/** Sticky belka: Temat + narzędzia | nagłówki kolumn pól. */
 export function TopicColumnsHeader({
   columnFields,
   allFields,
@@ -363,34 +380,35 @@ export function TopicColumnsHeader({
 }) {
   return (
     <div
-      className="sticky top-0 z-10 mb-0.5 flex items-center gap-0.5 border-b border-line/60 bg-surface px-0 py-1"
+      className="sticky top-0 z-10 mb-1 flex items-center gap-0.5 border-b border-line/50 bg-surface/95 px-0 py-1.5 backdrop-blur-sm"
       role="row"
     >
       <span className={TOPIC_DRAG_GUTTER} aria-hidden />
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-2 px-1.5">
         <span className={TOPIC_META_DOT} aria-hidden />
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-            Temat
-          </span>
-          <SortModeChip prefs={prefs} fields={allFields} onChange={onChange} />
-          {localityEnabled && (
-            <LocalityFilterHeader options={localityOptions} prefs={prefs} onChange={onChange} />
-          )}
-          <BoardTopicViewMenu
-            fields={allFields}
-            prefs={prefs}
-            onChange={onChange}
-            localityEnabled={localityEnabled}
-            localityOptions={localityOptions}
-          />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="shrink-0 text-[11px] font-medium text-ink-light">Temat</span>
+          <span className="h-3.5 w-px shrink-0 bg-line/80" aria-hidden />
+          <div className="flex min-w-0 flex-wrap items-center gap-0.5">
+            <SortModeChip prefs={prefs} fields={allFields} onChange={onChange} />
+            {localityEnabled && (
+              <LocalityFilterHeader options={localityOptions} prefs={prefs} onChange={onChange} />
+            )}
+            <BoardTopicViewMenu
+              fields={allFields}
+              prefs={prefs}
+              onChange={onChange}
+              localityEnabled={localityEnabled}
+              localityOptions={localityOptions}
+            />
+          </div>
         </div>
         {columnFields.length > 0 && (
-          <span className="hidden items-center sm:flex">
+          <div className="hidden items-center sm:flex">
             {columnFields.map((f) => (
               <ColumnFilterHeader key={f.id} field={f} prefs={prefs} onChange={onChange} />
             ))}
-          </span>
+          </div>
         )}
         <span className={TOPIC_TIME_SLOT} aria-hidden />
       </div>
