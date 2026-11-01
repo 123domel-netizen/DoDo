@@ -78,6 +78,7 @@ export function rowToBoard(row: Row): Board {
     updatedAt: (row.updated_at as string) ?? (row.created_at as string),
     myRole: asRole(row.my_role),
     unreadCount: Number(row.unread_count ?? 0),
+    localityEnabled: Boolean(row.locality_enabled),
     members: members.map(
       (m): BoardMember => ({
         userId: m.userId as string,
@@ -220,6 +221,18 @@ export async function createBoard(input: {
 export async function renameBoard(boardId: string, name: string): Promise<{ error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
   const { error } = await supabase.rpc("board_rename", { p_board_id: boardId, p_name: name });
+  return error ? { error: mapBoardError(error.message) } : {};
+}
+
+export async function setBoardLocalityEnabled(
+  boardId: string,
+  enabled: boolean,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("board_set_locality_enabled", {
+    p_board_id: boardId,
+    p_enabled: enabled,
+  });
   return error ? { error: mapBoardError(error.message) } : {};
 }
 

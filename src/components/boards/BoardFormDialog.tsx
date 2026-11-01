@@ -193,6 +193,7 @@ export function ManageBoardDialog({
   const myUserId = useBoardsStore((s) => s.userId);
   const orgId = useBoardsStore((s) => s.orgId);
   const renameBoard = useBoardsStore((s) => s.renameBoard);
+  const setBoardLocalityEnabled = useBoardsStore((s) => s.setBoardLocalityEnabled);
   const addMembers = useBoardsStore((s) => s.addMembers);
   const removeMember = useBoardsStore((s) => s.removeMember);
   const archiveBoard = useBoardsStore((s) => s.archiveBoard);
@@ -321,6 +322,39 @@ export function ManageBoardDialog({
             )}
 
             <div className="my-3 border-t border-line/60" />
+            <div className="mb-3 rounded-lg border border-line bg-surface-raised p-2.5">
+              <div className="mb-1 text-[11px] font-medium text-ink">Miejscowość tematów</div>
+              <p className="mb-2 text-[11px] leading-snug text-ink-faint">
+                Gdy włączone, przy dodawaniu tematu pojawia się pole miejscowości, a na liście
+                widać ją obok nazwy (np. „Artur Grugel — Chojnice”).
+              </p>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void run(() => setBoardLocalityEnabled(board.id, true))}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    board.localityEnabled
+                      ? "bg-accent text-white"
+                      : "border border-line text-ink-light hover:bg-surface"
+                  }`}
+                >
+                  Włączona
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void run(() => setBoardLocalityEnabled(board.id, false))}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    !board.localityEnabled
+                      ? "bg-accent text-white"
+                      : "border border-line text-ink-light hover:bg-surface"
+                  }`}
+                >
+                  Wyłączona
+                </button>
+              </div>
+            </div>
             <BoardFieldsEditor board={board} />
           </>
         )}
