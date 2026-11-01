@@ -184,11 +184,18 @@ function EditableLocality({ topic }: { topic: BoardTopic }) {
         type="button"
         onClick={() => setEditing(true)}
         className={`shrink-0 rounded-md px-1 py-0.5 text-sm transition hover:bg-surface-raised ${
-          topic.locality ? "text-ink-faint" : "text-ink-faint/70"
+          topic.locality ? "text-ink" : "text-ink-faint/70"
         }`}
         title="Kliknij, aby ustawić miejscowość"
       >
-        {topic.locality ? `— ${topic.locality}` : "— miejscowość"}
+        {topic.locality ? (
+          <>
+            <span className="text-ink-faint">- </span>
+            {topic.locality}
+          </>
+        ) : (
+          <>- miejscowość</>
+        )}
       </button>
     );
   }

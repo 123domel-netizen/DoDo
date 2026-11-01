@@ -17,12 +17,15 @@ export interface BoardTopicViewPrefs {
    */
   columnIds: string[] | null;
   filters: TopicFieldFilters;
+  /** Wybrane miejscowości (OR). Puste = bez filtra. */
+  localities: string[];
   sort: TopicViewSort;
 }
 
 export const EMPTY_VIEW_PREFS: BoardTopicViewPrefs = {
   columnIds: null,
   filters: {},
+  localities: [],
   sort: { mode: "manual" },
 };
 
@@ -57,6 +60,7 @@ export function readViewPrefs(boardId: string): BoardTopicViewPrefs {
     return {
       columnIds: parseColumnIds(parsed.columnIds),
       filters: normalizeFilters(parsed.filters),
+      localities: normalizeLocalities(parsed.localities),
       sort,
     };
   } catch {
@@ -98,6 +102,33 @@ function normalizeFilters(raw: unknown): TopicFieldFilters {
     if (ids.length > 0) out[k] = ids;
   }
   return out;
+}
+
+function normalizeLocalities(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of raw) {
+    if (typeof x !== "string") continue;
+    const t = x.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+/** Unikalne miejscowości z tematów (do checkboxów filtra). */
+export function collectTopicLocalities(topics: BoardTopic[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of topics) {
+    const loc = t.locality?.trim();
+    if (!loc || seen.has(loc)) continue;
+    seen.add(loc);
+    out.push(loc);
+  }
+  return out.sort((a, b) => a.localeCompare(b, "pl", { sensitivity: "base" }));
 }
 
 /** Skrót wartości pola do komórki / chipa. */
@@ -156,6 +187,16 @@ export function filterTopicsByFields(
   );
 }
 
+/** OR wybranych miejscowości; puste = bez filtra. */
+export function filterTopicsByLocality(
+  topics: BoardTopic[],
+  localities: string[],
+): BoardTopic[] {
+  if (localities.length === 0) return topics;
+  const want = new Set(localities);
+  return topics.filter((t) => t.locality != null && want.has(t.locality));
+}
+
 /** Oczyszcza prefs względem aktualnej listy pól (ACL / usunięte). */
 export function sanitizeViewPrefs(
   prefs: BoardTopicViewPrefs,
@@ -172,9 +213,10 @@ export function sanitizeViewPrefs(
     const kept = optionIds.filter((id) => optIds.has(id));
     if (kept.length > 0) filters[fieldId] = kept;
   }
+  const localities = normalizeLocalities(prefs.localities);
   let sort = prefs.sort;
   if (sort.mode === "field" && !ids.has(sort.fieldId)) sort = { mode: "manual" };
-  return { columnIds, filters, sort };
+  return { columnIds, filters, localities, sort };
 }
 
 export function applyViewSort(grouped: GroupedTopics, sort: TopicViewSort, fields: BoardField[]): GroupedTopics {

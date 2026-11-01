@@ -101,6 +101,123 @@ function toggleFilterOption(
   return { ...prefs, filters };
 }
 
+function toggleLocalityFilter(prefs: BoardTopicViewPrefs, locality: string): BoardTopicViewPrefs {
+  const cur = new Set(prefs.localities);
+  if (cur.has(locality)) cur.delete(locality);
+  else cur.add(locality);
+  return { ...prefs, localities: [...cur] };
+}
+
+function LocalityFilterHeader({
+  options,
+  prefs,
+  onChange,
+}: {
+  options: string[];
+  prefs: BoardTopicViewPrefs;
+  onChange: (next: BoardTopicViewPrefs) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const selected = prefs.localities;
+  const active = selected.length > 0;
+  const panelW = 176;
+
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current) {
+      setPos(null);
+      return;
+    }
+    const place = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (!r) return;
+      let left = r.left;
+      left = Math.max(8, Math.min(left, window.innerWidth - panelW - 8));
+      setPos({ top: r.bottom + 4, left });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (options.length === 0) return null;
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`inline-flex max-w-[7.5rem] items-center gap-0.5 truncate rounded-md px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition hover:bg-surface-raised hover:text-ink-light ${
+          active ? "text-accent" : "text-ink-faint"
+        }`}
+        title={active ? "Miejscowość · filtr aktywny" : "Filtr: miejscowość"}
+        aria-expanded={open}
+      >
+        <span className="min-w-0 truncate">Miejsc.</span>
+        <Filter size={9} className={`shrink-0 ${active ? "opacity-100" : "opacity-50"}`} />
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={{ top: pos.top, left: pos.left, width: panelW }}
+            className="fixed z-[80] max-h-48 overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-overlay p-1.5 shadow-panel"
+          >
+            {options.map((loc) => (
+              <label
+                key={loc}
+                className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(loc)}
+                  onChange={() => onChange(toggleLocalityFilter(prefs, loc))}
+                  className="accent-accent"
+                />
+                <span className="min-w-0 flex-1 truncate">{loc}</span>
+              </label>
+            ))}
+            {active && (
+              <button
+                type="button"
+                onClick={() => onChange({ ...prefs, localities: [] })}
+                className="mt-0.5 w-full rounded-md px-1.5 py-1 text-left text-[11px] text-ink-faint hover:bg-surface-raised hover:text-ink-light"
+              >
+                Wyczyść
+              </button>
+            )}
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
 function ColumnFilterHeader({
   field,
   prefs,
@@ -231,11 +348,15 @@ export function TopicColumnsHeader({
   allFields,
   prefs,
   onChange,
+  localityEnabled = false,
+  localityOptions = [],
 }: {
   columnFields: BoardField[];
   allFields: BoardField[];
   prefs: BoardTopicViewPrefs;
   onChange: (next: BoardTopicViewPrefs) => void;
+  localityEnabled?: boolean;
+  localityOptions?: string[];
 }) {
   return (
     <div
@@ -250,7 +371,16 @@ export function TopicColumnsHeader({
             Temat
           </span>
           <SortModeChip prefs={prefs} fields={allFields} onChange={onChange} />
-          <BoardTopicViewMenu fields={allFields} prefs={prefs} onChange={onChange} />
+          {localityEnabled && (
+            <LocalityFilterHeader options={localityOptions} prefs={prefs} onChange={onChange} />
+          )}
+          <BoardTopicViewMenu
+            fields={allFields}
+            prefs={prefs}
+            onChange={onChange}
+            localityEnabled={localityEnabled}
+            localityOptions={localityOptions}
+          />
         </div>
         {columnFields.length > 0 && (
           <span className="hidden items-center sm:flex">
@@ -424,15 +554,28 @@ export function TopicRow({
                 </span>
               )}
               <span
-                className={`min-w-0 flex-1 truncate text-[13px] leading-snug ${
+                className={`min-w-0 truncate text-[13px] leading-snug ${
                   unread > 0 ? "font-semibold text-ink" : muted ? "text-ink-light" : "text-ink"
                 }`}
               >
                 {topic.title}
-                {topic.locality ? (
-                  <span className="font-normal text-ink-faint"> — {topic.locality}</span>
-                ) : null}
               </span>
+              {topic.locality ? (
+                <>
+                  <span className="shrink-0 text-[13px] leading-snug text-ink-faint" aria-hidden>
+                    -
+                  </span>
+                  <span
+                    className={`min-w-0 flex-1 truncate text-[13px] leading-snug ${
+                      unread > 0 ? "font-semibold text-ink" : muted ? "text-ink-light" : "text-ink"
+                    }`}
+                  >
+                    {topic.locality}
+                  </span>
+                </>
+              ) : (
+                <span className="min-w-0 flex-1" aria-hidden />
+              )}
             </button>
 
             {columnFields.length > 0 && (
