@@ -29,7 +29,6 @@ export function BoardTopicViewMenu({
   const filterCount = fieldFilterCount + localityFilterCount;
   /** null = wszystkie kolumny (domyślne). */
   const selectedColumns = new Set(prefs.columnIds ?? fields.map((f) => f.id));
-  const columnCount = selectedColumns.size;
   const showLocalityFilter = localityEnabled && localityOptions.length > 0;
   const hasAnySection = fields.length > 0 || showLocalityFilter;
   const active =
