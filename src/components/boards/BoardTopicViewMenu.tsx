@@ -29,7 +29,6 @@ export function BoardTopicViewMenu({
   const filterCount = fieldFilterCount + localityFilterCount;
   /** null = wszystkie kolumny (domyślne). */
   const selectedColumns = new Set(prefs.columnIds ?? fields.map((f) => f.id));
-  const columnCount = selectedColumns.size;
   const showLocalityFilter = localityEnabled && localityOptions.length > 0;
   const hasAnySection = fields.length > 0 || showLocalityFilter;
   const active =
@@ -256,20 +255,22 @@ export function BoardTopicViewMenu({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide transition hover:bg-surface-raised hover:text-ink-light ${
-          active ? "text-accent" : "text-ink-faint"
+        className={`inline-flex h-6 max-w-[8.5rem] shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition hover:bg-surface-raised hover:text-ink-light ${
+          active
+            ? "bg-accent/10 text-accent hover:bg-accent/15 hover:text-accent"
+            : "text-ink-faint"
         }`}
         aria-expanded={open}
         aria-label="Widok listy: kolumny, filtr, sortowanie"
         title="Kolumny, filtr i sortowanie według pól"
       >
-        <ListFilter size={12} />
+        <ListFilter size={12} className="shrink-0 opacity-80" />
         <span>Widok</span>
-        {(columnCount > 0 || filterCount > 0) && (
-          <span className="rounded bg-accent/15 px-1 text-[9px] tabular-nums text-accent">
-            {columnCount + filterCount}
+        {filterCount > 0 ? (
+          <span className="rounded bg-accent/20 px-1 text-[9px] tabular-nums leading-none text-accent">
+            {filterCount}
           </span>
-        )}
+        ) : null}
       </button>
       {panel}
     </div>
