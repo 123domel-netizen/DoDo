@@ -37,6 +37,10 @@ export const TOPIC_DRAG_GUTTER = "w-5 shrink-0";
 export const TOPIC_PIN_GUTTER = "w-7 shrink-0";
 export const TOPIC_TIME_SLOT = "w-11 shrink-0 text-right text-[10px] text-ink-faint";
 export const TOPIC_META_DOT = "w-2.5 shrink-0";
+/** Stała szerokość chevron/meta — żeby kolumny rodzica i podtematu się zgadzały. */
+export const TOPIC_TREE_GUTTER = "w-4 shrink-0";
+/** Wcięcie samego tytułu/podglądu podtematu (nie kolumn pól). */
+const TOPIC_CHILD_TITLE_INDENT = "pl-3";
 
 /** Spójny chip narzędzi belki (sort / filtr / widok). */
 const HEADER_TOOL =
@@ -385,7 +389,7 @@ export function TopicColumnsHeader({
     >
       <span className={TOPIC_DRAG_GUTTER} aria-hidden />
       <div className="flex min-w-0 flex-1 items-center gap-2 px-1.5">
-        <span className={TOPIC_META_DOT} aria-hidden />
+        <span className={TOPIC_TREE_GUTTER} aria-hidden />
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="shrink-0 text-[11px] font-medium text-ink-light">Temat</span>
           <span className="h-3.5 w-px shrink-0 bg-line/80" aria-hidden />
@@ -566,11 +570,7 @@ export function TopicRow({
         <span className={TOPIC_DRAG_GUTTER} aria-hidden />
       )}
 
-      <div
-        className={`flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1 ${
-          isChild ? "pl-5 sm:pl-7" : ""
-        }`}
-      >
+      <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1">
         {canExpand ? (
           <button
             type="button"
@@ -578,7 +578,7 @@ export function TopicRow({
               e.stopPropagation();
               onToggleExpand?.();
             }}
-            className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-surface-raised hover:text-ink"
+            className={`mt-0.5 flex h-4 items-center justify-center rounded text-ink-faint transition hover:bg-surface-raised hover:text-ink ${TOPIC_TREE_GUTTER}`}
             aria-expanded={expanded}
             aria-label={expanded ? "Zwiń podtematy" : "Rozwiń podtematy"}
             title={expanded ? "Zwiń" : `Rozwiń (${childCount})`}
@@ -586,7 +586,7 @@ export function TopicRow({
             {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </button>
         ) : (
-          <span className={`mt-0.5 ${TOPIC_META_DOT}`}>
+          <span className={`mt-0.5 flex items-center justify-center ${TOPIC_TREE_GUTTER}`}>
             {unread > 0 ? (
               <span className="block h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
             ) : topic.pinnedAt && section === "pinned" ? (
@@ -603,7 +603,9 @@ export function TopicRow({
               type="button"
               disabled={local && topic.sendState === "pending" && !topic.conversationId}
               onClick={() => onOpen(topic)}
-              className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-md text-left disabled:cursor-default"
+              className={`flex min-w-0 flex-1 items-baseline gap-1.5 rounded-md text-left disabled:cursor-default ${
+                isChild ? TOPIC_CHILD_TITLE_INDENT : ""
+              }`}
               aria-current={active ? "true" : undefined}
             >
               {parentLabel ? (
@@ -704,7 +706,9 @@ export function TopicRow({
             type="button"
             disabled={local && topic.sendState === "pending" && !topic.conversationId}
             onClick={() => onOpen(topic)}
-            className="mt-0.5 flex w-full items-center gap-1.5 text-left text-[11px] leading-snug text-ink-faint disabled:cursor-default"
+            className={`mt-0.5 flex w-full items-center gap-1.5 text-left text-[11px] leading-snug text-ink-faint disabled:cursor-default ${
+              isChild ? TOPIC_CHILD_TITLE_INDENT : ""
+            }`}
           >
             {topic.sendState === "pending" ? (
               <span className="block truncate">Zapisywanie…</span>

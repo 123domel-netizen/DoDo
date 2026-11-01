@@ -468,7 +468,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
 
         if (addingChildOf === t.id) {
           nodes.push(
-            <li key={`add-${t.id}`} className="px-1.5 pb-1 pl-7 sm:pl-9">
+            <li key={`add-${t.id}`} className="px-1.5 pb-1 pl-[2.75rem]">
               <QuickAddTopic
                 boardId={board.id}
                 parentId={t.id}
