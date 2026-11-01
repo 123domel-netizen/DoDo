@@ -10,20 +10,28 @@ export function BoardTopicViewMenu({
   fields,
   prefs,
   onChange,
+  localityEnabled = false,
+  localityOptions = [],
 }: {
   fields: BoardField[];
   prefs: BoardTopicViewPrefs;
   onChange: (next: BoardTopicViewPrefs) => void;
+  localityEnabled?: boolean;
+  localityOptions?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const choiceFields = fields.filter((f) => f.kind === "single" || f.kind === "multi");
-  const filterCount = Object.values(prefs.filters).reduce((n, ids) => n + ids.length, 0);
+  const fieldFilterCount = Object.values(prefs.filters).reduce((n, ids) => n + ids.length, 0);
+  const localityFilterCount = prefs.localities.length;
+  const filterCount = fieldFilterCount + localityFilterCount;
   /** null = wszystkie kolumny (domyślne). */
   const selectedColumns = new Set(prefs.columnIds ?? fields.map((f) => f.id));
   const columnCount = selectedColumns.size;
+  const showLocalityFilter = localityEnabled && localityOptions.length > 0;
+  const hasAnySection = fields.length > 0 || showLocalityFilter;
   const active =
     prefs.columnIds != null || filterCount > 0 || prefs.sort.mode !== "manual";
 
@@ -74,7 +82,7 @@ export function BoardTopicViewMenu({
     };
   }, [open]);
 
-  if (fields.length === 0) return null;
+  if (!hasAnySection) return null;
 
   const setSort = (sort: TopicViewSort) => onChange({ ...prefs, sort });
 
@@ -100,6 +108,13 @@ export function BoardTopicViewMenu({
     onChange({ ...prefs, filters });
   };
 
+  const toggleLocality = (locality: string) => {
+    const cur = new Set(prefs.localities);
+    if (cur.has(locality)) cur.delete(locality);
+    else cur.add(locality);
+    onChange({ ...prefs, localities: [...cur] });
+  };
+
   const panel =
     open && pos
       ? createPortal(
@@ -108,37 +123,64 @@ export function BoardTopicViewMenu({
             style={{ top: pos.top, left: pos.left, width: PANEL_W }}
             className="fixed z-[80] max-h-[min(70vh,calc(100vh-1rem))] overflow-y-auto thin-scrollbar rounded-lg border border-line bg-surface-overlay p-2.5 shadow-panel"
           >
-            <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-              <Columns3 size={11} /> Kolumny
-            </div>
-            <div className="mb-3 space-y-0.5">
-              {fields.map((f) => (
-                <label
-                  key={f.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedColumns.has(f.id)}
-                    onChange={() => toggleColumn(f.id)}
-                    className="accent-accent"
-                  />
-                  <span className="min-w-0 flex-1 truncate">
-                    {f.name}
-                    {f.visibility === "restricted" ? (
-                      <span className="ml-1 text-[10px] text-ink-faint">ukryte</span>
-                    ) : null}
-                  </span>
-                </label>
-              ))}
-            </div>
+            {fields.length > 0 && (
+              <>
+                <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                  <Columns3 size={11} /> Kolumny
+                </div>
+                <div className="mb-3 space-y-0.5">
+                  {fields.map((f) => (
+                    <label
+                      key={f.id}
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedColumns.has(f.id)}
+                        onChange={() => toggleColumn(f.id)}
+                        className="accent-accent"
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {f.name}
+                        {f.visibility === "restricted" ? (
+                          <span className="ml-1 text-[10px] text-ink-faint">ukryte</span>
+                        ) : null}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
 
-            {choiceFields.length > 0 && (
+            {(choiceFields.length > 0 || showLocalityFilter) && (
               <>
                 <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
                   <Filter size={11} /> Filtr
                 </div>
                 <div className="mb-3 space-y-2">
+                  {showLocalityFilter && (
+                    <div>
+                      <div className="mb-0.5 px-1.5 text-[11px] font-medium text-ink-light">
+                        Miejscowość
+                      </div>
+                      <div className="space-y-0.5">
+                        {localityOptions.map((loc) => (
+                          <label
+                            key={loc}
+                            className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-raised"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={prefs.localities.includes(loc)}
+                              onChange={() => toggleLocality(loc)}
+                              className="accent-accent"
+                            />
+                            <span className="min-w-0 flex-1 truncate">{loc}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {choiceFields.map((f) => (
                     <div key={f.id}>
                       <div className="mb-0.5 px-1.5 text-[11px] font-medium text-ink-light">{f.name}</div>

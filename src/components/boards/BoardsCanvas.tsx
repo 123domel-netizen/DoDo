@@ -8,8 +8,10 @@ import type { BoardField, BoardTopic, TopicSection } from "@/lib/boards/types";
 import {
   activeFilterChips,
   applyViewSort,
+  collectTopicLocalities,
   EMPTY_VIEW_PREFS,
   filterTopicsByFields,
+  filterTopicsByLocality,
   readViewPrefs,
   resolveColumnFields,
   sanitizeViewPrefs,
@@ -162,10 +164,12 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   );
 
   const now = useBoardsNow(topics);
-  const filteredTopics = useMemo(
-    () => filterTopicsByFields(topics, fields, prefs.filters),
-    [topics, fields, prefs.filters],
-  );
+  const localityOptions = useMemo(() => collectTopicLocalities(topics), [topics]);
+  const activeLocalities = board?.localityEnabled ? prefs.localities : [];
+  const filteredTopics = useMemo(() => {
+    const byFields = filterTopicsByFields(topics, fields, prefs.filters);
+    return filterTopicsByLocality(byFields, activeLocalities);
+  }, [topics, fields, prefs.filters, activeLocalities]);
   const grouped = useMemo(() => {
     const base = groupTopics(
       filteredTopics,
@@ -182,8 +186,10 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     () => activeFilterChips(prefs.filters, fields),
     [prefs.filters, fields],
   );
+  const localityChips = activeLocalities;
   // DnD tylko w trybie ręcznym bez filtrów (inaczej permutacja sekcji ≠ pełna lista).
-  const canDrag = prefs.sort.mode === "manual" && chips.length === 0;
+  const canDrag =
+    prefs.sort.mode === "manual" && chips.length === 0 && localityChips.length === 0;
 
   useEffect(() => {
     if (boardsStatus !== "ready" || boards.length === 0) return;
@@ -314,8 +320,25 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 px-3 pb-1.5 pt-2">
         <QuickAddTopic key={board.id} boardId={board.id} autoFocus={!mobile} />
-        {chips.length > 0 && (
+        {(chips.length > 0 || localityChips.length > 0) && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {localityChips.map((loc) => (
+              <button
+                key={`loc:${loc}`}
+                type="button"
+                onClick={() =>
+                  changePrefs({
+                    ...prefs,
+                    localities: prefs.localities.filter((x) => x !== loc),
+                  })
+                }
+                className="inline-flex items-center gap-1 rounded-md border border-line bg-surface-raised px-1.5 py-0.5 text-[10px] text-ink-light transition hover:border-line-strong hover:text-ink"
+                title="Usuń filtr"
+              >
+                <span className="text-ink-faint">Miejscowość:</span> {loc}
+                <X size={10} />
+              </button>
+            ))}
             {chips.map((c) => (
               <button
                 key={`${c.fieldId}:${c.optionId}`}
@@ -336,7 +359,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
             ))}
             <button
               type="button"
-              onClick={() => changePrefs({ ...prefs, filters: {} })}
+              onClick={() => changePrefs({ ...prefs, filters: {}, localities: [] })}
               className="px-1.5 text-[10px] text-ink-faint hover:text-ink-light"
             >
               Wyczyść
@@ -369,7 +392,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
             Żaden temat nie pasuje do filtrów.{" "}
             <button
               type="button"
-              onClick={() => changePrefs({ ...prefs, filters: {} })}
+              onClick={() => changePrefs({ ...prefs, filters: {}, localities: [] })}
               className="text-accent hover:underline"
             >
               Wyczyść filtry
@@ -382,6 +405,8 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
               allFields={fields}
               prefs={prefs}
               onChange={changePrefs}
+              localityEnabled={board.localityEnabled}
+              localityOptions={localityOptions}
             />
             <Section title="Przypięte" count={grouped.pinned.length} open>
               {renderRows(grouped.pinned, "pinned")}

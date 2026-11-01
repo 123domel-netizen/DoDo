@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { BoardField, BoardTopic } from "@/lib/boards/types";
 import {
+  collectTopicLocalities,
   compareByField,
   filterTopicsByFields,
+  filterTopicsByLocality,
   formatFieldCell,
   resolveColumnFields,
   sanitizeViewPrefs,
@@ -109,6 +111,38 @@ describe("filterTopicsByFields", () => {
   });
 });
 
+describe("filterTopicsByLocality", () => {
+  const list = [
+    topic("a", { locality: "Sępólno" }),
+    topic("b", { locality: "Więcbork" }),
+    topic("c", { locality: "Sępólno" }),
+    topic("d"),
+  ];
+
+  it("OR wybranych; puste = bez zmian", () => {
+    expect(filterTopicsByLocality(list, []).map((t) => t.id)).toEqual(["a", "b", "c", "d"]);
+    expect(filterTopicsByLocality(list, ["Sępólno"]).map((t) => t.id)).toEqual(["a", "c"]);
+    expect(filterTopicsByLocality(list, ["Sępólno", "Więcbork"]).map((t) => t.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+});
+
+describe("collectTopicLocalities", () => {
+  it("unikalne, posortowane po pl", () => {
+    expect(
+      collectTopicLocalities([
+        topic("a", { locality: "Więcbork" }),
+        topic("b", { locality: "Sępólno" }),
+        topic("c", { locality: "Sępólno" }),
+        topic("d"),
+      ]),
+    ).toEqual(["Sępólno", "Więcbork"]);
+  });
+});
+
 describe("compareByField", () => {
   it("puste na końcu, naturalnie", () => {
     const a = topic("a", { position: 2, fieldValues: { note: { text: "10", optionIds: [] } } });
@@ -125,34 +159,46 @@ describe("sanitizeViewPrefs", () => {
       {
         columnIds: ["status", "gone"],
         filters: { status: ["s1", "gone"], gone: ["x"] },
+        localities: ["Sępólno", ""],
         sort: { mode: "field", fieldId: "gone" },
       },
       [status],
     );
     expect(prefs.columnIds).toEqual(["status"]);
     expect(prefs.filters).toEqual({ status: ["s1"] });
+    expect(prefs.localities).toEqual(["Sępólno"]);
     expect(prefs.sort).toEqual({ mode: "manual" });
   });
 
   it("zachowuje null = wszystkie kolumny", () => {
-    expect(sanitizeViewPrefs({ columnIds: null, filters: {}, sort: { mode: "manual" } }, [status]).columnIds).toBe(
-      null,
-    );
+    expect(
+      sanitizeViewPrefs(
+        { columnIds: null, filters: {}, localities: [], sort: { mode: "manual" } },
+        [status],
+      ).columnIds,
+    ).toBe(null);
   });
 });
 
 describe("resolveColumnFields", () => {
   it("null/[] = wszystkie pola; lista = podzbiór", () => {
-    expect(resolveColumnFields({ columnIds: null, filters: {}, sort: { mode: "manual" } }, [status, tags])).toEqual([
-      status,
-      tags,
-    ]);
-    expect(resolveColumnFields({ columnIds: [], filters: {}, sort: { mode: "manual" } }, [status, tags])).toEqual([
-      status,
-      tags,
-    ]);
     expect(
-      resolveColumnFields({ columnIds: ["tags"], filters: {}, sort: { mode: "manual" } }, [status, tags]),
+      resolveColumnFields(
+        { columnIds: null, filters: {}, localities: [], sort: { mode: "manual" } },
+        [status, tags],
+      ),
+    ).toEqual([status, tags]);
+    expect(
+      resolveColumnFields(
+        { columnIds: [], filters: {}, localities: [], sort: { mode: "manual" } },
+        [status, tags],
+      ),
+    ).toEqual([status, tags]);
+    expect(
+      resolveColumnFields(
+        { columnIds: ["tags"], filters: {}, localities: [], sort: { mode: "manual" } },
+        [status, tags],
+      ),
     ).toEqual([tags]);
   });
 });
