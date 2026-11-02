@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { TopicFieldEditor } from "@/components/boards/TopicFieldEditor";
+import { FieldValueChips, TopicFieldEditor } from "@/components/boards/TopicFieldEditor";
 import { useBoardsStore } from "@/lib/boards/store";
 import type { BoardTopic } from "@/lib/boards/types";
 
@@ -51,7 +51,11 @@ export function TopicFields({ topic }: { topic: BoardTopic }) {
                 <span
                   className={`min-w-0 flex-1 truncate text-[12px] ${empty ? "text-ink-faint" : "text-ink"}`}
                 >
-                  {summary}
+                  {empty ? (
+                    summary
+                  ) : (
+                    <FieldValueChips field={f} value={topic.fieldValues[f.id]} />
+                  )}
                 </span>
               </button>
             )}

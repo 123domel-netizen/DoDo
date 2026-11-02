@@ -3,10 +3,13 @@ import type { BoardField, BoardTopic } from "@/lib/boards/types";
 import {
   collectTopicLocalities,
   compareByField,
+  compareSmart,
   filterTopicsByFields,
   filterTopicsByLocality,
   formatFieldCell,
+  prefsForBoardDefault,
   resolveColumnFields,
+  resolvePriorityField,
   sanitizeViewPrefs,
 } from "@/lib/boards/topicView";
 
@@ -55,8 +58,8 @@ const status = field({
   kind: "single",
   name: "Status",
   options: [
-    { id: "s1", label: "Nowe", position: 1 },
-    { id: "s2", label: "W toku", position: 2 },
+    { id: "s1", label: "Nowe", position: 1, color: "#7A6CB8" },
+    { id: "s2", label: "W toku", position: 2, color: "#4A8FC4" },
   ],
 });
 
@@ -65,12 +68,74 @@ const tags = field({
   kind: "multi",
   name: "Tagi",
   options: [
-    { id: "t1", label: "A", position: 1 },
-    { id: "t2", label: "B", position: 2 },
+    { id: "t1", label: "A", position: 1, color: "#4F9E7A" },
+    { id: "t2", label: "B", position: 2, color: null },
   ],
 });
 
 const note = field({ id: "note", kind: "text", name: "Notatka" });
+
+const priority = field({
+  id: "prio",
+  kind: "single",
+  name: "Priorytet",
+  position: 1,
+  options: [
+    { id: "p1", label: "Pilne", position: 1, color: "#C08F52" },
+    { id: "p2", label: "Ważne", position: 2, color: "#4A8FC4" },
+    { id: "p3", label: "Standard", position: 3, color: "#6A7280" },
+  ],
+});
+
+describe("resolvePriorityField", () => {
+  it("bierze pole o nazwie Priorytet, inaczej pierwsze single", () => {
+    expect(resolvePriorityField([status, priority])?.id).toBe("prio");
+    expect(resolvePriorityField([status, tags])?.id).toBe("status");
+    expect(resolvePriorityField([note, tags])).toBeNull();
+  });
+});
+
+describe("compareByField (kolejność opcji)", () => {
+  it("sortuje single wg position opcji, nie alfabetycznie", () => {
+    const a = topic("a", { fieldValues: { prio: { text: null, optionIds: ["p3"] } } }); // Standard
+    const b = topic("b", { fieldValues: { prio: { text: null, optionIds: ["p1"] } } }); // Pilne
+    const c = topic("c"); // puste
+    expect([a, b, c].sort((x, y) => compareByField(x, y, priority)).map((t) => t.id)).toEqual([
+      "b",
+      "a",
+      "c",
+    ]);
+  });
+});
+
+describe("compareSmart", () => {
+  it("priorytet → aktywność → kod", () => {
+    const urgentOld = topic("u-old", {
+      code: "Z",
+      lastActivityAt: "2026-10-01T00:00:00Z",
+      fieldValues: { prio: { text: null, optionIds: ["p1"] } },
+    });
+    const urgentNew = topic("u-new", {
+      code: "A",
+      lastActivityAt: "2026-10-10T00:00:00Z",
+      fieldValues: { prio: { text: null, optionIds: ["p1"] } },
+    });
+    const standard = topic("std", {
+      code: "B",
+      lastActivityAt: "2026-10-20T00:00:00Z",
+      fieldValues: { prio: { text: null, optionIds: ["p3"] } },
+    });
+    const empty = topic("empty", {
+      code: "C",
+      lastActivityAt: "2026-10-30T00:00:00Z",
+    });
+    expect(
+      [standard, empty, urgentOld, urgentNew]
+        .sort((a, b) => compareSmart(a, b, [priority, status]))
+        .map((t) => t.id),
+    ).toEqual(["u-new", "u-old", "std", "empty"]);
+  });
+});
 
 describe("formatFieldCell", () => {
   it("tekst i opcje", () => {
@@ -178,6 +243,31 @@ describe("sanitizeViewPrefs", () => {
         [status],
       ).columnIds,
     ).toBe(null);
+  });
+});
+
+describe("prefsForBoardDefault", () => {
+  it("wyrzuca pola ukryte z kolumn i filtrów", () => {
+    const hidden = field({
+      id: "secret",
+      kind: "single",
+      name: "Ukryte",
+      visibility: "restricted",
+      options: [{ id: "x", label: "X", position: 1, color: null }],
+    });
+    const prefs = prefsForBoardDefault(
+      {
+        columnIds: ["status", "secret"],
+        filters: { status: ["s1"], secret: ["x"] },
+        localities: ["Chojnice"],
+        sort: { mode: "field", fieldId: "secret" },
+      },
+      [status, hidden],
+    );
+    expect(prefs.columnIds).toEqual(["status"]);
+    expect(prefs.filters).toEqual({ status: ["s1"] });
+    expect(prefs.sort).toEqual({ mode: "manual" });
+    expect(prefs.localities).toEqual(["Chojnice"]);
   });
 });
 

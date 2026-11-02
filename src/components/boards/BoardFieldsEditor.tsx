@@ -11,10 +11,12 @@ import {
   type BoardField,
   type BoardFieldKind,
 } from "@/lib/boards/types";
+import { TAG_COLORS, defaultTagColor } from "@/lib/tags";
 
 interface OptionDraft {
   id?: string;
   label: string;
+  color: string;
 }
 
 interface FieldDraft {
@@ -31,7 +33,13 @@ function emptyDraft(kind: BoardFieldKind = "text"): FieldDraft {
     name: "",
     kind,
     hidden: false,
-    options: kind === "single" || kind === "multi" ? [{ label: "" }, { label: "" }] : [],
+    options:
+      kind === "single" || kind === "multi"
+        ? [
+            { label: "", color: defaultTagColor(0) },
+            { label: "", color: defaultTagColor(1) },
+          ]
+        : [],
     viewerIds: [],
   };
 }
@@ -44,10 +52,55 @@ function fieldToDraft(f: BoardField): FieldDraft {
     hidden: f.visibility === "restricted",
     options:
       f.kind === "single" || f.kind === "multi"
-        ? f.options.map((o) => ({ id: o.id, label: o.label }))
+        ? f.options.map((o, i) => ({
+            id: o.id,
+            label: o.label,
+            color: o.color ?? defaultTagColor(i),
+          }))
         : [],
     viewerIds: [...f.viewerIds],
   };
+}
+
+function OptionColorButton({
+  color,
+  onChange,
+}: {
+  color: string;
+  onChange: (color: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="mt-0.5 h-7 w-7 rounded-md border border-line transition hover:border-line-strong"
+        style={{ background: color }}
+        aria-label="Kolor opcji"
+        title="Kolor opcji"
+      />
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 flex flex-wrap gap-1 rounded-md border border-line bg-surface p-1.5 shadow-lg">
+          {TAG_COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => {
+                onChange(c);
+                setOpen(false);
+              }}
+              className={`h-5 w-5 rounded-full border transition hover:scale-110 ${
+                c === color ? "border-ink ring-1 ring-accent" : "border-line"
+              }`}
+              style={{ background: c }}
+              title={c}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const KIND_LABEL: Record<BoardFieldKind, string> = {
@@ -100,7 +153,7 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
       return;
     }
     let options = editing.options
-      .map((o) => ({ id: o.id, label: o.label.trim() }))
+      .map((o) => ({ id: o.id, label: o.label.trim(), color: o.color }))
       .filter((o) => o.label.length > 0);
     if (editing.kind === "single" || editing.kind === "multi") {
       if (options.length < 1) {
@@ -205,6 +258,14 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
               <div className="text-[10px] uppercase tracking-wide text-ink-faint">Opcje</div>
               {editing.options.map((o, i) => (
                 <div key={o.id ?? `new-${i}`} className="flex gap-1">
+                  <OptionColorButton
+                    color={o.color}
+                    onChange={(color) => {
+                      const options = [...editing.options];
+                      options[i] = { ...o, color };
+                      setEditing({ ...editing, options });
+                    }}
+                  />
                   <input
                     value={o.label}
                     maxLength={BOARD_FIELD_OPTION_MAX}
@@ -235,7 +296,13 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
                 <button
                   type="button"
                   onClick={() =>
-                    setEditing({ ...editing, options: [...editing.options, { label: "" }] })
+                    setEditing({
+                      ...editing,
+                      options: [
+                        ...editing.options,
+                        { label: "", color: defaultTagColor(editing.options.length) },
+                      ],
+                    })
                   }
                   className="inline-flex items-center gap-1 text-[11px] text-ink-faint transition hover:text-ink-light"
                 >

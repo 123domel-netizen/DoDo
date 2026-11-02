@@ -1,5 +1,10 @@
 import { byCodeAsc, byPositionAsc } from "@/lib/boards/sections";
-import type { BoardField, BoardTopic, GroupedTopics } from "@/lib/boards/types";
+import type {
+  BoardDefaultTopicView,
+  BoardField,
+  BoardTopic,
+  GroupedTopics,
+} from "@/lib/boards/types";
 
 /** Filtr: fieldId → wybrane optionId (OR w polu). Puste / brak klucza = bez filtra. */
 export type TopicFieldFilters = Record<string, string[]>;
@@ -7,6 +12,8 @@ export type TopicFieldFilters = Record<string, string[]>;
 export type TopicViewSort =
   | { mode: "manual" }
   | { mode: "code" }
+  /** Priorytet (kolejność opcji) → ostatnia aktywność → kod / data utworzenia. */
+  | { mode: "smart" }
   | { mode: "field"; fieldId: string };
 
 export interface BoardTopicViewPrefs {
@@ -21,6 +28,8 @@ export interface BoardTopicViewPrefs {
   localities: string[];
   sort: TopicViewSort;
 }
+
+type StoredViewPrefs = BoardTopicViewPrefs & { syncedDefaultRev?: number };
 
 export const EMPTY_VIEW_PREFS: BoardTopicViewPrefs = {
   columnIds: null,
@@ -46,40 +55,127 @@ export function viewStorageKey(boardId: string): string {
   return `dodo.boards.view.${boardId}`;
 }
 
-export function readViewPrefs(boardId: string): BoardTopicViewPrefs {
+function parsePrefsObject(raw: unknown): BoardTopicViewPrefs {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...EMPTY_VIEW_PREFS };
+  const parsed = raw as Partial<BoardTopicViewPrefs>;
+  return {
+    columnIds: parseColumnIds(parsed.columnIds),
+    filters: normalizeFilters(parsed.filters),
+    localities: normalizeLocalities(parsed.localities),
+    sort: parseSort(parsed.sort),
+  };
+}
+
+function readStoredViewPrefs(boardId: string): StoredViewPrefs | null {
   try {
     const raw = localStorage.getItem(viewStorageKey(boardId));
-    if (!raw) {
-      // Migracja ze starego globalnego sortu Kod/Ręczne
-      const legacy = localStorage.getItem("dodo.boards.topicListSort");
-      if (legacy === "code") return { ...EMPTY_VIEW_PREFS, sort: { mode: "code" } };
-      return { ...EMPTY_VIEW_PREFS };
-    }
-    const parsed = JSON.parse(raw) as Partial<BoardTopicViewPrefs>;
-    const sort = parseSort(parsed.sort);
-    return {
-      columnIds: parseColumnIds(parsed.columnIds),
-      filters: normalizeFilters(parsed.filters),
-      localities: normalizeLocalities(parsed.localities),
-      sort,
-    };
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredViewPrefs;
+    const prefs = parsePrefsObject(parsed);
+    const syncedDefaultRev =
+      typeof parsed.syncedDefaultRev === "number" && Number.isFinite(parsed.syncedDefaultRev)
+        ? Math.max(0, Math.floor(parsed.syncedDefaultRev))
+        : 0;
+    return { ...prefs, syncedDefaultRev };
   } catch {
-    return { ...EMPTY_VIEW_PREFS };
+    return null;
   }
 }
 
-export function writeViewPrefs(boardId: string, prefs: BoardTopicViewPrefs) {
+/** Lokalne prefs bez uwzględnienia domyślnego widoku tablicy (legacy). */
+export function readViewPrefs(boardId: string): BoardTopicViewPrefs {
+  const stored = readStoredViewPrefs(boardId);
+  if (stored) {
+    const { syncedDefaultRev: _, ...prefs } = stored;
+    return prefs;
+  }
+  const legacy = localStorage.getItem("dodo.boards.topicListSort");
+  if (legacy === "code") return { ...EMPTY_VIEW_PREFS, sort: { mode: "code" } };
+  return { ...EMPTY_VIEW_PREFS };
+}
+
+/**
+ * Preferencje do UI: lokalne, o ile nie ma nowszego domyślnego widoku tablicy.
+ * Po bumpie `defaultTopicViewRev` wszyscy dostają nowy default przy następnym wejściu.
+ */
+export function resolveViewPrefs(
+  boardId: string,
+  boardDefault: BoardDefaultTopicView | null | undefined,
+  boardDefaultRev: number,
+  fields: BoardField[],
+): BoardTopicViewPrefs {
+  const rev = Math.max(0, Math.floor(boardDefaultRev || 0));
+  const stored = readStoredViewPrefs(boardId);
+  const boardPrefs = sanitizeViewPrefs(
+    parsePrefsObject(boardDefault ?? EMPTY_VIEW_PREFS),
+    fields,
+  );
+
+  if (!stored) {
+    const legacy = localStorage.getItem("dodo.boards.topicListSort");
+    if (legacy === "code" && rev === 0 && !boardDefault) {
+      return { ...EMPTY_VIEW_PREFS, sort: { mode: "code" } };
+    }
+    const next = rev > 0 || boardDefault ? boardPrefs : { ...EMPTY_VIEW_PREFS };
+    writeViewPrefs(boardId, next, rev);
+    return next;
+  }
+
+  const { syncedDefaultRev = 0, ...personal } = stored;
+  if (rev > syncedDefaultRev) {
+    writeViewPrefs(boardId, boardPrefs, rev);
+    return boardPrefs;
+  }
+  return personal;
+}
+
+export function writeViewPrefs(
+  boardId: string,
+  prefs: BoardTopicViewPrefs,
+  syncedDefaultRev = 0,
+) {
   try {
-    localStorage.setItem(viewStorageKey(boardId), JSON.stringify(prefs));
+    const payload: StoredViewPrefs = {
+      ...prefs,
+      syncedDefaultRev: Math.max(0, Math.floor(syncedDefaultRev)),
+    };
+    localStorage.setItem(viewStorageKey(boardId), JSON.stringify(payload));
   } catch {
     /* ignore */
   }
+}
+
+/** Widok do zapisu jako default tablicy — tylko pola widoczne dla wszystkich. */
+export function prefsForBoardDefault(
+  prefs: BoardTopicViewPrefs,
+  fields: BoardField[],
+): BoardDefaultTopicView {
+  const publicFields = fields.filter((f) => f.visibility === "all");
+  const clean = sanitizeViewPrefs(prefs, publicFields);
+  return {
+    columnIds: clean.columnIds,
+    filters: clean.filters,
+    localities: clean.localities,
+    sort: clean.sort,
+  };
+}
+
+export function parseBoardDefaultView(raw: unknown): BoardDefaultTopicView | null {
+  if (raw == null) return null;
+  const prefs = parsePrefsObject(raw);
+  return {
+    columnIds: prefs.columnIds,
+    filters: prefs.filters,
+    localities: prefs.localities,
+    sort: prefs.sort,
+  };
 }
 
 function parseSort(raw: unknown): TopicViewSort {
   if (!raw || typeof raw !== "object") return { mode: "manual" };
   const s = raw as { mode?: string; fieldId?: string };
   if (s.mode === "code") return { mode: "code" };
+  if (s.mode === "smart") return { mode: "smart" };
   if (s.mode === "field" && typeof s.fieldId === "string" && s.fieldId) {
     return { mode: "field", fieldId: s.fieldId };
   }
@@ -151,7 +247,44 @@ function sortKeyForField(topic: BoardTopic, field: BoardField): string {
   return cell === "—" ? "" : cell;
 }
 
+/** Rank opcji (min. position wybranych); puste = Infinity (na końcu). */
+export function optionSortRank(topic: BoardTopic, field: BoardField): number {
+  if (field.kind === "text") return Number.POSITIVE_INFINITY;
+  const ids = topic.fieldValues[field.id]?.optionIds ?? [];
+  if (ids.length === 0) return Number.POSITIVE_INFINITY;
+  let best = Number.POSITIVE_INFINITY;
+  for (const id of ids) {
+    const opt = field.options.find((o) => o.id === id);
+    if (!opt) continue;
+    if (opt.position < best) best = opt.position;
+  }
+  return best;
+}
+
+/**
+ * Pole priorytetu: najpierw nazwa Priorytet/Priority (single),
+ * inaczej pierwsze single wg position na tablicy.
+ */
+export function resolvePriorityField(fields: BoardField[]): BoardField | null {
+  const singles = fields.filter((f) => f.kind === "single");
+  if (singles.length === 0) return null;
+  const named = singles.find((f) => /^(priorytet|priority)$/i.test(f.name.trim()));
+  if (named) return named;
+  return [...singles].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))[0] ?? null;
+}
+
 export function compareByField(a: BoardTopic, b: BoardTopic, field: BoardField): number {
+  if (field.kind === "single" || field.kind === "multi") {
+    const ra = optionSortRank(a, field);
+    const rb = optionSortRank(b, field);
+    if (ra !== rb) {
+      if (!Number.isFinite(ra) && !Number.isFinite(rb)) return byPositionAsc(a, b);
+      if (!Number.isFinite(ra)) return 1;
+      if (!Number.isFinite(rb)) return -1;
+      return ra - rb;
+    }
+    return byPositionAsc(a, b);
+  }
   const ka = sortKeyForField(a, field);
   const kb = sortKeyForField(b, field);
   if (!ka && !kb) return byPositionAsc(a, b);
@@ -159,6 +292,39 @@ export function compareByField(a: BoardTopic, b: BoardTopic, field: BoardField):
   if (!kb) return -1;
   const cmp = ka.localeCompare(kb, "pl", { numeric: true, sensitivity: "base" });
   if (cmp !== 0) return cmp;
+  return byPositionAsc(a, b);
+}
+
+/** Priorytet (kolejność opcji) → lastActivityAt → kod / createdAt. */
+export function compareSmart(a: BoardTopic, b: BoardTopic, fields: BoardField[]): number {
+  const priority = resolvePriorityField(fields);
+  if (priority) {
+    const ra = optionSortRank(a, priority);
+    const rb = optionSortRank(b, priority);
+    if (ra !== rb) {
+      if (!Number.isFinite(ra)) return 1;
+      if (!Number.isFinite(rb)) return -1;
+      return ra - rb;
+    }
+  }
+  const act = Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt);
+  if (Number.isFinite(act) && act !== 0) return act;
+  return byCodeAsc(a, b);
+}
+
+export function compareViewTopics(
+  a: BoardTopic,
+  b: BoardTopic,
+  sort: TopicViewSort,
+  fields: BoardField[],
+): number {
+  if (sort.mode === "smart") return compareSmart(a, b, fields);
+  if (sort.mode === "field") {
+    const field = fields.find((f) => f.id === sort.fieldId);
+    if (!field) return byPositionAsc(a, b);
+    return compareByField(a, b, field);
+  }
+  if (sort.mode === "code") return byCodeAsc(a, b);
   return byPositionAsc(a, b);
 }
 
@@ -221,16 +387,7 @@ export function sanitizeViewPrefs(
 
 export function applyViewSort(grouped: GroupedTopics, sort: TopicViewSort, fields: BoardField[]): GroupedTopics {
   if (sort.mode === "manual") return grouped;
-  if (sort.mode === "code") {
-    return {
-      ...grouped,
-      pinned: [...grouped.pinned].sort(byCodeAsc),
-      active: [...grouped.active].sort(byCodeAsc),
-    };
-  }
-  const field = fields.find((f) => f.id === sort.fieldId);
-  if (!field) return grouped;
-  const cmp = (a: BoardTopic, b: BoardTopic) => compareByField(a, b, field);
+  const cmp = (a: BoardTopic, b: BoardTopic) => compareViewTopics(a, b, sort, fields);
   return {
     ...grouped,
     pinned: [...grouped.pinned].sort(cmp),

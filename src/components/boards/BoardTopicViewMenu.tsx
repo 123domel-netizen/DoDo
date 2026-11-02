@@ -12,12 +12,20 @@ export function BoardTopicViewMenu({
   onChange,
   localityEnabled = false,
   localityOptions = [],
+  isOwner = false,
+  onSaveAsDefault,
+  saveAsDefaultBusy = false,
+  saveAsDefaultNotice = null,
 }: {
   fields: BoardField[];
   prefs: BoardTopicViewPrefs;
   onChange: (next: BoardTopicViewPrefs) => void;
   localityEnabled?: boolean;
   localityOptions?: string[];
+  isOwner?: boolean;
+  onSaveAsDefault?: () => void;
+  saveAsDefaultBusy?: boolean;
+  saveAsDefaultNotice?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -212,6 +220,10 @@ export function BoardTopicViewMenu({
               {(
                 [
                   { mode: "manual" as const, label: "Ręczne (przeciąganie)" },
+                  {
+                    mode: "smart" as const,
+                    label: "Priorytet → aktywność → kod",
+                  },
                   { mode: "code" as const, label: "Kod" },
                 ] as const
               ).map((opt) => (
@@ -245,6 +257,31 @@ export function BoardTopicViewMenu({
                 </label>
               ))}
             </div>
+
+            {isOwner && onSaveAsDefault ? (
+              <div className="mt-3 border-t border-line/60 pt-2">
+                <button
+                  type="button"
+                  disabled={saveAsDefaultBusy}
+                  onClick={onSaveAsDefault}
+                  className="w-full rounded-md border border-line px-2 py-1.5 text-left text-[11px] font-medium text-ink-light transition hover:border-line-strong hover:bg-surface-raised hover:text-ink disabled:opacity-50"
+                >
+                  {saveAsDefaultBusy ? "Zapisywanie…" : "Ustaw jako domyślny widok tablicy"}
+                </button>
+                <p className="mt-1 px-0.5 text-[10px] leading-snug text-ink-faint">
+                  Dla wszystkich członków. Pola ukryte nie wchodzą do domyślnego widoku.
+                </p>
+                {saveAsDefaultNotice ? (
+                  <p
+                    className={`mt-1 px-0.5 text-[10px] ${
+                      saveAsDefaultNotice.startsWith("Zapisano") ? "text-accent" : "text-red-400"
+                    }`}
+                  >
+                    {saveAsDefaultNotice}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>,
           document.body,
         )

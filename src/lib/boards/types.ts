@@ -22,6 +22,8 @@ export interface BoardFieldOption {
   id: string;
   label: string;
   position: number;
+  /** Hex `#RRGGBB` albo null (starsze / bez koloru). */
+  color: string | null;
 }
 
 export interface BoardField {
@@ -62,7 +64,26 @@ export interface Board {
   unreadCount: number;
   /** Czy QuickAdd / lista / szczegóły pokazują miejscowość tematu. */
   localityEnabled: boolean;
+  /**
+   * Domyślny widok listy (kolumny / filtry / sort) ustawiony przez właściciela.
+   * Parsowany w api/topicView; pola ukryte odfiltrowywane przy zapisie i odczycie.
+   */
+  defaultTopicView: BoardDefaultTopicView | null;
+  /** Monotoniczny rev — po bumpie członkowie dostają nowy domyślny widok. */
+  defaultTopicViewRev: number;
   members: BoardMember[];
+}
+
+/** Snapshot widoku listy zapisany na tablicy (jsonb). */
+export interface BoardDefaultTopicView {
+  columnIds: string[] | null;
+  filters: Record<string, string[]>;
+  localities: string[];
+  sort:
+    | { mode: "manual" }
+    | { mode: "code" }
+    | { mode: "smart" }
+    | { mode: "field"; fieldId: string };
 }
 
 export interface TopicComment {

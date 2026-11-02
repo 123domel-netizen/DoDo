@@ -15,7 +15,7 @@ import {
   Plus,
 } from "lucide-react";
 import { BoardTopicViewMenu } from "@/components/boards/BoardTopicViewMenu";
-import { TopicFieldEditor } from "@/components/boards/TopicFieldEditor";
+import { FieldValueChips, TopicFieldEditor } from "@/components/boards/TopicFieldEditor";
 import { useTopicActions } from "@/components/boards/topicActions";
 import {
   effectiveUnread,
@@ -39,6 +39,8 @@ export const TOPIC_TIME_SLOT = "w-11 shrink-0 text-right text-[10px] text-ink-fa
 export const TOPIC_META_DOT = "w-2.5 shrink-0";
 /** Stała szerokość chevron/meta — żeby kolumny rodzica i podtematu się zgadzały. */
 export const TOPIC_TREE_GUTTER = "w-4 shrink-0";
+/** Slot „+ podtemat” — zawsze zarezerwowany, żeby kolumny pól nie skakały. */
+export const TOPIC_ADD_CHILD_SLOT = "w-6 shrink-0";
 /** Wcięcie samego tytułu/podglądu podtematu (nie kolumn pól). */
 const TOPIC_CHILD_TITLE_INDENT = "pl-3";
 
@@ -86,16 +88,30 @@ export function SortModeChip({
     );
   }
 
+  if (sort.mode === "smart") {
+    return (
+      <button
+        type="button"
+        onClick={() => onChange({ ...prefs, sort: { mode: "manual" } })}
+        className={HEADER_TOOL_ACTIVE}
+        title="Priorytet → aktywność → kod. Kliknij: kolejność ręczna"
+      >
+        <ArrowDownAZ size={12} className="shrink-0 opacity-80" />
+        <span className="min-w-0 truncate">Priorytet+</span>
+      </button>
+    );
+  }
+
   const isCode = sort.mode === "code";
   return (
     <button
       type="button"
-      onClick={() => onChange({ ...prefs, sort: { mode: isCode ? "manual" : "code" } })}
+      onClick={() => onChange({ ...prefs, sort: { mode: isCode ? "manual" : "smart" } })}
       className={isCode ? HEADER_TOOL_ACTIVE : HEADER_TOOL_IDLE}
       title={
         isCode
           ? "Wg kodu. Kliknij: ręczne + przeciąganie"
-          : "Ręczne (przeciąganie). Kliknij: sortuj wg kodu"
+          : "Ręczne (przeciąganie). Kliknij: priorytet → aktywność → kod"
       }
     >
       {isCode ? (
@@ -316,13 +332,13 @@ function ColumnFilterHeader({
         title={active ? `${field.name} · filtr aktywny` : `Filtr: ${field.name}`}
         aria-expanded={open}
       >
-        <span className="min-w-0 flex-1 truncate">{field.name}</span>
         <Filter
           size={10}
           className={`shrink-0 transition ${
             active ? "opacity-100" : "opacity-35 group-hover/col:opacity-70"
           }`}
         />
+        <span className="min-w-0 flex-1 truncate">{field.name}</span>
       </button>
       {open &&
         pos &&
@@ -343,6 +359,13 @@ function ColumnFilterHeader({
                   onChange={() => onChange(toggleFilterOption(prefs, field.id, o.id))}
                   className="accent-accent"
                 />
+                {o.color ? (
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: o.color }}
+                    aria-hidden
+                  />
+                ) : null}
                 <span className="min-w-0 flex-1 truncate">{o.label}</span>
               </label>
             ))}
@@ -374,6 +397,10 @@ export function TopicColumnsHeader({
   onChange,
   localityEnabled = false,
   localityOptions = [],
+  isOwner = false,
+  onSaveAsDefault,
+  saveAsDefaultBusy = false,
+  saveAsDefaultNotice = null,
 }: {
   columnFields: BoardField[];
   allFields: BoardField[];
@@ -381,6 +408,10 @@ export function TopicColumnsHeader({
   onChange: (next: BoardTopicViewPrefs) => void;
   localityEnabled?: boolean;
   localityOptions?: string[];
+  isOwner?: boolean;
+  onSaveAsDefault?: () => void;
+  saveAsDefaultBusy?: boolean;
+  saveAsDefaultNotice?: string | null;
 }) {
   return (
     <div
@@ -404,6 +435,10 @@ export function TopicColumnsHeader({
               onChange={onChange}
               localityEnabled={localityEnabled}
               localityOptions={localityOptions}
+              isOwner={isOwner}
+              onSaveAsDefault={onSaveAsDefault}
+              saveAsDefaultBusy={saveAsDefaultBusy}
+              saveAsDefaultNotice={saveAsDefaultNotice}
             />
           </div>
         </div>
@@ -414,6 +449,7 @@ export function TopicColumnsHeader({
             ))}
           </div>
         )}
+        <span className={TOPIC_ADD_CHILD_SLOT} aria-hidden />
         <span className={TOPIC_TIME_SLOT} aria-hidden />
       </div>
       <span className={TOPIC_PIN_GUTTER} aria-hidden />
@@ -449,7 +485,11 @@ function TopicFieldCell({
           }`}
           title={`${field.name}: ${summary}`}
         >
-          {summary}
+          {empty ? (
+            summary
+          ) : (
+            <FieldValueChips field={field} value={topic.fieldValues[field.id]} compact />
+          )}
         </button>
       )}
     />
@@ -570,7 +610,7 @@ export function TopicRow({
         <span className={TOPIC_DRAG_GUTTER} aria-hidden />
       )}
 
-      <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1">
+      <div className="flex min-w-0 flex-1 items-start gap-2 px-1.5 py-1">
         {canExpand ? (
           <button
             type="button"
@@ -598,117 +638,60 @@ export function TopicRow({
         )}
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              disabled={local && topic.sendState === "pending" && !topic.conversationId}
-              onClick={() => onOpen(topic)}
-              className={`flex min-w-0 flex-1 items-baseline gap-1.5 rounded-md text-left disabled:cursor-default ${
-                isChild ? TOPIC_CHILD_TITLE_INDENT : ""
-              }`}
-              aria-current={active ? "true" : undefined}
-            >
-              {parentLabel ? (
-                <span className="shrink-0 truncate text-[11px] text-ink-faint">{parentLabel}</span>
-              ) : null}
-              {parentLabel ? (
-                <span className="shrink-0 text-[11px] text-ink-faint" aria-hidden>
-                  /
-                </span>
-              ) : null}
-              {topic.code && (
-                <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-faint">
-                  {topic.code}
-                </span>
-              )}
-              <span
-                className={`min-w-0 truncate text-[13px] leading-snug ${
-                  unread > 0 ? "font-semibold text-ink" : muted ? "text-ink-light" : "text-ink"
-                }`}
-              >
-                {topic.title}
-              </span>
-              {topic.locality ? (
-                <>
-                  <span className="shrink-0 text-[13px] leading-snug text-ink-faint" aria-hidden>
-                    -
-                  </span>
-                  <span
-                    className={`min-w-0 flex-1 truncate text-[13px] leading-snug ${
-                      unread > 0 ? "font-semibold text-ink" : muted ? "text-ink-light" : "text-ink"
-                    }`}
-                  >
-                    {topic.locality}
-                  </span>
-                </>
-              ) : (
-                <span className="min-w-0 flex-1" aria-hidden />
-              )}
-            </button>
-
-            {columnFields.length > 0 && (
-              <div className="hidden items-center sm:flex">
-                {columnFields.map((f) => (
-                  <TopicFieldCell key={f.id} field={f} topic={topic} disabled={fieldDisabled} />
-                ))}
-              </div>
-            )}
-
-            {!isChild && onAddChild && !local ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAddChild();
-                }}
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-faint opacity-0 transition hover:bg-surface-raised hover:text-ink group-hover:opacity-100 focus-visible:opacity-100"
-                aria-label="Dodaj podtemat"
-                title="Dodaj podtemat"
-              >
-                <Plus size={13} />
-              </button>
+          <button
+            type="button"
+            disabled={local && topic.sendState === "pending" && !topic.conversationId}
+            onClick={() => onOpen(topic)}
+            className={`flex w-full min-w-0 items-baseline gap-1.5 rounded-md text-left disabled:cursor-default ${
+              isChild ? TOPIC_CHILD_TITLE_INDENT : ""
+            }`}
+            aria-current={active ? "true" : undefined}
+          >
+            {parentLabel ? (
+              <span className="shrink-0 truncate text-[11px] text-ink-faint">{parentLabel}</span>
             ) : null}
-
-            {!local ? (
-              <span className={TOPIC_TIME_SLOT}>{formatTopicTime(topic.lastActivityAt, now)}</span>
-            ) : (
-              <span className={TOPIC_TIME_SLOT} aria-hidden />
+            {parentLabel ? (
+              <span className="shrink-0 text-[11px] text-ink-faint" aria-hidden>
+                /
+              </span>
+            ) : null}
+            {topic.code && (
+              <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-faint">
+                {topic.code}
+              </span>
             )}
-          </div>
-
-          {columnFields.length > 0 && (
-            <div className="mt-0.5 flex flex-wrap gap-x-1 gap-y-0.5 sm:hidden">
-              {columnFields.map((f) => (
-                <TopicFieldEditor
-                  key={f.id}
-                  field={f}
-                  topic={topic}
-                  disabled={fieldDisabled}
-                  trigger={({ summary, empty, disabled: d, toggle }) => (
-                    <button
-                      type="button"
-                      disabled={d}
-                      onClick={toggle}
-                      className={`rounded px-1 py-0.5 text-[10px] transition hover:bg-surface-raised disabled:opacity-50 ${
-                        empty ? "text-ink-faint" : "text-ink-light"
-                      }`}
-                      title={`${f.name}: ${summary}`}
-                    >
-                      <span className="opacity-60">{f.name}:</span> {summary}
-                    </button>
-                  )}
-                />
-              ))}
-            </div>
-          )}
+            <span
+              className={`min-w-0 truncate text-[13px] leading-snug ${
+                unread > 0 ? "font-semibold text-ink" : muted ? "text-ink-light" : "text-ink"
+              }`}
+            >
+              {topic.title}
+            </span>
+            {topic.locality ? (
+              <>
+                <span className="shrink-0 text-[13px] leading-snug text-ink-faint" aria-hidden>
+                  -
+                </span>
+                <span
+                  className={`min-w-0 flex-1 truncate text-[13px] leading-snug ${
+                    unread > 0 ? "font-semibold text-ink" : muted ? "text-ink-light" : "text-ink"
+                  }`}
+                >
+                  {topic.locality}
+                </span>
+              </>
+            ) : (
+              <span className="min-w-0 flex-1" aria-hidden />
+            )}
+          </button>
 
           <button
             type="button"
             disabled={local && topic.sendState === "pending" && !topic.conversationId}
             onClick={() => onOpen(topic)}
-            className={`mt-0.5 flex w-full items-center gap-1.5 text-left text-[11px] leading-snug text-ink-faint disabled:cursor-default ${
-              isChild ? TOPIC_CHILD_TITLE_INDENT : ""
-            }`}
+            className={`mt-0.5 flex w-full items-center gap-1.5 text-left text-[11px] leading-snug disabled:cursor-default ${
+              unread > 0 && preview ? "font-medium text-ink-light" : "text-ink-faint"
+            } ${isChild ? TOPIC_CHILD_TITLE_INDENT : ""}`}
           >
             {topic.sendState === "pending" ? (
               <span className="block truncate">Zapisywanie…</span>
@@ -756,6 +739,37 @@ export function TopicRow({
             )}
           </button>
         </div>
+
+        {columnFields.length > 0 && (
+          <div className="mt-0.5 hidden items-center sm:flex">
+            {columnFields.map((f) => (
+              <TopicFieldCell key={f.id} field={f} topic={topic} disabled={fieldDisabled} />
+            ))}
+          </div>
+        )}
+
+        {!isChild && onAddChild && !local ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddChild();
+            }}
+            className={`${TOPIC_ADD_CHILD_SLOT} mt-0.5 flex h-6 items-center justify-center rounded-md text-ink-faint opacity-0 transition hover:bg-surface-raised hover:text-ink group-hover:opacity-100 focus-visible:opacity-100`}
+            aria-label="Dodaj podtemat"
+            title="Dodaj podtemat"
+          >
+            <Plus size={13} />
+          </button>
+        ) : (
+          <span className={`${TOPIC_ADD_CHILD_SLOT} mt-0.5`} aria-hidden />
+        )}
+
+        {!local ? (
+          <span className={`${TOPIC_TIME_SLOT} mt-0.5`}>{formatTopicTime(topic.lastActivityAt, now)}</span>
+        ) : (
+          <span className={`${TOPIC_TIME_SLOT} mt-0.5`} aria-hidden />
+        )}
       </div>
 
       {topic.sendState === "failed" ? (

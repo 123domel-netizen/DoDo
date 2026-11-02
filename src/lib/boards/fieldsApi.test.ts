@@ -11,13 +11,15 @@ describe("rowToField / field_values", () => {
       visibility: "all",
       sort_order: 1,
       options: [
-        { id: "o1", label: "Nowe", sort_order: 1 },
-        { id: "o2", label: "W toku", sort_order: 2 },
+        { id: "o1", label: "Nowe", sort_order: 1, color: "#7A6CB8" },
+        { id: "o2", label: "W toku", sort_order: 2, color: "bad" },
       ],
       viewer_ids: ["u2"],
     });
     expect(f.kind).toBe("single");
     expect(f.options).toHaveLength(2);
+    expect(f.options[0]?.color).toBe("#7A6CB8");
+    expect(f.options[1]?.color).toBeNull();
     expect(f.viewerIds).toEqual(["u2"]);
   });
 
