@@ -57,8 +57,9 @@ function findTopic(
   return undefined;
 }
 
+/** Ikona + title — żeby pasek akcji mieścił się w jednym wierszu panelu. */
 const actionBtn =
-  "flex h-7 items-center gap-1 rounded-md border border-line bg-surface-raised px-1.5 text-[11px] text-ink transition hover:border-line-strong disabled:opacity-50";
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line bg-surface-raised text-ink transition hover:border-line-strong disabled:opacity-50";
 
 function EditableCode({ topic }: { topic: BoardTopic }) {
   const actions = useTopicActions(topic);
@@ -456,7 +457,7 @@ function TopicDetailBody({
         <TopicFields topic={topic} />
 
         {!pending && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          <div className="mt-1.5 flex flex-nowrap items-center gap-1 overflow-x-auto thin-scrollbar">
             {conversationId && (
               <PingButton
                 conversationId={conversationId}
@@ -470,9 +471,14 @@ function TopicDetailBody({
               />
             )}
             {!closed && isRoot && (
-              <button type="button" onClick={() => void actions.togglePin()} className={actionBtn}>
+              <button
+                type="button"
+                onClick={() => void actions.togglePin()}
+                className={actionBtn}
+                title={topic.pinnedAt ? "Odepnij" : "Przypnij"}
+                aria-label={topic.pinnedAt ? "Odepnij temat" : "Przypnij temat"}
+              >
                 {topic.pinnedAt ? <PinOff size={13} /> : <Pin size={13} />}
-                {topic.pinnedAt ? "Odepnij" : "Przypnij"}
               </button>
             )}
             {!closed && isRoot && (
@@ -483,46 +489,64 @@ function TopicDetailBody({
                   if (id) navigateToBoards({ boardId: board.id, topicId: id }, mobile ? "push" : "replace");
                 }}
                 className={actionBtn}
+                title="Dodaj podtemat"
+                aria-label="Dodaj podtemat"
               >
                 <Plus size={13} />
-                Podtemat
               </button>
             )}
             {!closed &&
               (snoozed ? (
-                <button type="button" onClick={() => void actions.wake()} className={actionBtn}>
+                <button
+                  type="button"
+                  onClick={() => void actions.wake()}
+                  className={actionBtn}
+                  title="Przywróć teraz"
+                  aria-label="Przywróć temat teraz"
+                >
                   <BellOff size={13} />
-                  Przywróć teraz
                 </button>
               ) : (
-                <SnoozeMenu onPick={(until) => void actions.snoozeUntil(until)} />
+                <SnoozeMenu onPick={(until) => void actions.snoozeUntil(until)} label="" />
               ))}
             {closed ? (
-              <button type="button" onClick={() => void actions.reopen()} className={actionBtn}>
+              <button
+                type="button"
+                onClick={() => void actions.reopen()}
+                className={actionBtn}
+                title="Otwórz ponownie"
+                aria-label="Otwórz temat ponownie"
+              >
                 <RotateCcw size={13} />
-                Otwórz ponownie
               </button>
             ) : (
-              <button type="button" onClick={() => void actions.close()} className={actionBtn}>
+              <button
+                type="button"
+                onClick={() => void actions.close()}
+                className={actionBtn}
+                title="Zamknij"
+                aria-label="Zamknij temat"
+              >
                 <CheckCheck size={13} />
-                Zamknij
               </button>
             )}
             <button
               type="button"
               onClick={() => startItemFromTopic(topic, "task", board.name)}
               className={actionBtn}
+              title="Zadanie"
+              aria-label="Dodaj zadanie"
             >
               <ListPlus size={13} />
-              Zadanie
             </button>
             <button
               type="button"
               onClick={() => startItemFromTopic(topic, "event", board.name)}
               className={actionBtn}
+              title="Wydarzenie"
+              aria-label="Dodaj wydarzenie"
             >
               <CalendarPlus size={13} />
-              Wydarzenie
             </button>
             {canDelete && (
               <button
@@ -530,6 +554,7 @@ function TopicDetailBody({
                 onClick={() => void onDelete()}
                 className={`${actionBtn} ml-auto hover:text-red-400`}
                 title="Usuń temat (tylko bez komentarzy)"
+                aria-label="Usuń temat"
               >
                 <Trash2 size={13} />
               </button>
