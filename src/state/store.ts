@@ -39,6 +39,7 @@ import { baseItemId } from "@/lib/itemId";
 import { normalizeAllDayRange } from "@/lib/allDay";
 import { isValidIso, sanitizeItemsRecord } from "@/lib/dates";
 import { startOfDay } from "date-fns";
+import { isBoardDateItemId } from "@/lib/boards/calendarOverlay";
 
 interface AppState {
   items: Record<string, Item>;
@@ -705,6 +706,12 @@ export const useStore = create<AppState>()(
           const base = s.draft ? { draft: null } : {};
           const normalized = id ? baseItemId(id) : null;
           if (normalized === null) return { ...base, editingId: null };
+          if (isBoardDateItemId(normalized)) {
+            void import("@/lib/boards/openBoardDateItem").then((m) => {
+              m.openBoardDateItem(normalized);
+            });
+            return { ...base, editingId: null };
+          }
           return { ...base, editingId: normalized };
         }),
 

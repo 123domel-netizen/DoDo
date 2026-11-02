@@ -107,6 +107,7 @@ const KIND_LABEL: Record<BoardFieldKind, string> = {
   single: "Jednokrotny wybór",
   multi: "Wielokrotny wybór",
   text: "Tekst",
+  date: "Data",
 };
 
 function fieldTypeLabel(f: BoardField): string {
@@ -253,6 +254,12 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
             className="w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
           />
 
+          {editing.kind === "date" && (
+            <p className="text-[11px] leading-snug text-ink-faint">
+              Ustawiona data tematu pojawia się w kalendarzu wszystkich członków tablicy.
+            </p>
+          )}
+
           {(editing.kind === "single" || editing.kind === "multi") && (
             <div className="space-y-1">
               <div className="text-[10px] uppercase tracking-wide text-ink-faint">Opcje</div>
@@ -378,7 +385,7 @@ export function BoardFieldsEditor({ board }: { board: Board }) {
 
       {!editing && (
         <div className="flex flex-wrap gap-1">
-          {(["single", "multi", "text"] as BoardFieldKind[]).map((k) => (
+          {(["single", "multi", "text", "date"] as BoardFieldKind[]).map((k) => (
             <button
               key={k}
               type="button"

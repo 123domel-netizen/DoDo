@@ -50,9 +50,9 @@ const HEADER_TOOL =
 const HEADER_TOOL_IDLE = `${HEADER_TOOL} text-ink-faint`;
 const HEADER_TOOL_ACTIVE = `${HEADER_TOOL} bg-accent/10 text-accent hover:bg-accent/15 hover:text-accent`;
 const HEADER_COL_LABEL =
-  "flex w-full min-w-0 items-center gap-1 truncate text-left text-[10px] font-medium tracking-wide text-ink-faint transition hover:text-ink-light";
+  "flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden text-left text-[10px] font-medium tracking-wide text-ink-faint transition hover:text-ink-light";
 const HEADER_COL_LABEL_ACTIVE =
-  "flex w-full min-w-0 items-center gap-1 truncate text-left text-[10px] font-medium tracking-wide text-accent transition hover:text-accent";
+  "flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden text-left text-[10px] font-medium tracking-wide text-accent transition hover:text-accent";
 
 function authorLabel(board: Board, userId: string | undefined, myUserId: string | null): string {
   if (!userId) return "";
@@ -317,14 +317,17 @@ function ColumnFilterHeader({
 
   if (!canFilter) {
     return (
-      <span className={`${TOPIC_FIELD_COL_CLASS} ${HEADER_COL_LABEL}`} title={field.name}>
-        <span className="min-w-0 flex-1 truncate">{field.name}</span>
+      <span
+        className={`${TOPIC_FIELD_COL_CLASS} flex items-center text-left text-[10px] font-medium tracking-wide text-ink-faint`}
+        title={field.name}
+      >
+        <span className="min-w-0 truncate">{field.name}</span>
       </span>
     );
   }
 
   return (
-    <div ref={rootRef} className={`group/col relative ${TOPIC_FIELD_COL_CLASS}`}>
+    <div ref={rootRef} className={`group/col relative ${TOPIC_FIELD_COL_CLASS} overflow-hidden`}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -443,7 +446,7 @@ export function TopicColumnsHeader({
           </div>
         </div>
         {columnFields.length > 0 && (
-          <div className="hidden items-center sm:flex">
+          <div className="hidden shrink-0 items-center sm:flex">
             {columnFields.map((f) => (
               <ColumnFilterHeader key={f.id} field={f} prefs={prefs} onChange={onChange} />
             ))}
@@ -471,6 +474,7 @@ function TopicFieldCell({
       field={field}
       topic={topic}
       disabled={disabled}
+      className={`${TOPIC_FIELD_COL_CLASS} overflow-hidden`}
       trigger={({ summary, empty, disabled: d, toggle }) => (
         <button
           type="button"
@@ -480,13 +484,13 @@ function TopicFieldCell({
             toggle();
           }}
           onMouseDown={(e) => e.stopPropagation()}
-          className={`${TOPIC_FIELD_COL_CLASS} rounded text-left transition hover:bg-surface-raised hover:text-ink disabled:cursor-default disabled:opacity-50 ${
+          className={`flex w-full min-w-0 items-center overflow-hidden rounded text-left transition hover:bg-surface-raised hover:text-ink disabled:cursor-default disabled:opacity-50 ${
             empty ? "text-ink-faint" : "text-ink-light"
           }`}
           title={`${field.name}: ${summary}`}
         >
           {empty ? (
-            summary
+            <span className="truncate">{summary}</span>
           ) : (
             <FieldValueChips field={field} value={topic.fieldValues[field.id]} compact />
           )}
@@ -741,7 +745,7 @@ export function TopicRow({
         </div>
 
         {columnFields.length > 0 && (
-          <div className="mt-0.5 hidden items-center sm:flex">
+          <div className="mt-0.5 hidden shrink-0 items-center sm:flex">
             {columnFields.map((f) => (
               <TopicFieldCell key={f.id} field={f} topic={topic} disabled={fieldDisabled} />
             ))}

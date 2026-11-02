@@ -61,6 +61,8 @@ export interface BoardsState {
   loadBoards: () => Promise<void>;
   loadTopics: (boardId: string) => Promise<void>;
   loadFields: (boardId: string) => Promise<void>;
+  /** Dociąga tematy+pola wszystkich tablic (overlay dat w kalendarzu). */
+  ensureCalendarOverlayData: () => Promise<void>;
   selectBoard: (boardId: string | null) => void;
   selectTopic: (topicId: string | null) => void;
   setNotice: (notice: string | null) => void;
@@ -389,6 +391,14 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         fieldsByBoard: { ...s.fieldsByBoard, [boardId]: res.fields },
         fieldsStatus: { ...s.fieldsStatus, [boardId]: "ready" },
       }));
+    },
+
+    ensureCalendarOverlayData: async () => {
+      const boards = get().boards;
+      if (boards.length === 0) return;
+      await Promise.all(
+        boards.flatMap((b) => [get().loadFields(b.id), get().loadTopics(b.id)]),
+      );
     },
 
     selectBoard: (boardId) =>
