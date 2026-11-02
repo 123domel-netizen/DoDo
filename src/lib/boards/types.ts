@@ -15,7 +15,7 @@ export const BOARD_FIELDS_MAX = 20;
 export const BOARD_FIELD_OPTIONS_MAX = 20;
 
 /** Typ wartości pola tablicy. Ukrycie = visibility restricted (dowolny kind). */
-export type BoardFieldKind = "single" | "multi" | "text";
+export type BoardFieldKind = "single" | "multi" | "text" | "date";
 export type BoardFieldVisibility = "all" | "restricted";
 
 export interface BoardFieldOption {

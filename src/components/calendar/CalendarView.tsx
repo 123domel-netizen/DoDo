@@ -1,9 +1,11 @@
-import { useMemo, useCallback, lazy, Suspense, type ComponentType } from "react";
+import { useMemo, useCallback, useEffect, lazy, Suspense, type ComponentType } from "react";
 import { addDays, addMonths, startOfDay } from "date-fns";
 import { useStore } from "@/state/store";
 import { useSchedulesAvailable } from "@/hooks/useScheduleRepo";
-import { useEffectiveMainAreaMode } from "@/hooks/useBoards";
+import { useBoardsAvailable, useEffectiveMainAreaMode } from "@/hooks/useBoards";
 import { BoardsCanvas } from "@/components/boards/BoardsCanvas";
+import { boardDateItemsFromTopics } from "@/lib/boards/calendarOverlay";
+import { useBoardsStore } from "@/lib/boards/store";
 import { getViewDays } from "@/lib/time";
 import { isValidDate } from "@/lib/dates";
 import { itemMatchesGroupFilter, groupIdForNewItem } from "@/lib/groups";
@@ -68,6 +70,25 @@ export function CalendarView({
     return map;
   }, [groupsArr]);
 
+  const boardsAvailable = useBoardsAvailable();
+  const boards = useBoardsStore((s) => s.boards);
+  const topicsByBoard = useBoardsStore((s) => s.topicsByBoard);
+  const fieldsByBoard = useBoardsStore((s) => s.fieldsByBoard);
+  const ensureCalendarOverlayData = useBoardsStore((s) => s.ensureCalendarOverlayData);
+
+  useEffect(() => {
+    if (!boardsAvailable) return;
+    void ensureCalendarOverlayData();
+  }, [boardsAvailable, boards.length, ensureCalendarOverlayData]);
+
+  const boardDateItems = useMemo(
+    () =>
+      boardsAvailable
+        ? boardDateItemsFromTopics({ boards, topicsByBoard, fieldsByBoard })
+        : [],
+    [boardsAvailable, boards, topicsByBoard, fieldsByBoard],
+  );
+
   const filteredItems = useMemo(
     () =>
       Object.values(itemsMap).filter((it) =>
@@ -77,13 +98,15 @@ export function CalendarView({
   );
 
   const items = useMemo(() => {
-    const base = filteredItems
-      .filter((it) => it.hasDueDate && it.showInCalendar)
-      .map(withNormalizedAllDay);
+    const base = [
+      ...filteredItems.filter((it) => it.hasDueDate && it.showInCalendar).map(withNormalizedAllDay),
+      // Daty z Tablic zawsze w kalendarzu (nie zależą od filtra grupy).
+      ...boardDateItems.map(withNormalizedAllDay),
+    ];
     if (!days.length) return base;
     const rangeEnd = addDays(days[days.length - 1], 1);
     return expandItemsForRange(base, days[0], rangeEnd);
-  }, [filteredItems, days]);
+  }, [filteredItems, boardDateItems, days]);
 
   /** Zadania na wybrany dzień (sekcja ZADANIA w widoku dnia). */
   const tasksForSelectedDay = useMemo(() => {

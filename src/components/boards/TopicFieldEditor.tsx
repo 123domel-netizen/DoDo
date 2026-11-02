@@ -2,6 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import { useBoardsStore } from "@/lib/boards/store";
 import {
+  formatBoardFieldYmd,
+  plDisplayToYmd,
+  ymdToPlDisplay,
+} from "@/lib/boards/calendarOverlay";
+import {
   BOARD_FIELD_TEXT_MAX,
   type BoardField,
   type BoardTopic,
@@ -9,6 +14,9 @@ import {
 } from "@/lib/boards/types";
 
 export function fieldDisplayValue(field: BoardField, value: TopicFieldValue | undefined): string {
+  if (field.kind === "date") {
+    return formatBoardFieldYmd(value?.text);
+  }
   if (field.kind === "text") {
     const t = value?.text?.trim();
     return t || "—";
@@ -41,21 +49,44 @@ export function FieldValueChips({
   empty?: string;
   compact?: boolean;
 }) {
-  if (field.kind === "text") {
+  if (field.kind === "text" || field.kind === "date") {
+    if (field.kind === "date") {
+      const label = formatBoardFieldYmd(value?.text);
+      return <>{label === "—" ? empty : label}</>;
+    }
     const t = value?.text?.trim();
     return <>{t || empty}</>;
   }
   const selected = fieldSelectedOptions(field, value);
   if (selected.length === 0) return <>{empty}</>;
+
+  // Wąskie kolumny listy: jedna linia (kropka + tekst), bez rozpychania szerokości.
+  if (compact) {
+    const color = selected.find((o) => o.color)?.color ?? null;
+    const label = selected.map((o) => o.label).join(", ");
+    return (
+      <span className="flex min-w-0 max-w-full items-center gap-1 overflow-hidden">
+        {color ? (
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: color }}
+            aria-hidden
+          />
+        ) : null}
+        <span className="min-w-0 truncate" style={color ? { color } : undefined}>
+          {label}
+        </span>
+      </span>
+    );
+  }
+
   return (
-    <span className={`inline-flex min-w-0 max-w-full items-center ${compact ? "gap-0.5" : "gap-1"}`}>
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
       {selected.map((o) =>
         o.color ? (
           <span
             key={o.id}
-            className={`inline-flex min-w-0 max-w-full items-center gap-1 truncate rounded px-1 py-px font-medium ${
-              compact ? "text-[10px]" : "text-[11px]"
-            }`}
+            className="inline-flex min-w-0 max-w-full items-center gap-1 truncate rounded px-1 py-px text-[11px] font-medium"
             style={{ background: `${o.color}22`, border: `1px solid ${o.color}55`, color: o.color }}
           >
             <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: o.color }} />
@@ -83,6 +114,7 @@ export function TopicFieldEditor({
   disabled,
   trigger,
   panelWidth = 176,
+  className,
 }: {
   field: BoardField;
   topic: BoardTopic;
@@ -95,6 +127,7 @@ export function TopicFieldEditor({
     toggle: () => void;
   }) => ReactNode;
   panelWidth?: number;
+  className?: string;
 }) {
   const setTopicFieldValue = useBoardsStore((s) => s.setTopicFieldValue);
   const value = topic.fieldValues[field.id];
@@ -227,6 +260,26 @@ export function TopicFieldEditor({
               />
             )}
 
+            {field.kind === "date" && (
+              <DateFieldPanel
+                initialYmd={value?.text ?? null}
+                busy={busy}
+                disabled={Boolean(disabled)}
+                onSave={async (ymd) => {
+                  setBusy(true);
+                  setText(ymd ?? "");
+                  await setTopicFieldValue({
+                    topicId: topic.id,
+                    fieldId: field.id,
+                    textValue: ymd,
+                    optionIds: [],
+                  });
+                  setBusy(false);
+                  setOpen(false);
+                }}
+              />
+            )}
+
             {field.kind === "single" && (
               <div className="max-h-48 space-y-0.5 overflow-y-auto thin-scrollbar">
                 {field.options.length === 0 ? (
@@ -318,7 +371,7 @@ export function TopicFieldEditor({
       : null;
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className={`relative min-w-0 ${className ?? ""}`.trim()}>
       {trigger({
         summary,
         empty,
@@ -329,6 +382,83 @@ export function TopicFieldEditor({
         },
       })}
       {panel}
+    </div>
+  );
+}
+
+function DateFieldPanel({
+  initialYmd,
+  busy,
+  disabled,
+  onSave,
+}: {
+  initialYmd: string | null;
+  busy: boolean;
+  disabled: boolean;
+  onSave: (ymd: string | null) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(() => ymdToPlDisplay(initialYmd));
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(ymdToPlDisplay(initialYmd));
+    setError(null);
+  }, [initialYmd]);
+
+  const commit = async () => {
+    if (disabled || busy) return;
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      if (!initialYmd) return;
+      setError(null);
+      await onSave(null);
+      return;
+    }
+    const ymd = plDisplayToYmd(trimmed);
+    if (!ymd) {
+      setError("Użyj formatu dd.mm.rrrr");
+      return;
+    }
+    if (ymd === (initialYmd?.trim() || null)) return;
+    setError(null);
+    await onSave(ymd);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <input
+        autoFocus
+        inputMode="numeric"
+        placeholder="dd.mm.rrrr"
+        value={draft}
+        disabled={busy || disabled}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (error) setError(null);
+        }}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void commit();
+          }
+        }}
+        className="w-full rounded-md border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+        aria-label="Data (dd.mm.rrrr)"
+      />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] text-ink-faint">{error ?? "Format: dd.mm.rrrr"}</span>
+        {initialYmd ? (
+          <button
+            type="button"
+            disabled={busy || disabled}
+            onClick={() => void onSave(null)}
+            className="shrink-0 px-1 text-[11px] text-ink-faint hover:text-ink-light"
+          >
+            Wyczyść
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

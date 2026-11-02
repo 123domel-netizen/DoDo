@@ -108,7 +108,7 @@ function rowToComment(raw: unknown): TopicComment | null {
 }
 
 function asFieldKind(v: unknown): BoardFieldKind {
-  if (v === "single" || v === "multi" || v === "text") return v;
+  if (v === "single" || v === "multi" || v === "text" || v === "date") return v;
   return "text";
 }
 

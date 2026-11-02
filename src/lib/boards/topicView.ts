@@ -230,7 +230,7 @@ export function collectTopicLocalities(topics: BoardTopic[]): string[] {
 /** Skrót wartości pola do komórki / chipa. */
 export function formatFieldCell(topic: BoardTopic, field: BoardField): string {
   const value = topic.fieldValues[field.id];
-  if (field.kind === "text") {
+  if (field.kind === "text" || field.kind === "date") {
     const t = value?.text?.trim();
     return t || "—";
   }
@@ -249,7 +249,7 @@ function sortKeyForField(topic: BoardTopic, field: BoardField): string {
 
 /** Rank opcji (min. position wybranych); puste = Infinity (na końcu). */
 export function optionSortRank(topic: BoardTopic, field: BoardField): number {
-  if (field.kind === "text") return Number.POSITIVE_INFINITY;
+  if (field.kind !== "single" && field.kind !== "multi") return Number.POSITIVE_INFINITY;
   const ids = topic.fieldValues[field.id]?.optionIds ?? [];
   if (ids.length === 0) return Number.POSITIVE_INFINITY;
   let best = Number.POSITIVE_INFINITY;
