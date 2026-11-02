@@ -72,10 +72,16 @@ export function SnoozeMenu({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex h-7 items-center gap-1 rounded-md border border-line bg-surface-raised px-1.5 text-[11px] text-ink transition hover:border-line-strong disabled:opacity-50"
+        aria-label={label.trim() || "Odłóż"}
+        title={label.trim() || "Odłóż"}
+        className={
+          label.trim()
+            ? "flex h-7 items-center gap-1 rounded-md border border-line bg-surface-raised px-1.5 text-[11px] text-ink transition hover:border-line-strong disabled:opacity-50"
+            : "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line bg-surface-raised text-ink transition hover:border-line-strong disabled:opacity-50"
+        }
       >
         <BellOff size={13} />
-        {label}
+        {label.trim() ? label : null}
       </button>
       {open && (
         <div

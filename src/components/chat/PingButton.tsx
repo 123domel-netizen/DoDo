@@ -67,7 +67,7 @@ export function PingButton({
 
   const btnClass =
     variant === "action"
-      ? `inline-flex items-center gap-1 rounded-md border border-red-600/40 bg-red-600/15 px-2 py-1 text-[11px] font-semibold text-red-500 transition hover:bg-red-600/25 disabled:opacity-50 ${className}`
+      ? `inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-red-600/40 bg-red-600/15 px-1.5 text-[10px] font-semibold text-red-500 transition hover:bg-red-600/25 disabled:opacity-50 ${className}`
       : `inline-flex items-center gap-1 rounded-lg bg-red-600 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 ${className}`;
 
   return (
