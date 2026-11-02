@@ -13,12 +13,62 @@ export function fieldDisplayValue(field: BoardField, value: TopicFieldValue | un
     const t = value?.text?.trim();
     return t || "—";
   }
+  const selected = fieldSelectedOptions(field, value);
+  return selected.length > 0 ? selected.map((o) => o.label).join(", ") : "—";
+}
+
+export function fieldSelectedOptions(
+  field: BoardField,
+  value: TopicFieldValue | undefined,
+): { id: string; label: string; color: string | null }[] {
+  if (field.kind === "text") return [];
   const ids = value?.optionIds ?? [];
-  if (ids.length === 0) return "—";
-  const labels = ids
-    .map((id) => field.options.find((o) => o.id === id)?.label)
-    .filter((x): x is string => Boolean(x));
-  return labels.length > 0 ? labels.join(", ") : "—";
+  return ids
+    .map((id) => field.options.find((o) => o.id === id))
+    .filter((o): o is NonNullable<typeof o> => Boolean(o))
+    .map((o) => ({ id: o.id, label: o.label, color: o.color }));
+}
+
+/** Kolorowe chipy wartości choice — lista / szczegóły tematu. */
+export function FieldValueChips({
+  field,
+  value,
+  empty = "—",
+  compact = false,
+}: {
+  field: BoardField;
+  value: TopicFieldValue | undefined;
+  empty?: string;
+  compact?: boolean;
+}) {
+  if (field.kind === "text") {
+    const t = value?.text?.trim();
+    return <>{t || empty}</>;
+  }
+  const selected = fieldSelectedOptions(field, value);
+  if (selected.length === 0) return <>{empty}</>;
+  return (
+    <span className={`inline-flex min-w-0 max-w-full items-center ${compact ? "gap-0.5" : "gap-1"}`}>
+      {selected.map((o) =>
+        o.color ? (
+          <span
+            key={o.id}
+            className={`inline-flex min-w-0 max-w-full items-center gap-1 truncate rounded px-1 py-px font-medium ${
+              compact ? "text-[10px]" : "text-[11px]"
+            }`}
+            style={{ background: `${o.color}22`, border: `1px solid ${o.color}55`, color: o.color }}
+          >
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: o.color }} />
+            <span className="truncate">{o.label}</span>
+          </span>
+        ) : (
+          <span key={o.id} className="truncate">
+            {o.label}
+          </span>
+        ),
+      )}
+    </span>
+  );
 }
 
 type PanelPos = { top: number; left: number; width: number };
@@ -188,11 +238,18 @@ export function TopicFieldEditor({
                       type="button"
                       disabled={busy}
                       onClick={() => void saveOptions([o.id], true)}
-                      className={`flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-surface-raised ${
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-surface-raised ${
                         selected.has(o.id) ? "text-accent" : "text-ink"
                       }`}
                     >
-                      {o.label}
+                      {o.color ? (
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ background: o.color }}
+                          aria-hidden
+                        />
+                      ) : null}
+                      <span className="min-w-0 flex-1 truncate">{o.label}</span>
                     </button>
                   ))
                 )}
@@ -233,6 +290,13 @@ export function TopicFieldEditor({
                           }}
                           className="accent-accent"
                         />
+                        {o.color ? (
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ background: o.color }}
+                            aria-hidden
+                          />
+                        ) : null}
                         <span className="min-w-0 flex-1 truncate">{o.label}</span>
                       </label>
                     );

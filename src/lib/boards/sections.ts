@@ -45,12 +45,12 @@ export function topicSection(topic: BoardTopic, now: Date): TopicSection {
   return "active";
 }
 
-function byActivityDesc(a: BoardTopic, b: BoardTopic): number {
+export function byActivityDesc(a: BoardTopic, b: BoardTopic): number {
   const d = ms(b.lastActivityAt) - ms(a.lastActivityAt);
   if (d !== 0) return d;
   const c = ms(b.createdAt) - ms(a.createdAt);
   if (c !== 0) return c;
-  // Stabilna kolejno?? ? lista nie ?migocze? przy rï¿½wnych znacznikach czasu.
+  // Stabilna kolejno?? — lista nie migocze przy równych znacznikach czasu.
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 

@@ -14,11 +14,13 @@ import {
   activeFilterChips,
   applyViewSort,
   collectTopicLocalities,
+  compareViewTopics,
   EMPTY_VIEW_PREFS,
   filterTopicsByFields,
   filterTopicsByLocality,
-  readViewPrefs,
+  prefsForBoardDefault,
   resolveColumnFields,
+  resolveViewPrefs,
   sanitizeViewPrefs,
   writeViewPrefs,
   type BoardTopicViewPrefs,
@@ -180,26 +182,58 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
       setAddingChildOf(null);
       return;
     }
-    setViewPrefs(readViewPrefs(boardId));
     setCollapsed(readCollapsed(boardId));
     setAddingChildOf(null);
   }, [boardId]);
+
+  const boardDefaultRev = board?.defaultTopicViewRev ?? 0;
+  const boardDefaultView = board?.defaultTopicView ?? null;
+
+  useEffect(() => {
+    if (!boardId) {
+      setViewPrefs(EMPTY_VIEW_PREFS);
+      return;
+    }
+    setViewPrefs(resolveViewPrefs(boardId, boardDefaultView, boardDefaultRev, fields));
+  }, [boardId, boardDefaultView, boardDefaultRev, fields]);
 
   const prefs = useMemo(() => sanitizeViewPrefs(viewPrefs, fields), [viewPrefs, fields]);
 
   const changePrefs = useCallback(
     (next: BoardTopicViewPrefs) => {
-      if (!boardId) return;
+      if (!boardId || !board) return;
       const clean = sanitizeViewPrefs(next, fields);
       setViewPrefs(clean);
-      writeViewPrefs(boardId, clean);
+      writeViewPrefs(boardId, clean, board.defaultTopicViewRev);
       setDragSection(null);
       setDragParentId(null);
       setDragId(null);
       setOverId(null);
     },
-    [boardId, fields],
+    [boardId, board, fields],
   );
+
+  const setBoardDefaultTopicView = useBoardsStore((s) => s.setBoardDefaultTopicView);
+  const [defaultViewBusy, setDefaultViewBusy] = useState(false);
+  const [defaultViewNotice, setDefaultViewNotice] = useState<string | null>(null);
+
+  const saveAsBoardDefault = useCallback(async () => {
+    if (!board || board.myRole !== "owner" || defaultViewBusy) return;
+    setDefaultViewBusy(true);
+    setDefaultViewNotice(null);
+    const view = prefsForBoardDefault(prefs, fields);
+    const res = await setBoardDefaultTopicView(board.id, view);
+    setDefaultViewBusy(false);
+    if (res.error) {
+      setDefaultViewNotice(res.error);
+      return;
+    }
+    const rev = res.rev ?? board.defaultTopicViewRev + 1;
+    const applied = sanitizeViewPrefs(view, fields);
+    writeViewPrefs(board.id, applied, rev);
+    setViewPrefs(applied);
+    setDefaultViewNotice("Zapisano jako domyślny widok tablicy.");
+  }, [board, defaultViewBusy, prefs, fields, setBoardDefaultTopicView]);
 
   const now = useBoardsNow(topics);
   const localityOptions = useMemo(() => collectTopicLocalities(topics), [topics]);
@@ -212,7 +246,7 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   }, [topics, fields, prefs.filters, activeLocalities]);
   const grouped = useMemo(() => {
     const base = groupTopics(filteredTopics, now, listSort);
-    if (prefs.sort.mode !== "field") return base;
+    if (prefs.sort.mode === "manual" || prefs.sort.mode === "code") return base;
     return applyViewSort(base, prefs.sort, fields);
   }, [filteredTopics, now, listSort, prefs.sort, fields]);
   const topicById = useMemo(
@@ -365,7 +399,11 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
 
     for (const t of list) {
       const children = nestable
-        ? openChildrenOf(t.id, filteredTopics, now, listSort)
+        ? (() => {
+            const list = openChildrenOf(t.id, filteredTopics, now, listSort);
+            if (prefs.sort.mode === "manual" || prefs.sort.mode === "code") return list;
+            return [...list].sort((a, b) => compareViewTopics(a, b, prefs.sort, fields));
+          })()
         : [];
       const expanded = !collapsed.has(t.id);
       const rootDrag =
@@ -578,6 +616,10 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
               onChange={changePrefs}
               localityEnabled={board.localityEnabled}
               localityOptions={localityOptions}
+              isOwner={board.myRole === "owner"}
+              onSaveAsDefault={() => void saveAsBoardDefault()}
+              saveAsDefaultBusy={defaultViewBusy}
+              saveAsDefaultNotice={defaultViewNotice}
             />
             <Section title="Przypięte" count={grouped.pinned.length} open>
               {renderRows(grouped.pinned, "pinned")}

@@ -15,6 +15,7 @@ import {
 } from "@/lib/boards/sections";
 import type {
   Board,
+  BoardDefaultTopicView,
   BoardField,
   BoardFieldKind,
   BoardFieldVisibility,
@@ -73,6 +74,10 @@ export interface BoardsState {
     boardId: string,
     enabled: boolean,
   ) => Promise<{ error?: string }>;
+  setBoardDefaultTopicView: (
+    boardId: string,
+    view: BoardDefaultTopicView,
+  ) => Promise<{ rev?: number; error?: string }>;
   addMembers: (boardId: string, userIds: string[]) => Promise<{ error?: string }>;
   removeMember: (boardId: string, userId: string) => Promise<{ error?: string }>;
   archiveBoard: (boardId: string) => Promise<{ error?: string }>;
@@ -108,7 +113,7 @@ export interface BoardsState {
     name: string;
     kind: BoardFieldKind;
     visibility: BoardFieldVisibility;
-    options: { id?: string; label: string }[];
+    options: { id?: string; label: string; color?: string | null }[];
     viewerIds: string[];
   }) => Promise<{ id?: string; error?: string }>;
   deleteField: (boardId: string, fieldId: string) => Promise<{ error?: string }>;
@@ -433,6 +438,19 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
       }));
       const res = await api.setBoardLocalityEnabled(boardId, enabled);
       if (res.error) set({ boards: prev });
+      return res;
+    },
+
+    setBoardDefaultTopicView: async (boardId, view) => {
+      const res = await api.setBoardDefaultTopicView(boardId, view);
+      if (res.error || res.rev == null) return res;
+      set((s) => ({
+        boards: s.boards.map((b) =>
+          b.id === boardId
+            ? { ...b, defaultTopicView: view, defaultTopicViewRev: res.rev! }
+            : b,
+        ),
+      }));
       return res;
     },
 

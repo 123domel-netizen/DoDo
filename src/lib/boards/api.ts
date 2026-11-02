@@ -1,6 +1,8 @@
 import { cloudEnabled, supabase } from "@/lib/supabase";
+import { parseBoardDefaultView } from "@/lib/boards/topicView";
 import type {
   Board,
+  BoardDefaultTopicView,
   BoardField,
   BoardFieldKind,
   BoardFieldOption,
@@ -79,6 +81,8 @@ export function rowToBoard(row: Row): Board {
     myRole: asRole(row.my_role),
     unreadCount: Number(row.unread_count ?? 0),
     localityEnabled: Boolean(row.locality_enabled),
+    defaultTopicView: parseBoardDefaultView(row.default_topic_view),
+    defaultTopicViewRev: Number(row.default_topic_view_rev ?? 0) || 0,
     members: members.map(
       (m): BoardMember => ({
         userId: m.userId as string,
@@ -140,11 +144,17 @@ export function rowToField(row: Row): BoardField {
     visibility: asFieldVisibility(row.visibility),
     position: Number(row.sort_order ?? row.position ?? 0),
     options: optionsRaw.map(
-      (o): BoardFieldOption => ({
-        id: o.id as string,
-        label: (o.label as string) ?? "",
-        position: Number(o.sort_order ?? o.position ?? 0),
-      }),
+      (o): BoardFieldOption => {
+        const colorRaw = o.color;
+        const color =
+          typeof colorRaw === "string" && /^#[0-9A-Fa-f]{6}$/.test(colorRaw) ? colorRaw : null;
+        return {
+          id: o.id as string,
+          label: (o.label as string) ?? "",
+          position: Number(o.sort_order ?? o.position ?? 0),
+          color,
+        };
+      },
     ),
     viewerIds: viewerIds.filter((id) => typeof id === "string"),
   };
@@ -235,6 +245,19 @@ export async function setBoardLocalityEnabled(
     p_enabled: enabled,
   });
   return error ? { error: mapBoardError(error.message) } : {};
+}
+
+export async function setBoardDefaultTopicView(
+  boardId: string,
+  view: BoardDefaultTopicView,
+): Promise<{ rev?: number; error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { data, error } = await supabase.rpc("board_set_default_topic_view", {
+    p_board_id: boardId,
+    p_view: view,
+  });
+  if (error) return { error: mapBoardError(error.message) };
+  return { rev: Number(data ?? 0) || 0 };
 }
 
 export async function setBoardArchived(
@@ -386,7 +409,7 @@ export async function upsertBoardField(input: {
   kind: BoardFieldKind;
   visibility: BoardFieldVisibility;
   position?: number | null;
-  options: { id?: string; label: string }[];
+  options: { id?: string; label: string; color?: string | null }[];
   viewerIds: string[];
 }): Promise<{ id?: string; error?: string }> {
   if (!supabase) return { error: "Brak chmury." };
@@ -397,9 +420,11 @@ export async function upsertBoardField(input: {
     p_kind: input.kind,
     p_visibility: input.visibility,
     p_sort_order: input.position ?? null,
-    p_options: input.options.map((o) =>
-      o.id ? { id: o.id, label: o.label } : { label: o.label },
-    ),
+    p_options: input.options.map((o) => {
+      const color =
+        typeof o.color === "string" && /^#[0-9A-Fa-f]{6}$/.test(o.color) ? o.color : null;
+      return o.id ? { id: o.id, label: o.label, color } : { label: o.label, color };
+    }),
     p_viewer_ids: input.viewerIds,
   });
   if (error) return { error: mapBoardError(error.message) };
