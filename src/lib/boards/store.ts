@@ -76,6 +76,11 @@ export interface BoardsState {
     boardId: string,
     enabled: boolean,
   ) => Promise<{ error?: string }>;
+  setBoardChatBridge: (
+    boardId: string,
+    enabled: boolean,
+    conversationId: string | null,
+  ) => Promise<{ error?: string }>;
   setBoardDefaultTopicView: (
     boardId: string,
     view: BoardDefaultTopicView,
@@ -447,6 +452,28 @@ export const useBoardsStore = create<BoardsState>()((set, get) => {
         ),
       }));
       const res = await api.setBoardLocalityEnabled(boardId, enabled);
+      if (res.error) set({ boards: prev });
+      return res;
+    },
+
+    setBoardChatBridge: async (boardId, enabled, conversationId) => {
+      const prev = get().boards;
+      set((s) => ({
+        boards: s.boards.map((b) =>
+          b.id === boardId
+            ? {
+                ...b,
+                chatBridgeEnabled: enabled,
+                chatBridgeConversationId: enabled ? conversationId : null,
+              }
+            : b,
+        ),
+      }));
+      const res = await api.setBoardChatBridge(
+        boardId,
+        enabled,
+        enabled ? conversationId : null,
+      );
       if (res.error) set({ boards: prev });
       return res;
     },
