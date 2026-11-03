@@ -21,6 +21,8 @@ function board(over: Partial<Board> = {}): Board {
     myRole: "member",
     unreadCount: 0,
     localityEnabled: false,
+    chatBridgeEnabled: false,
+    chatBridgeConversationId: null,
     defaultTopicView: null,
     defaultTopicViewRev: 0,
     members: [],

@@ -7,6 +7,7 @@ import { defaultBoardName } from "@/lib/boards/sections";
 import { navigateToBoards } from "@/lib/boards/runtime";
 import { useBoardsStore } from "@/lib/boards/store";
 import { BOARD_NAME_MAX, type Board } from "@/lib/boards/types";
+import { useChatStore } from "@/lib/chat/store";
 
 interface Person {
   userId: string;
@@ -194,13 +195,23 @@ export function ManageBoardDialog({
   const orgId = useBoardsStore((s) => s.orgId);
   const renameBoard = useBoardsStore((s) => s.renameBoard);
   const setBoardLocalityEnabled = useBoardsStore((s) => s.setBoardLocalityEnabled);
+  const setBoardChatBridge = useBoardsStore((s) => s.setBoardChatBridge);
   const addMembers = useBoardsStore((s) => s.addMembers);
   const removeMember = useBoardsStore((s) => s.removeMember);
   const archiveBoard = useBoardsStore((s) => s.archiveBoard);
+  const chatOverview = useChatStore((s) => s.overview);
   const isOwner = board.myRole === "owner";
   const { people, loading } = usePeople(open && isOwner, orgId, myUserId);
   const memberIds = useMemo(() => new Set(board.members.map((m) => m.userId)), [board.members]);
   const candidates = useMemo(() => people.filter((p) => !memberIds.has(p.userId)), [people, memberIds]);
+  const channelOptions = useMemo(
+    () =>
+      chatOverview
+        .filter((e) => e.kind === "channel" && !e.myArchivedAt)
+        .map((e) => ({ id: e.id, name: e.name?.trim() || "Kanał" }))
+        .sort((a, b) => a.name.localeCompare(b.name, "pl")),
+    [chatOverview],
+  );
   const [name, setName] = useState(board.name);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -354,6 +365,76 @@ export function ManageBoardDialog({
                   Wyłączona
                 </button>
               </div>
+            </div>
+            <div className="mb-3 rounded-lg border border-line bg-surface-raised p-2.5">
+              <div className="mb-1 text-[11px] font-medium text-ink">Kanał czatu</div>
+              <p className="mb-2 text-[11px] leading-snug text-ink-faint">
+                Gdy włączone, komentarze z tematów pojawiają się w wybranym kanale jako delikatne
+                wiadomości wątku (jeden wątek na temat).
+              </p>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  disabled={busy || (!board.chatBridgeConversationId && channelOptions.length === 0)}
+                  onClick={() => {
+                    const channelId =
+                      board.chatBridgeConversationId ?? channelOptions[0]?.id ?? null;
+                    if (!channelId) {
+                      setError("Brak kanałów czatu do podłączenia.");
+                      return;
+                    }
+                    void run(() => setBoardChatBridge(board.id, true, channelId));
+                  }}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    board.chatBridgeEnabled
+                      ? "bg-accent text-white"
+                      : "border border-line text-ink-light hover:bg-surface"
+                  }`}
+                >
+                  Włączony
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void run(() => setBoardChatBridge(board.id, false, null))}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    !board.chatBridgeEnabled
+                      ? "bg-accent text-white"
+                      : "border border-line text-ink-light hover:bg-surface"
+                  }`}
+                >
+                  Wyłączony
+                </button>
+              </div>
+              {(board.chatBridgeEnabled || channelOptions.length > 0) && (
+                <label className="mt-2 block">
+                  <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+                    Kanał
+                  </span>
+                  <select
+                    disabled={busy || channelOptions.length === 0}
+                    value={board.chatBridgeConversationId ?? ""}
+                    onChange={(e) => {
+                      const next = e.target.value || null;
+                      if (!next) {
+                        void run(() => setBoardChatBridge(board.id, false, null));
+                        return;
+                      }
+                      void run(() => setBoardChatBridge(board.id, true, next));
+                    }}
+                    className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                  >
+                    <option value="" disabled>
+                      {channelOptions.length === 0 ? "Brak kanałów" : "Wybierz kanał…"}
+                    </option>
+                    {channelOptions.map((ch) => (
+                      <option key={ch.id} value={ch.id}>
+                        #{ch.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
             <BoardFieldsEditor board={board} />
           </>

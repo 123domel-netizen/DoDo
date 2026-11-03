@@ -189,6 +189,16 @@ export interface MessagePayload {
   /** Stub w źródle po przeniesieniu. */
   movedStub?: boolean;
   moved?: MessageMovedMeta;
+  /**
+   * Lustrzane komentarze z Tablicy w kanale czatu (root wątku / odpowiedź).
+   * Chroni przed pętlą mirror→mirror po stronie DB.
+   */
+  boardMirror?: {
+    role: "root" | "reply";
+    boardId: string;
+    topicId: string;
+    sourceMessageId?: string;
+  };
 }
 
 /** Status galerii: cały zestaw zdjęć zapisywanych w magazynie zespołu. */

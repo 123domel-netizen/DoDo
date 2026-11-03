@@ -28,6 +28,17 @@ export function mapBoardError(message: string | undefined | null): string {
   if (!m) return "Nieznany błąd.";
   if (m.includes("not authenticated")) return "Zaloguj się ponownie.";
   if (m.includes("not a board owner")) return "Tylko właściciel tablicy może to zrobić.";
+  if (m.includes("chat bridge requires channel")) {
+    return "Wybierz kanał czatu, do którego mają trafiać komentarze.";
+  }
+  if (m.includes("chat bridge target must be channel")) {
+    return "Most można podłączyć tylko do kanału czatu.";
+  }
+  if (m.includes("channel not found")) return "Nie znaleziono wybranego kanału.";
+  if (m.includes("channel is archived")) return "Wybrany kanał jest zarchiwizowany.";
+  if (m.includes("not a channel member")) {
+    return "Musisz być członkiem wybranego kanału.";
+  }
   if (m.includes("not a board member") || m.includes("row-level security")) {
     return "Brak dostępu do tej tablicy.";
   }
@@ -83,6 +94,8 @@ export function rowToBoard(row: Row): Board {
     localityEnabled: Boolean(row.locality_enabled),
     defaultTopicView: parseBoardDefaultView(row.default_topic_view),
     defaultTopicViewRev: Number(row.default_topic_view_rev ?? 0) || 0,
+    chatBridgeEnabled: Boolean(row.chat_bridge_enabled),
+    chatBridgeConversationId: (row.chat_bridge_conversation_id as string | null) ?? null,
     members: members.map(
       (m): BoardMember => ({
         userId: m.userId as string,
@@ -243,6 +256,20 @@ export async function setBoardLocalityEnabled(
   const { error } = await supabase.rpc("board_set_locality_enabled", {
     p_board_id: boardId,
     p_enabled: enabled,
+  });
+  return error ? { error: mapBoardError(error.message) } : {};
+}
+
+export async function setBoardChatBridge(
+  boardId: string,
+  enabled: boolean,
+  conversationId: string | null,
+): Promise<{ error?: string }> {
+  if (!supabase) return { error: "Brak chmury." };
+  const { error } = await supabase.rpc("board_set_chat_bridge", {
+    p_board_id: boardId,
+    p_enabled: enabled,
+    p_conversation_id: conversationId,
   });
   return error ? { error: mapBoardError(error.message) } : {};
 }

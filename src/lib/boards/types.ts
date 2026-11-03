@@ -71,6 +71,13 @@ export interface Board {
   defaultTopicView: BoardDefaultTopicView | null;
   /** Monotoniczny rev — po bumpie członkowie dostają nowy domyślny widok. */
   defaultTopicViewRev: number;
+  /**
+   * Most do kanału czatu: komentarze w tematach lustrzane jako adnotacje wątku.
+   * Włączenie wymaga `chatBridgeConversationId`.
+   */
+  chatBridgeEnabled: boolean;
+  /** Id rozmowy `kind=channel` docelowej dla mostu (lub null gdy wyłączony). */
+  chatBridgeConversationId: string | null;
   members: BoardMember[];
 }
 
