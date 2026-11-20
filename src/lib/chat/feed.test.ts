@@ -5,6 +5,7 @@ import {
   defaultThreadTitle,
   findSelfNotesEntry,
   groupThreadAnnotations,
+  isBoardMirrorRoot,
   isMuted,
   isSelfNotesConversation,
   isGroupDmConversation,
@@ -745,6 +746,51 @@ describe("groupThreadAnnotations", () => {
     expect(items).toEqual([
       { type: "message", msg: expect.objectContaining({ id: "b" }) },
       { type: "message", msg: expect.objectContaining({ id: "c" }) },
+    ]);
+  });
+
+  it("pomija root mostu Tablic — zostaje tylko adnotacja odpowiedzi", () => {
+    const root = msg({
+      id: "root-board",
+      body: "Zgłoszenie Ogrodu zimowego Polna",
+      threadTitle: "Zgłoszenie Ogrodu zimowego Polna",
+      payload: {
+        boardMirror: {
+          role: "root",
+          boardId: "b1",
+          topicId: "t1",
+        },
+      },
+    });
+    const reply = msg({
+      id: "reply-board",
+      body: "Wymagana decyzja WZ. trzeba przygotowac rysunki",
+      threadRootId: "root-board",
+      authorUserId: "u2",
+      payload: {
+        boardMirror: {
+          role: "reply",
+          boardId: "b1",
+          topicId: "t1",
+          sourceMessageId: "src1",
+        },
+      },
+    });
+    expect(isBoardMirrorRoot(root)).toBe(true);
+    expect(isBoardMirrorRoot(reply)).toBe(false);
+
+    const main = groupThreadAnnotations([root, reply], false);
+    expect(main).toEqual([
+      {
+        type: "threadGroup",
+        rootId: "root-board",
+        messages: [expect.objectContaining({ id: "reply-board" })],
+      },
+    ]);
+
+    const inThread = groupThreadAnnotations([root, reply], true);
+    expect(inThread).toEqual([
+      { type: "message", msg: expect.objectContaining({ id: "reply-board" }) },
     ]);
   });
 });

@@ -6,6 +6,8 @@ import {
   compareSmart,
   filterTopicsByFields,
   filterTopicsByLocality,
+  filterTopicsByTextQuery,
+  isTopicTextQueryActive,
   formatFieldCell,
   prefsForBoardDefault,
   resolveColumnFields,
@@ -193,6 +195,44 @@ describe("filterTopicsByLocality", () => {
       "b",
       "c",
     ]);
+  });
+});
+
+describe("filterTopicsByTextQuery", () => {
+  const list = [
+    topic("a", { title: "Zgłoszenie Ogrodu", code: "N01", locality: "Sępólno" }),
+    topic("b", { title: "Staś i Nel", code: "N02", locality: "Więcbork" }),
+    topic("c", { title: "Ogród zimowy", locality: "Sępólno" }),
+  ];
+
+  it("puste = bez zmian; title szuka w tytule/kodzie/miejscowości", () => {
+    expect(isTopicTextQueryActive({})).toBe(false);
+    expect(filterTopicsByTextQuery(list, {}).map((t) => t.id)).toEqual(["a", "b", "c"]);
+    expect(filterTopicsByTextQuery(list, { title: "ogród" }).map((t) => t.id)).toEqual([
+      "a",
+      "c",
+    ]);
+    expect(filterTopicsByTextQuery(list, { title: "ogrod" }).map((t) => t.id)).toEqual([
+      "a",
+      "c",
+    ]);
+    expect(filterTopicsByTextQuery(list, { title: "n02" }).map((t) => t.id)).toEqual(["b"]);
+    expect(filterTopicsByTextQuery(list, { title: "więcbork" }).map((t) => t.id)).toEqual([
+      "b",
+    ]);
+  });
+
+  it("kod i miejscowość zawężają AND", () => {
+    expect(filterTopicsByTextQuery(list, { code: "n0" }).map((t) => t.id)).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(
+      filterTopicsByTextQuery(list, { title: "ogrod", locality: "Sępólno" }).map((t) => t.id),
+    ).toEqual(["a", "c"]);
+    expect(
+      filterTopicsByTextQuery(list, { title: "ogrod", locality: "Więcbork" }).map((t) => t.id),
+    ).toEqual([]);
   });
 });
 
