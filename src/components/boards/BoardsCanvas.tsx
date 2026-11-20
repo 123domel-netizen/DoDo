@@ -18,7 +18,10 @@ import {
   EMPTY_VIEW_PREFS,
   filterTopicsByFields,
   filterTopicsByLocality,
+  filterTopicsByTextQuery,
+  isTopicTextQueryActive,
   prefsForBoardDefault,
+  type TopicTextQuery,
   resolveColumnFields,
   resolveViewPrefs,
   sanitizeViewPrefs,
@@ -171,6 +174,13 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   const [overId, setOverId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [addingChildOf, setAddingChildOf] = useState<string | null>(null);
+  const [topicQuery, setTopicQuery] = useState<TopicTextQuery>({
+    code: "",
+    title: "",
+    locality: "",
+  });
+  /** Remount paska po zmianie tablicy / „Wyczyść”, by zsynchronizować inputy. */
+  const [queryBarNonce, setQueryBarNonce] = useState(0);
 
   const board = boards.find((b) => b.id === activeBoardId) ?? null;
   const boardId = board?.id ?? null;
@@ -180,10 +190,13 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
       setViewPrefs(EMPTY_VIEW_PREFS);
       setCollapsed(new Set());
       setAddingChildOf(null);
+      setTopicQuery({ code: "", title: "", locality: "" });
       return;
     }
     setCollapsed(readCollapsed(boardId));
     setAddingChildOf(null);
+    setTopicQuery({ code: "", title: "", locality: "" });
+    setQueryBarNonce((n) => n + 1);
   }, [boardId]);
 
   const boardDefaultRev = board?.defaultTopicViewRev ?? 0;
@@ -239,11 +252,13 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   const localityOptions = useMemo(() => collectTopicLocalities(topics), [topics]);
   const activeLocalities = board?.localityEnabled ? prefs.localities : [];
   const listSort: "manual" | "code" = prefs.sort.mode === "code" ? "code" : "manual";
+  const textQueryActive = isTopicTextQueryActive(topicQuery);
   const filteredTopics = useMemo(() => {
     const byFields = filterTopicsByFields(topics, fields, prefs.filters);
     const byLocality = filterTopicsByLocality(byFields, activeLocalities);
-    return ensureTopicParents(byLocality, topics);
-  }, [topics, fields, prefs.filters, activeLocalities]);
+    const byText = filterTopicsByTextQuery(byLocality, topicQuery);
+    return ensureTopicParents(byText, topics);
+  }, [topics, fields, prefs.filters, activeLocalities, topicQuery]);
   const grouped = useMemo(() => {
     const base = groupTopics(filteredTopics, now, listSort);
     if (prefs.sort.mode === "manual" || prefs.sort.mode === "code") return base;
@@ -528,7 +543,12 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 px-3 py-1">
-        <QuickAddTopic key={board.id} boardId={board.id} autoFocus={!mobile} />
+        <QuickAddTopic
+          key={`${board.id}:${queryBarNonce}`}
+          boardId={board.id}
+          autoFocus={!mobile}
+          onQueryChange={setTopicQuery}
+        />
         {(chips.length > 0 || localityChips.length > 0) && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
             {localityChips.map((loc) => (
@@ -594,17 +614,21 @@ export function BoardsCanvas({ mobile = false }: { mobile?: boolean }) {
           <div className="px-3 py-10 text-center text-xs text-ink-faint">Ładowanie tematów…</div>
         ) : topics.length === 0 ? (
           <div className="px-6 py-10 text-center text-xs text-ink-faint">
-            Brak tematów. Wpisz pierwszy powyżej i naciśnij Enter.
+            Brak tematów. Wpisz pierwszy powyżej i kliknij Dodaj.
           </div>
         ) : filteredTopics.length === 0 ? (
           <div className="px-6 py-10 text-center text-xs text-ink-faint">
             Żaden temat nie pasuje do filtrów.{" "}
             <button
               type="button"
-              onClick={() => changePrefs({ ...prefs, filters: {}, localities: [] })}
+              onClick={() => {
+                setTopicQuery({ code: "", title: "", locality: "" });
+                setQueryBarNonce((n) => n + 1);
+                changePrefs({ ...prefs, filters: {}, localities: [] });
+              }}
               className="text-accent hover:underline"
             >
-              Wyczyść filtry
+              {textQueryActive ? "Wyczyść wyszukiwanie i filtry" : "Wyczyść filtry"}
             </button>
           </div>
         ) : (

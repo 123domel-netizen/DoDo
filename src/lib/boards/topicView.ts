@@ -363,6 +363,53 @@ export function filterTopicsByLocality(
   return topics.filter((t) => t.locality != null && want.has(t.locality));
 }
 
+export type TopicTextQuery = {
+  code?: string;
+  title?: string;
+  locality?: string;
+};
+
+/** Lowercase + zdejmij diakrytyki (ogród ≈ ogrod). */
+function foldSearchText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+}
+
+/** Czy pasek szybkiego dodawania ma aktywną frazę wyszukiwania. */
+export function isTopicTextQueryActive(query: TopicTextQuery): boolean {
+  return Boolean(
+    query.code?.trim() || query.title?.trim() || query.locality?.trim(),
+  );
+}
+
+/**
+ * Filtr tekstowy z paska „Dodaj temat”:
+ * - kod / miejscowość → substring w swojej kolumnie,
+ * - tytuł → substring w tytule, kodzie lub miejscowości (szukaj z głównego pola).
+ */
+export function filterTopicsByTextQuery(
+  topics: BoardTopic[],
+  query: TopicTextQuery,
+): BoardTopic[] {
+  const code = foldSearchText(query.code ?? "");
+  const title = foldSearchText(query.title ?? "");
+  const locality = foldSearchText(query.locality ?? "");
+  if (!code && !title && !locality) return topics;
+
+  return topics.filter((t) => {
+    if (code && !foldSearchText(t.code ?? "").includes(code)) return false;
+    if (locality && !foldSearchText(t.locality ?? "").includes(locality)) return false;
+    if (title) {
+      const hay = foldSearchText(`${t.title} ${t.code ?? ""} ${t.locality ?? ""}`);
+      if (!hay.includes(title)) return false;
+    }
+    return true;
+  });
+}
+
 /** Oczyszcza prefs względem aktualnej listy pól (ACL / usunięte). */
 export function sanitizeViewPrefs(
   prefs: BoardTopicViewPrefs,

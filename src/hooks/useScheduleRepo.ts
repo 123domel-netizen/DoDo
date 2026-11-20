@@ -5,6 +5,11 @@ import { isSchedulesModuleEnabled } from "@/lib/schedules/enabled";
 import { getScheduleRepository } from "@/lib/schedules/getScheduleRepository";
 import type { ScheduleRepository } from "@/lib/schedules/scheduleRepositoryPort";
 import type { PreviewUser } from "@/lib/projectsPreview/types";
+import {
+  noteScheduleOrgChange,
+  runScheduleReload,
+  scheduleDebouncedScheduleReload,
+} from "@/lib/schedules/scheduleReloadGate";
 
 /** Subscribe to schedule repo commits and force a re-render. */
 export function useScheduleRepo(): ScheduleRepository {
@@ -27,30 +32,32 @@ export function useScheduleRepo(): ScheduleRepository {
     return repo.subscribe(() => setTick((n) => n + 1));
   }, [repo]);
 
-  // Cloud bundle is loaded once per tab — refresh when returning to the app
-  // so events saved in another browser/tab show up here.
+  // Cloud: debounce focus/visibility, cooldown 60 min, cross-tab — nie pełny reload na każdy fokus.
   useEffect(() => {
-    if (repo.mode !== "cloud" || !repo.reload) return;
-    let busy = false;
-    const refresh = () => {
-      if (document.visibilityState === "hidden" || busy) return;
-      busy = true;
-      void repo.reload!()
-        .catch((err) => console.warn("[schedules] reload failed:", err))
-        .finally(() => {
-          busy = false;
-        });
-    };
+    if (repo.mode !== "cloud" || !repo.reload || !activeOrgId) return;
+    noteScheduleOrgChange(activeOrgId);
+
+    const doReload = () => repo.reload!();
+
+    // Natychmiast po zmianie org (gate ma lastSuccessful=0).
+    void runScheduleReload(activeOrgId, "org-change", doReload);
+
     const onVis = () => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState === "visible") {
+        scheduleDebouncedScheduleReload(activeOrgId, "visibility", doReload);
+      }
     };
+    const onFocus = () => {
+      scheduleDebouncedScheduleReload(activeOrgId, "focus", doReload);
+    };
+
     document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("focus", refresh);
+    window.addEventListener("focus", onFocus);
     return () => {
       document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", onFocus);
     };
-  }, [repo]);
+  }, [repo, activeOrgId]);
 
   useEffect(() => {
     if (repo.mode !== "local" || !repo.setIdentity) return;

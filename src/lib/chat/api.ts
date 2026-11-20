@@ -253,23 +253,62 @@ export async function fetchMessageCountsSince(
   return out;
 }
 
+/** Kolumny potrzebne w UI obecności / awatarów — nigdy select("*"). */
+export const PROFILES_SELECT = "user_id,display_name,avatar_url,last_seen_at";
+
+function rowToProfile(row: Row): ChatProfile {
+  return {
+    userId: row.user_id as string,
+    displayName: (row.display_name as string) ?? "",
+    avatarUrl: (row.avatar_url as string | null) ?? null,
+    lastSeenAt: (row.last_seen_at as string | null) ?? null,
+  };
+}
+
+/** Bootstrap: jawne kolumny (RLS i tak ogranicza widoczność). */
 export async function fetchProfiles(): Promise<Record<string, ChatProfile>> {
   if (!supabase) return {};
-  const { data, error } = await supabase.from("profiles").select("*");
+  const { data, error } = await supabase.from("profiles").select(PROFILES_SELECT);
   if (error) {
     console.warn("[chat] profiles fetch failed:", error.message);
     return {};
   }
   const out: Record<string, ChatProfile> = {};
   for (const row of (data as Row[]) ?? []) {
-    out[row.user_id as string] = {
-      userId: row.user_id as string,
-      displayName: (row.display_name as string) ?? "",
-      avatarUrl: (row.avatar_url as string | null) ?? null,
-      lastSeenAt: (row.last_seen_at as string | null) ?? null,
-    };
+    out[row.user_id as string] = rowToProfile(row);
   }
   return out;
+}
+
+/** Dociągnij tylko wskazane profile (obecność / brakujące awatary). */
+export async function fetchProfilesByIds(
+  userIds: string[],
+): Promise<Record<string, ChatProfile>> {
+  if (!supabase || userIds.length === 0) return {};
+  const unique = [...new Set(userIds.filter(Boolean))];
+  if (unique.length === 0) return {};
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(PROFILES_SELECT)
+    .in("user_id", unique);
+  if (error) {
+    console.warn("[chat] profiles-by-ids fetch failed:", error.message);
+    return {};
+  }
+  const out: Record<string, ChatProfile> = {};
+  for (const row of (data as Row[]) ?? []) {
+    out[row.user_id as string] = rowToProfile(row);
+  }
+  return out;
+}
+
+/** Zwraca tylko brakujące względem cache. */
+export async function fetchMissingProfiles(
+  have: Record<string, ChatProfile>,
+  needIds: string[],
+): Promise<Record<string, ChatProfile>> {
+  const missing = needIds.filter((id) => id && !have[id]);
+  return fetchProfilesByIds(missing);
 }
 
 /** Heartbeat obecności (online = last_seen_at < 5 min temu). */
@@ -645,13 +684,16 @@ export async function fetchDecisions(conversationId: string): Promise<ChatDecisi
 }
 
 /** Decyzje ze wskazanych rozmów (hub — lista globalna w ramach membership). */
+const DECISIONS_SELECT =
+  "id,conversation_id,message_id,body,note,created_by,decided_at";
+
 export async function fetchDecisionsForConversations(
   conversationIds: string[],
 ): Promise<ChatDecision[]> {
   if (!supabase || conversationIds.length === 0) return [];
   const { data, error } = await supabase
     .from("decisions")
-    .select("*")
+    .select(DECISIONS_SELECT)
     .in("conversation_id", conversationIds)
     .order("decided_at", { ascending: false })
     .limit(100);
@@ -768,13 +810,16 @@ export async function fetchNotes(conversationId: string): Promise<ChatNote[]> {
 }
 
 /** Notatki ze wskazanych rozmów (hub — lista globalna w ramach membership). */
+const NOTES_SELECT =
+  "id,conversation_id,message_id,title,body,created_by,noted_at";
+
 export async function fetchNotesForConversations(
   conversationIds: string[],
 ): Promise<ChatNote[]> {
   if (!supabase || conversationIds.length === 0) return [];
   const { data, error } = await supabase
     .from("notes")
-    .select("*")
+    .select(NOTES_SELECT)
     .in("conversation_id", conversationIds)
     .order("noted_at", { ascending: false })
     .limit(100);
@@ -1232,6 +1277,9 @@ export async function fetchConversationAttachments(
   }));
 }
 
+const ATTACHMENTS_HUB_SELECT =
+  "id,message_id,bucket_path,thumb_path,file_name,mime_type,size_bytes,width,height,pipeline,r2_key,r2_key_thumb,r2_status,sp_drive_item_id,created_at,messages!inner(conversation_id,deleted_at)";
+
 /** Załączniki ze wskazanych rozmów (hub Media). */
 export async function fetchAttachmentsForConversations(
   conversationIds: string[],
@@ -1240,7 +1288,7 @@ export async function fetchAttachmentsForConversations(
   const ids = conversationIds.slice(0, 40);
   const { data, error } = await supabase
     .from("message_attachments")
-    .select("*, messages!inner(conversation_id, deleted_at)")
+    .select(ATTACHMENTS_HUB_SELECT)
     .in("messages.conversation_id", ids)
     .is("messages.deleted_at", null)
     .order("created_at", { ascending: false })

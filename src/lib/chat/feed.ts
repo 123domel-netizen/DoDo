@@ -502,6 +502,14 @@ export function threadDisplayTitle(root: ChatMessage | null | undefined): string
 }
 
 /**
+ * Root mostu Tablica→kanał: body = tytuł tematu (bez treści komentarza).
+ * W feedzie nie pokazujemy go jako bąbelka — tylko adnotacje odpowiedzi.
+ */
+export function isBoardMirrorRoot(msg: ChatMessage | null | undefined): boolean {
+  return msg?.payload?.boardMirror?.role === "root";
+}
+
+/**
  * Element feedu głównego: zwykła wiadomość albo grupa kolejnych adnotacji
  * z tego samego wątku (bez przerwy innymi wiadomościami).
  */
@@ -512,19 +520,26 @@ export type ChatFeedItem =
 /**
  * W feedzie głównym łączy ciągi odpowiedzi z tym samym `threadRootId`
  * w jedną grupę. Wewnątrz otwartego wątku (`inThread`) nie grupuje.
+ * Rooty `boardMirror` (sam tytuł tematu) są pomijane — treść jest w adnotacjach.
  */
 export function groupThreadAnnotations(
   messages: ChatMessage[],
   inThread: boolean,
 ): ChatFeedItem[] {
   if (inThread) {
-    return messages.map((msg) => ({ type: "message" as const, msg }));
+    return messages
+      .filter((msg) => !isBoardMirrorRoot(msg))
+      .map((msg) => ({ type: "message" as const, msg }));
   }
 
   const out: ChatFeedItem[] = [];
   let i = 0;
   while (i < messages.length) {
     const m = messages[i]!;
+    if (isBoardMirrorRoot(m)) {
+      i += 1;
+      continue;
+    }
     const rootId = m.threadRootId;
     if (!rootId) {
       out.push({ type: "message", msg: m });

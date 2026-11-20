@@ -29,6 +29,7 @@ import { useStore } from "@/state/store";
 import { useChatStore } from "@/lib/chat/store";
 import {
   groupThreadAnnotations,
+  isBoardMirrorRoot,
   isMuted,
   isSelfNotesConversation,
   mergeMessages,
@@ -1224,8 +1225,10 @@ export function ConversationView({
       threadMessages ?? [],
     );
     const rootMsg = thread.find((m) => m.id === threadRootId) ?? rootFromFeed;
-    // Notatnik: root = nagłówek w belce — nie duplikuj jako bąbelek w feedzie.
-    const threadFeed = isNotebook
+    // Notatnik / most Tablic: root = tytuł w belce — nie duplikuj jako bąbelek.
+    const hideRootBubble =
+      isNotebook || isBoardMirrorRoot(rootMsg);
+    const threadFeed = hideRootBubble
       ? thread.filter((m) => m.id !== threadRootId)
       : thread;
     return (

@@ -434,9 +434,21 @@ export function WorkspaceHub() {
     () => contactsWithoutDm(eligiblePeople, overview, myUserId),
     [eligiblePeople, overview, myUserId],
   );
-  const convIds = useMemo(() => activeOverview.map((c) => c.id), [activeOverview]);
   /** Decyzje/notatki: wszystkie rozmowy — filtr grupy działa po etykiecie wpisu. */
-  const registryConvIds = useMemo(() => overview.map((c) => c.id), [overview]);
+  /** Stabilny klucz id — unikaj refetch przy każdej nowej referencji tablicy overview. */
+  const registryConvKey = useMemo(
+    () =>
+      overview
+        .map((c) => c.id)
+        .slice()
+        .sort()
+        .join("|"),
+    [overview],
+  );
+  const registryConvIds = useMemo(
+    () => (registryConvKey ? registryConvKey.split("|") : []),
+    [registryConvKey],
+  );
   const unread = totalUnread(activeOverview);
   const activeGroupName = activeGroupFilter
     ? groups.find((g) => g.id === activeGroupFilter)?.name
@@ -489,6 +501,7 @@ export function WorkspaceHub() {
   // Ranking „Ulubione”: wolumen wiadomości z ostatniego miesiąca.
   useEffect(() => {
     if (!cloudEnabled || !myUserId || hubTab !== "chat") return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     let cancelled = false;
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     void fetchMessageCountsSince(since).then((counts) => {
@@ -499,8 +512,10 @@ export function WorkspaceHub() {
     };
   }, [myUserId, hubTab, registryEpoch]);
 
+  // Hub registry: tylko przy otwartej zakładce + widocznej karcie; epoch = invalidacja.
   useEffect(() => {
     if (hubTab !== "decisions") return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     let cancelled = false;
     setDecisions(null);
     void fetchDecisionsForConversations(registryConvIds).then((list) => {
@@ -509,10 +524,11 @@ export function WorkspaceHub() {
     return () => {
       cancelled = true;
     };
-  }, [hubTab, registryConvIds, registryEpoch]);
+  }, [hubTab, registryConvKey, registryEpoch]);
 
   useEffect(() => {
     if (hubTab !== "notes") return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     let cancelled = false;
     setNotes(null);
     void fetchNotesForConversations(registryConvIds).then((list) => {
@@ -521,23 +537,35 @@ export function WorkspaceHub() {
     return () => {
       cancelled = true;
     };
-  }, [hubTab, registryConvIds, registryEpoch]);
+  }, [hubTab, registryConvKey, registryEpoch]);
+
+  const mediaConvKey = useMemo(
+    () =>
+      (hubTab === "media" ? activeOverview : overview)
+        .map((c) => c.id)
+        .slice()
+        .sort()
+        .join("|"),
+    [hubTab, activeOverview, overview],
+  );
 
   useEffect(() => {
     if (hubTab !== "media") return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     let cancelled = false;
     setMedia(null);
     setGalleries(null);
-    void fetchAttachmentsForConversations(convIds).then((list) => {
+    const ids = mediaConvKey ? mediaConvKey.split("|") : [];
+    void fetchAttachmentsForConversations(ids).then((list) => {
       if (!cancelled) setMedia(list);
     });
-    void fetchGalleriesForConversations(convIds).then((list) => {
+    void fetchGalleriesForConversations(ids).then((list) => {
       if (!cancelled) setGalleries(list);
     });
     return () => {
       cancelled = true;
     };
-  }, [hubTab, convIds]);
+  }, [hubTab, mediaConvKey, registryEpoch]);
 
   // Wszystkie hooki muszą być przed warunkowymi returnami (Rules of Hooks).
   const folderIdsInUse = useMemo(() => {
