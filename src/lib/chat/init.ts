@@ -48,6 +48,12 @@ import type {
   PollOption,
   ChatChecklistItem,
 } from "@/lib/chat/types";
+import {
+  CHAT_OVERVIEW_REALTIME_DEBOUNCE_MS,
+  CHAT_OVERVIEW_STALE_MS,
+  CHAT_REALTIME_CATCHUP_MS,
+  CHAT_RECONCILE_INTERVAL_MS,
+} from "@/lib/chat/refreshConstants";
 
 /**
  * CHAT1-CORE: orkiestracja czatu — auth, realtime, outbox, mark-read.
@@ -68,7 +74,13 @@ const readTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingReadAt = new Map<string, string>();
 
 const MAX_SEND_ATTEMPTS = 3;
-const RECONCILE_INTERVAL_MS = 25_000;
+const RECONCILE_INTERVAL_MS = CHAT_RECONCILE_INTERVAL_MS;
+const OVERVIEW_REALTIME_DEBOUNCE_MS = CHAT_OVERVIEW_REALTIME_DEBOUNCE_MS;
+const OVERVIEW_STALE_MS = CHAT_OVERVIEW_STALE_MS;
+
+let lastOverviewAt = 0;
+let overviewInFlight = false;
+let chatRealtimeLostAt: number | null = null;
 
 function documentVisible(): boolean {
   return typeof document === "undefined" || document.visibilityState === "visible";
@@ -87,20 +99,51 @@ export async function refreshChat() {
   const st = useChatStore.getState();
   st.setProfiles(profiles);
   st.setOverview(overview);
+  lastOverviewAt = Date.now();
 }
 
-async function refreshOverview() {
+async function refreshOverview(opts?: { force?: boolean }) {
   if (!api.chatAvailable() || !currentUserId) return;
-  const overview = await api.fetchOverview();
-  useChatStore.getState().setOverview(overview);
+  if (!opts?.force && !documentVisible()) return;
+  if (overviewInFlight) return;
+  overviewInFlight = true;
+  try {
+    const { tryAcquireAutoPullLeadership } = await import("@/lib/cloudPullCrossTab");
+    const lock = await tryAcquireAutoPullLeadership(
+      currentUserId,
+      async () => {
+        const overview = await api.fetchOverview();
+        useChatStore.getState().setOverview(overview);
+        lastOverviewAt = Date.now();
+        return overview;
+      },
+      "chat-overview",
+    );
+    if (!lock.acquired && import.meta.env.DEV) {
+      console.info("[chat-overview] skipped cross-tab");
+    }
+  } finally {
+    overviewInFlight = false;
+  }
 }
 
-export function scheduleOverviewRefresh(delayMs = 800) {
+export function scheduleOverviewRefresh(delayMs = OVERVIEW_REALTIME_DEBOUNCE_MS) {
   if (overviewTimer) clearTimeout(overviewTimer);
   overviewTimer = setTimeout(() => {
     overviewTimer = null;
     void refreshOverview();
   }, delayMs);
+}
+
+/** Test/diagnostics */
+export function getChatOverviewRefreshDiagnostics() {
+  return {
+    lastOverviewAt,
+    overviewInFlight,
+    reconcileIntervalMs: RECONCILE_INTERVAL_MS,
+    staleMs: OVERVIEW_STALE_MS,
+    chatRealtimeLostAt,
+  };
 }
 
 /** Dociągnij brakujące wiadomości aktywnej rozmowy (gdy realtime coś zgubił). */
@@ -136,8 +179,17 @@ async function reconcileActiveConversation() {
   }
 }
 
-async function reconcileChatLive() {
-  await Promise.all([refreshOverview(), reconcileActiveConversation()]);
+async function reconcileChatLive(opts?: { forceOverview?: boolean }) {
+  // Timer 5 min: overview tylko gdy stale (≥ OVERVIEW_STALE_MS) lub force
+  // (np. długa przerwa RT). Świeży overview z Realtime → pomijamy RPC.
+  const force = Boolean(opts?.forceOverview);
+  const now = Date.now();
+  const overviewStale =
+    force || !lastOverviewAt || now - lastOverviewAt >= OVERVIEW_STALE_MS;
+  await Promise.all([
+    overviewStale ? refreshOverview({ force }) : Promise.resolve(),
+    reconcileActiveConversation(),
+  ]);
 }
 
 function startReconcileInterval() {
@@ -151,6 +203,17 @@ function startReconcileInterval() {
 function stopReconcileInterval() {
   if (reconcileInterval) clearInterval(reconcileInterval);
   reconcileInterval = null;
+}
+
+function maybeRefreshOverviewOnVisible() {
+  if (!documentVisible() || !currentUserId) return;
+  const now = Date.now();
+  const stale = !lastOverviewAt || now - lastOverviewAt >= OVERVIEW_STALE_MS;
+  const longDisconnect =
+    chatRealtimeLostAt != null && now - chatRealtimeLostAt >= CHAT_REALTIME_CATCHUP_MS;
+  if (stale || longDisconnect) {
+    void refreshOverview();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1669,10 +1732,41 @@ async function setupRealtime(userId: string) {
         enqueuePingFromRow(row, userId);
       },
     )
+    .on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "profiles" },
+      (payload) => {
+        const row = payload.new as Record<string, unknown> | null;
+        if (!row?.user_id) return;
+        const id = row.user_id as string;
+        const st = useChatStore.getState();
+        // Aktualizuj tylko znane / własne — bez pełnego katalogu.
+        if (!st.profiles[id] && id !== userId) return;
+        const next = {
+          userId: id,
+          displayName: (row.display_name as string) ?? st.profiles[id]?.displayName ?? "",
+          avatarUrl:
+            (row.avatar_url as string | null | undefined) ??
+            st.profiles[id]?.avatarUrl ??
+            null,
+          lastSeenAt:
+            (row.last_seen_at as string | null | undefined) ??
+            st.profiles[id]?.lastSeenAt ??
+            null,
+        };
+        st.setProfiles({ ...st.profiles, [id]: next });
+      },
+    )
     .subscribe((status) => {
       if (gen !== channelGeneration) return;
       if (status === "SUBSCRIBED") {
-        void reconcileChatLive();
+        const lostAt = chatRealtimeLostAt;
+        chatRealtimeLostAt = null;
+        const longOutage =
+          lostAt != null && Date.now() - lostAt >= CHAT_REALTIME_CATCHUP_MS;
+        // Krótki reconnect: bez pełnego overview; długi: jeden catch-up.
+        if (longOutage) void reconcileChatLive({ forceOverview: true });
+        else void reconcileActiveConversation();
         return;
       }
       if (
@@ -1681,6 +1775,7 @@ async function setupRealtime(userId: string) {
         status === "CLOSED"
       ) {
         console.warn("[chat] realtime status:", status);
+        if (chatRealtimeLostAt == null) chatRealtimeLostAt = Date.now();
         scheduleRealtimeResubscribe(userId);
       }
     });
@@ -1696,9 +1791,15 @@ let presenceTimer: ReturnType<typeof setInterval> | null = null;
 async function presenceBeat() {
   if (!currentUserId || !api.chatAvailable() || !documentVisible()) return;
   await api.updateMyPresence(currentUserId);
-  // Przy okazji odśwież profile — zielone kropki innych osób.
-  const profiles = await api.fetchProfiles();
-  useChatStore.getState().setProfiles(profiles);
+  // Tylko last_seen znanych profili — bez select(*) całej tabeli.
+  const knownIds = Object.keys(useChatStore.getState().profiles);
+  if (knownIds.length > 0) {
+    const patch = await api.fetchProfilesByIds(knownIds);
+    if (Object.keys(patch).length > 0) {
+      const st = useChatStore.getState();
+      st.setProfiles({ ...st.profiles, ...patch });
+    }
+  }
 }
 
 function startPresence() {
@@ -1762,12 +1863,12 @@ export function initChat() {
         teardownRealtime();
         void setupRealtime(currentUserId);
       }
-      void reconcileChatLive();
+      maybeRefreshOverviewOnVisible();
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
         void flushOutbox();
-        void reconcileChatLive();
+        maybeRefreshOverviewOnVisible();
         void presenceBeat();
       }
     });

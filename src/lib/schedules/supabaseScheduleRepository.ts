@@ -1612,13 +1612,24 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
     settingsRes,
     orgMembersRes,
   ] = await Promise.all([
-    supabase.from("construction_projects").select("*").eq("org_id", orgId),
+    supabase
+      .from("construction_projects")
+      .select("id,org_id,number,name,admin_user_id,created_at,status")
+      .eq("org_id", orgId),
     supabase.from("construction_project_members").select("project_id, user_id"),
-    supabase.from("construction_crews").select("*").eq("org_id", orgId),
-    supabase.from("schedule_catalogs").select("*").eq("org_id", orgId),
+    supabase
+      .from("construction_crews")
+      .select(
+        "id,name,color,headcount,supervisor,company,phone,members,viewer_user_ids,created_by",
+      )
+      .eq("org_id", orgId),
+    supabase
+      .from("schedule_catalogs")
+      .select("org_id,kind,payload,updated_at")
+      .eq("org_id", orgId),
     supabase
       .from("schedule_org_settings")
-      .select("*")
+      .select("org_id,next_number_hint,updated_at")
       .eq("org_id", orgId)
       .maybeSingle(),
     supabase.rpc("org_get_detail", { p_org_id: orgId }),
@@ -1630,20 +1641,32 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
 
   const [blocksRes, eventsRes, metaRes, attendanceRes] = await Promise.all([
     projectIds.length
-      ? supabase.from("schedule_blocks").select("*").in("project_id", projectIds)
+      ? supabase
+          .from("schedule_blocks")
+          .select(
+            "id,project_id,title,category_id,scope,role,parent_id,crew_id,start_date,end_date,status,color,note",
+          )
+          .in("project_id", projectIds)
       : Promise.resolve({ data: [], error: null }),
     projectIds.length
-      ? supabase.from("schedule_events").select("*").in("project_id", projectIds)
+      ? supabase
+          .from("schedule_events")
+          .select(
+            "id,project_id,block_id,kind,title,event_date,event_time,note,category_id,status,activity,custom_label,written_at,reported_by_user_id,written_by_user_id",
+          )
+          .in("project_id", projectIds)
       : Promise.resolve({ data: [], error: null }),
     projectIds.length
       ? supabase
           .from("schedule_category_meta")
-          .select("*")
+          .select("project_id,category_id,title,note,start_date,end_date")
           .in("project_id", projectIds)
       : Promise.resolve({ data: [], error: null }),
     supabase
       .from("construction_crew_attendance")
-      .select("*")
+      .select(
+        "id,org_id,crew_id,project_id,work_date,headcount,labor_hours,workers,note,status,created_by,confirmed_by,confirmed_at,created_at,updated_at",
+      )
       .eq("org_id", orgId),
   ]);
 
@@ -1660,7 +1683,9 @@ async function fetchOrgBundle(orgId: string): Promise<BundleRow> {
     attendanceIds.length > 0
       ? await supabase
           .from("construction_crew_equipment_logs")
-          .select("*")
+          .select(
+            "id,attendance_id,equipment_key,equipment_label,quantity,hours",
+          )
           .in("attendance_id", attendanceIds)
       : { data: [], error: null };
 

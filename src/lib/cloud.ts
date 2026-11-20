@@ -37,41 +37,79 @@ import {
 import { applyRemoteEntities, remoteGroupInput, remoteItemInput } from "@/lib/syncv3/remoteApply";
 import { mergeRemotePartialIntoZustand } from "@/lib/syncv3/consistentSnapshot";
 import { installSyncDebugApi, setSyncDebugHooks } from "@/lib/syncDebug";
+import {
+  awaitCloudPullIdle,
+  getCloudPullGateDiagnostics,
+  noteRealtimeDisconnect,
+  noteRealtimeReconnect,
+  measureJsonBytes,
+  recordCloudPullTableCount,
+  recordCloudPullTableData,
+  runCloudPull,
+  setCloudPullWorkspace,
+  type CloudPullSource,
+} from "@/lib/cloudPullGate";
+import {
+  GROUPS_SELECT,
+  ITEMS_SELECT,
+  OWNER_PARTICIPANTS_SELECT,
+  SHARED_ITEMS_EMBED_SELECT,
+  TAG_ASSIGNMENTS_SELECT,
+  USER_TAGS_SELECT,
+  assertUserScopedFilter,
+} from "@/lib/cloudSelects";
 
 /**
  * Optional cloud sync. When Supabase env vars are present and a user is signed
  * in, local items are mirrored to the `items` table and remote changes are
  * streamed back via Realtime. Without configuration the app stays fully local.
+ *
+ * Auto-pull jest bramkowany przez cloudPullGate (single-flight + cooldown 15 min).
+ * Snapshot NIE pobiera treści załączników ze Storage — tylko metadane w payload.
  */
 
 const ITEM_PULL_PAGE_SIZE = 1000;
 
-/** PostgREST ucina wynik do ~1000 wierszy â€” bez paginacji reconcile â€žgubiâ€ť zdalne ID. */
+/** PostgREST ucina wynik do ~1000 wierszy — bez paginacji reconcile „gubi” zdalne ID. */
 async function fetchAllItemRows(): Promise<{
   rows: Record<string, unknown>[];
   error: string | null;
 }> {
   if (!supabase || !userId) return { rows: [], error: null };
+  const scopedUserId = assertUserScopedFilter(userId);
   const rows: Record<string, unknown>[] = [];
   for (let from = 0; ; from += ITEM_PULL_PAGE_SIZE) {
     const to = from + ITEM_PULL_PAGE_SIZE - 1;
-    const { data, error } = await supabase.from("items").select("*").range(from, to);
+    // Jawne kolumny + filtr user_id + order — stabilna paginacja.
+    // Uwaga: RLS i tak ogranicza wiersze; filtr jest defense-in-depth i wymogiem egress.
+    const { data, error } = await supabase
+      .from("items")
+      .select(ITEMS_SELECT)
+      .eq("user_id", scopedUserId)
+      .order("id", { ascending: true })
+      .range(from, to);
     if (error) return { rows, error: error.message };
     const page = (data ?? []) as Record<string, unknown>[];
     rows.push(...page);
     if (page.length < ITEM_PULL_PAGE_SIZE) break;
   }
+  recordCloudPullTableCount("items", rows.length, measureJsonBytes(rows));
   return { rows, error: null };
 }
 
-/** Lekki skan: same ID-y z chmury (bez payloadu) â€” do doganiania never-pushed. */
 /** Lekki skan remote ID — używany przez Sync v3 remoteIds; zachowany dla testów. */
 export async function fetchAllRemoteItemIds(): Promise<{ ids: string[]; error: string | null }> {
   if (!supabase || !userId) return { ids: [], error: null };
+  const scopedUserId = assertUserScopedFilter(userId);
   const ids: string[] = [];
   for (let from = 0; ; from += ITEM_PULL_PAGE_SIZE) {
     const to = from + ITEM_PULL_PAGE_SIZE - 1;
-    const { data, error } = await supabase.from("items").select("id").range(from, to);
+    const { data, error } = await supabase
+      .from("items")
+      .select("id")
+      .eq("user_id", scopedUserId)
+      .order("id", { ascending: true })
+      .range(from, to);
     if (error) return { ids, error: error.message };
     const page = data ?? [];
     for (const row of page) {
@@ -87,7 +125,6 @@ let userEmail: string | null = null;
 let previousUserId: string | null = null;
 let realtimeChannel: RealtimeChannel | null = null;
 let realtimeSubscribed = false;
-let realtimeEverSubscribed = false;
 let realtimeFailureStreak = 0;
 let realtimeResubscribeTimer: ReturnType<typeof setTimeout> | null = null;
 let lifecycleBound = false;
@@ -278,11 +315,16 @@ function assignmentsSnapshot(map: Record<string, string[]>): string {
 
 async function pullUserTags() {
   if (!supabase || !userId) return;
-  const { data, error } = await supabase.from("user_tags").select("*").eq("user_id", userId);
+  const scopedUserId = assertUserScopedFilter(userId);
+  const { data, error } = await supabase
+    .from("user_tags")
+    .select(USER_TAGS_SELECT)
+    .eq("user_id", scopedUserId);
   if (error) {
     console.warn("[cloud] tags pull failed:", error.message);
     return;
   }
+  recordCloudPullTableData("user_tags", data);
   const tags: UserTag[] = [];
   for (const row of data ?? []) {
     tags.push(rowToTag(row));
@@ -298,14 +340,16 @@ async function pullUserTags() {
 
 async function pullTagAssignments() {
   if (!supabase || !userId) return;
+  const scopedUserId = assertUserScopedFilter(userId);
   const { data, error } = await supabase
     .from("user_item_tag_assignments")
-    .select("item_id, tag_ids")
-    .eq("user_id", userId);
+    .select(TAG_ASSIGNMENTS_SELECT)
+    .eq("user_id", scopedUserId);
   if (error) {
     console.warn("[cloud] tag assignments pull failed:", error.message);
     return;
   }
+  recordCloudPullTableData("user_item_tag_assignments", data);
   const remote: Record<string, string[]> = {};
   for (const row of data ?? []) {
     remote[row.item_id as string] = (row.tag_ids as string[]) ?? [];
@@ -368,16 +412,23 @@ function reconcileGroups(remote: Group[]): {
 
 async function pullSharedItems(): Promise<Record<string, Item>> {
   if (!supabase || !userId) return {};
+  const scopedUserId = assertUserScopedFilter(userId);
   const email = userEmail?.toLowerCase() ?? "";
+  // Tylko cudze itemy, w których jesteśmy uczestnikiem.
+  // owner_user_id ≠ ja → bez podwójnego pobierania własnych (te idą z fetchAllItemRows).
+  // items(...) = jawna lista kolumn (SHARED_ITEMS_EMBED_SELECT), nie items(*).
   let query = supabase
     .from("item_participants")
-    .select("status, personal_reminders, items(*)")
-    .neq("status", "rejected");
+    .select(SHARED_ITEMS_EMBED_SELECT)
+    .neq("status", "rejected")
+    .neq("owner_user_id", scopedUserId);
 
   if (email) {
-    query = query.or(`participant_user_id.eq.${userId},participant_email.eq.${email}`);
+    query = query.or(
+      `participant_user_id.eq.${scopedUserId},participant_email.eq.${email}`,
+    );
   } else {
-    query = query.eq("participant_user_id", userId);
+    query = query.eq("participant_user_id", scopedUserId);
   }
 
   const { data, error } = await query;
@@ -385,11 +436,14 @@ async function pullSharedItems(): Promise<Record<string, Item>> {
     console.warn("[cloud] shared items pull failed:", error.message);
     return {};
   }
+  recordCloudPullTableData("item_participants_shared", data);
 
   const out: Record<string, Item> = {};
   for (const row of data ?? []) {
     const itemRow = row.items as unknown as Record<string, unknown> | null;
     if (!itemRow) continue;
+    // Defense in depth — własne i tak nie powinny tu wrócić po filtrze owner.
+    if ((itemRow.user_id as string) === scopedUserId) continue;
     const item = rowToItem(itemRow, "participant");
     item.personalReminders = personalRemindersFromDbRow({
       personal_reminders: row.personal_reminders,
@@ -401,14 +455,16 @@ async function pullSharedItems(): Promise<Record<string, Item>> {
 
 async function pullOwnerParticipantRows(): Promise<Record<string, ParticipantDbRow[]>> {
   if (!supabase || !userId) return {};
+  const scopedUserId = assertUserScopedFilter(userId);
   const { data, error } = await supabase
     .from("item_participants")
-    .select("*")
-    .eq("owner_user_id", userId);
+    .select(OWNER_PARTICIPANTS_SELECT)
+    .eq("owner_user_id", scopedUserId);
   if (error) {
     console.warn("[cloud] owner participants pull failed:", error.message);
     return {};
   }
+  recordCloudPullTableData("item_participants_owner", data);
   const byItem: Record<string, ParticipantDbRow[]> = {};
   for (const row of data ?? []) {
     const itemId = row.item_id as string;
@@ -492,12 +548,18 @@ export async function patchParticipantViaRpc(input: {
 
 async function pullAllViaSyncV3() {
   if (!supabase || !userId) return;
+  const scopedUserId = assertUserScopedFilter(userId);
 
   // Pobierz groups + items PRZED publikacją — potem jedna txn IDB i jeden snapshot.
-  const groupsRes = await supabase.from("groups").select("*");
+  const groupsRes = await supabase
+    .from("groups")
+    .select(GROUPS_SELECT)
+    .eq("user_id", scopedUserId);
   if (groupsRes.error) {
     console.warn("[cloud] group pull failed:", groupsRes.error.message);
     // Nie czyść lokalnych groups; nadal spróbuj items, ale publikuj atomowo z IDB.
+  } else {
+    recordCloudPullTableData("groups", groupsRes.data);
   }
 
   const { rows, error } = await fetchAllItemRows();
@@ -716,30 +778,29 @@ function setupRealtime() {
       if (status === "SUBSCRIBED") {
         realtimeSubscribed = true;
         realtimeFailureStreak = 0;
-        if (realtimeEverSubscribed) void cloudMergeRefresh();
-        realtimeEverSubscribed = true;
+        // Sam reconnect nie robi snapshotu — ewentualny catch-up dopiero na focus/interval.
+        noteRealtimeReconnect();
         return;
       }
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
         realtimeSubscribed = false;
         realtimeFailureStreak += 1;
+        noteRealtimeDisconnect();
         scheduleRealtimeResubscribe();
       }
     });
 }
 
 export function getSyncDiagnosticsSnapshot() {
+  const gate = getCloudPullGateDiagnostics();
   return {
     ...getSyncDiagnostics(),
     autoPullEnabled: cloudEnabled,
-    lastAutoPullAt,
+    lastAutoPullAt: gate.lastAutoAttemptAt,
     realtimeSubscribed,
+    pullGate: gate,
   };
 }
-
-const AUTO_PULL_MIN_INTERVAL_MS = 60_000;
-let autoPullInProgress = false;
-let lastAutoPullAt: string | null = null;
 
 function isUserActivelyEditing(): boolean {
   if (typeof document === "undefined") return false;
@@ -751,12 +812,9 @@ function isUserActivelyEditing(): boolean {
   return false;
 }
 
-function msSinceLastPull(): number | null {
-  if (!syncState.lastPullAt) return null;
-  const t = new Date(syncState.lastPullAt).getTime();
-  return Number.isNaN(t) ? null : Date.now() - t;
-}
-
+/**
+ * Gotowość do auto-pulla (bez cooldown/single-flight — to robi cloudPullGate).
+ */
 export function canAutoCloudRefresh(): boolean {
   if (!cloudEnabled || !supabase || !userId) return false;
   if (typeof navigator !== "undefined" && !navigator.onLine) return false;
@@ -764,11 +822,8 @@ export function canAutoCloudRefresh(): boolean {
   if (!diag.syncReady || diag.syncBooting || diag.applyingRemote || diag.pushBlocked) {
     return false;
   }
-  if (autoPullInProgress) return false;
   if (useStore.getState().draft) return false;
   if (isUserActivelyEditing()) return false;
-  const since = msSinceLastPull();
-  if (since != null && since < AUTO_PULL_MIN_INTERVAL_MS) return false;
   return true;
 }
 
@@ -785,51 +840,74 @@ async function cloudMergeRefresh(): Promise<boolean> {
   }
 }
 
-export async function tryAutoCloudRefresh(): Promise<boolean> {
+export async function tryAutoCloudRefresh(
+  source: CloudPullSource = "auto-interval",
+): Promise<boolean> {
   if (!canAutoCloudRefresh()) return false;
-  autoPullInProgress = true;
-  try {
-    wakeSyncV3Worker();
-    const ok = await cloudMergeRefresh();
-    if (ok) lastAutoPullAt = new Date().toISOString();
-    return ok;
-  } finally {
-    autoPullInProgress = false;
-  }
+  const outcome = await runCloudPull(
+    source,
+    async () => {
+      wakeSyncV3Worker();
+      return cloudMergeRefresh();
+    },
+    { scopeUserId: userId },
+  );
+  if (!outcome.ran) return false;
+  return outcome.result;
 }
 
 export async function forceCloudRefresh(): Promise<{ ok: boolean; message: string }> {
   if (!cloudEnabled || !supabase || !userId) {
     return { ok: false, message: "Synchronizacja niedostepna" };
   }
-  wakeSyncV3Worker();
-  syncState.pushBlocked = true;
-  syncState.booting = true;
-  try {
-    await pullUserTags();
-    await pullTagAssignments();
-    await pullAll(true);
-    const orgs = await bootstrapOrgs();
-    useStore.getState().setOrgBootstrap(orgs);
-    const st = useStore.getState();
-    const contacts = await loadAssignableContacts({
-      orgId: st.activeOrgId ?? st.myOrgs[0]?.id ?? null,
-      ownerUserId: st.authUserId,
-    });
-    st.setTeamMembers(contacts);
-    lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
-    lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
-    lastAssignmentsSnapshot = assignmentsSnapshot(useStore.getState().myTagIdsByItem);
-    return { ok: true, message: "Dane odswiezone" };
-  } catch (err) {
-    console.warn("[cloud] force refresh failed:", err);
-    return { ok: false, message: "Odswiezenie nie powiodlo sie" };
-  } finally {
-    syncState.booting = false;
-    syncState.pushBlocked = false;
-    syncState.ready = true;
-    wakeSyncV3Worker();
+  const outcome = await runCloudPull(
+    "manual",
+    async () => {
+      wakeSyncV3Worker();
+      syncState.pushBlocked = true;
+      syncState.booting = true;
+      try {
+        await pullUserTags();
+        await pullTagAssignments();
+        await pullAll(true);
+        const orgs = await bootstrapOrgs();
+        useStore.getState().setOrgBootstrap(orgs);
+        const st = useStore.getState();
+        const contacts = await loadAssignableContacts({
+          orgId: st.activeOrgId ?? st.myOrgs[0]?.id ?? null,
+          ownerUserId: st.authUserId,
+        });
+        st.setTeamMembers(contacts);
+        lastGroupsSnapshot = groupsSnapshot(useStore.getState().groups);
+        lastTagsSnapshot = tagsSnapshot(useStore.getState().tags);
+        lastAssignmentsSnapshot = assignmentsSnapshot(useStore.getState().myTagIdsByItem);
+        return { ok: true as const, message: "Dane odswiezone" };
+      } catch (err) {
+        console.warn("[cloud] force refresh failed:", err);
+        return { ok: false as const, message: "Odswiezenie nie powiodlo sie" };
+      } finally {
+        syncState.booting = false;
+        syncState.pushBlocked = false;
+        syncState.ready = true;
+        wakeSyncV3Worker();
+      }
+    },
+    { scopeUserId: userId },
+  );
+  if (!outcome.ran) {
+    const messages: Record<string, string> = {
+      "single-flight": "Odswiezenie juz trwa",
+      "cross-tab": "Odswiezenie trwa w innej karcie",
+      cooldown: "Odswiezenie pominiete (cooldown)",
+      "snapshot-fresh": "Dane sa aktualne",
+      "realtime-reconnect-skipped": "Reconnect bez pelnego snapshotu",
+    };
+    return {
+      ok: false,
+      message: messages[outcome.reason] ?? "Odswiezenie pominiete",
+    };
   }
+  return outcome.result;
 }
 
 export async function handleAuthUserChange(nextUserId: string | null) {
@@ -847,6 +925,7 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     previousUserId = null;
     groupsReady = false;
     lastGroupsSnapshot = "";
+    setCloudPullWorkspace(null);
     resetSyncState();
     syncState.ready = true;
     await bootstrapSyncV3(null);
@@ -855,6 +934,9 @@ export async function handleAuthUserChange(nextUserId: string | null) {
 
   const isUserSwitch = previousUserId !== null && previousUserId !== nextUserId;
   previousUserId = nextUserId;
+
+  // Nowy / inny user → reset cooldown; auth pull poniżej jest natychmiastowy.
+  setCloudPullWorkspace(nextUserId);
 
   syncState.booting = true;
   syncState.ready = false;
@@ -891,10 +973,17 @@ export async function handleAuthUserChange(nextUserId: string | null) {
     }
 
     await bootstrapSyncV3(nextUserId);
-    await pullUserTags();
-    await pullTagAssignments();
-    // groups+items w jednej atomowej ścieżce (pullAllViaSyncV3)
-    await pullAll(false);
+    await awaitCloudPullIdle();
+    await runCloudPull(
+      "auth",
+      async () => {
+        await pullUserTags();
+        await pullTagAssignments();
+        // groups+items w jednej atomowej ścieżce (pullAllViaSyncV3)
+        await pullAll(false);
+      },
+      { scopeUserId: nextUserId },
+    );
 
     teardownRealtime();
     setupRealtime();
